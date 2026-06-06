@@ -1,0 +1,1198 @@
+' =============================================================================
+' SISTEMA POS COMPLETO Y ESTABLE
+' ENTER = AGREGAR PRODUCTO
+' F8 = COBRAR
+' IMPRESIÓN ESC/POS
+' APERTURA DE CAJÓN
+' CURSOR BLOQUEADO EN B3:D3
+' TOTAL DINÁMICO (sube/baja con los productos)
+' =============================================================================
+
+Public oSelectionChangeListener As Object
+Public oView As Object
+Public oKeyHandler As Object
+Public bBloqueandoCursor As Boolean
+
+Const FILA_PRODUCTOS_INICIO As Integer = 9  ' índice base 0 → fila 10 en pantalla
+
+' -----------------------------------------------------------------------------
+' 1. EVENTO AL ABRIR
+' -----------------------------------------------------------------------------
+Sub AlAbrirArchivo
+    On Error Resume Next
+    Dim oSheet As Object
+    oSheet = ThisComponent.Sheets.getByName("TPV")
+    If Not IsNull(oSheet) Then
+        IniciarEscuchadorEnter
+    End If
+End Sub
+
+' -----------------------------------------------------------------------------
+' 2. CONFIGURAR SISTEMA
+' -----------------------------------------------------------------------------
+Sub ConfigurarTodoElSistema
+
+    Dim oDoc As Object
+    Dim oSheet As Object
+    Dim oCell As Object
+    Dim i As Integer
+
+    oDoc = ThisComponent
+
+    If Not oDoc.Sheets.hasByName("TPV") Then
+        oDoc.Sheets.insertNewByName("TPV", 0)
+    End If
+
+    If Not oDoc.Sheets.hasByName("Historial") Then
+        oDoc.Sheets.insertNewByName("Historial", oDoc.Sheets.Count)
+    End If
+
+    For i = 0 To oDoc.Sheets.Count - 1
+        oDoc.Sheets.getByIndex(i).unprotect("")
+    Next i
+
+    oSheet = oDoc.Sheets.getByName("TPV")
+
+    oSheet.getCellRangeByName("A1:Z200").clearContents(1023)
+
+    oDoc.CurrentController.showGrid = False
+
+    oSheet.getColumns().getByName("B").Width = 5000
+    oSheet.getColumns().getByName("C").Width = 2500
+    oSheet.getColumns().getByName("D").Width = 1500
+    oSheet.getColumns().getByName("E").Width = 3000
+
+    Dim celdas() As String
+    Dim titulos() As String
+
+    celdas  = Array("B2","C2","D2","B9","C9","D9","E9")
+    titulos = Array("PRODUCTO","PRECIO","CANT.","DESCRIPCIÓN","UNITARIO","CANT","SUBTOTAL")
+
+    For i = LBound(celdas) To UBound(celdas)
+        oCell = oSheet.getCellRangeByName(celdas(i))
+        oCell.String = titulos(i)
+        oCell.CharColor = RGB(255,255,255)
+        oCell.CharWeight = com.sun.star.awt.FontWeight.BOLD
+        oCell.CellBackColor = RGB(44,62,80)
+    Next i
+
+    oSheet.getCellRangeByName("B3:D3").CellBackColor = RGB(236,240,241)
+    oSheet.getCellRangeByName("D3").Value = 1
+
+    ' TOTAL inicial justo en la primera fila de productos (tabla vacía)
+    ColocarFilaTotal(oSheet, FILA_PRODUCTOS_INICIO)
+
+    Dim oStructProtection As New com.sun.star.util.CellProtection
+    oStructProtection.IsLocked = False
+    oSheet.getCellRangeByName("B3:D3").CellProtection = oStructProtection
+
+	CrearRecuadroInstrucciones(oSheet)
+    BorrarBotones(oSheet)
+
+    CrearBoton(oSheet, 9500, 1800, 3000, 800, "AGREGAR (ENTER)", "AgregarProducto")
+    CrearBoton(oSheet, 6200, 13800, 3000, 1000, "LIMPIAR", "LimpiarTicket")
+    CrearBoton(oSheet, 9500, 13800, 3000, 1000, "COBRAR (ENTER)", "FinalizarVentaEImprimir")
+
+    If oDoc.Sheets.hasByName("TPV") Then
+	    oDoc.Sheets.getByName("TPV").protect("")
+	End If
+	
+	If oDoc.Sheets.hasByName("Historial") Then
+	    oDoc.Sheets.getByName("Historial").protect("")
+	End If
+	
+	' ── Catálogo de productos hardcodeados en columna K ──────────────────
+    Dim oCatSheet As Object
+    oCatSheet = oDoc.Sheets.getByName("TPV")
+    oCatSheet.unprotect("")
+ 
+    Dim productos() As String
+    productos = Array( _
+        "Enterizo Short", _
+        "Enterizo Completo", _
+        "Vestido Largo", _
+        "Vestido Corto", _
+        "Blusa de Licra", _
+        "Blusa", _
+        "Conjunto de Pantalón", _
+        "Conjunto de Short", _
+        "Pantalón de Mezclilla Cargo", _
+        "Pantalón de Mezclilla Campana", _
+        "Pantalón de Mezclilla Holgado", _
+        "Pantalón de Mezclilla Skinny", _
+        "Playera Futbol", _
+        "Playera Jersey", _
+        "Mayón Deportivo", _
+        "Pantalón de Vestir", _
+        "Pantalón Palazo", _
+        "Short Licra", _
+        "Short Casual", _
+        "Conjunto Deportivo", _
+        "Pijama", _
+        "Palazo", _
+        "Vermuda de Hombre", _
+        "Chamarra Deportiva", _
+        "Top", _
+        "Falda", _
+    )
+ 
+    ' Encabezado
+    Dim oKHeader As Object
+    oKHeader = oSheet.getCellByPosition(10, 1)  ' K2
+    oKHeader.String      = "CATÁLOGO"
+    oKHeader.CharColor   = RGB(255, 255, 255)
+    oKHeader.CharWeight  = com.sun.star.awt.FontWeight.BOLD
+    oKHeader.CellBackColor = RGB(44, 62, 80)
+    oKHeader.HoriJustify = com.sun.star.table.CellHoriJustify.CENTER
+ 
+    ' Filas de productos desde K3 en adelante
+    Dim p As Integer
+    For p = 0 To UBound(productos)
+        Dim oKCell As Object
+        oKCell = oSheet.getCellByPosition(10, p + 2)  ' K3, K4, …
+        oKCell.String = productos(p)
+        oKCell.CharColor = RGB(44, 62, 80)
+        If (p Mod 2) = 0 Then
+            oKCell.CellBackColor = RGB(236, 240, 241)
+        Else
+            oKCell.CellBackColor = RGB(255, 255, 255)
+        End If
+    Next p
+ 
+    ' Ancho cómodo para la columna K
+    oSheet.getColumns().getByName("K").Width = 5500
+ 
+    oCatSheet.protect("")
+    ' ── Fin catálogo ─────────────────────────────────────────────────────
+
+    IrAB3
+    IniciarEscuchadorEnter
+    MsgBox "Sistema POS inicializado.", 64, "TPV"
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' HELPER: Escribe la fila de TOTAL en la fila dada (índice base 0)
+' -----------------------------------------------------------------------------
+Sub ColocarFilaTotal(oSheet As Object, filaIdx As Integer)
+
+    ' Limpiar celda D anterior por si quedó algo
+    ' (la fórmula de E se recalcula sola)
+
+    Dim oCeldaLabel As Object
+    Dim oCeldaValor As Object
+
+    oCeldaLabel = oSheet.getCellByPosition(3, filaIdx)  ' columna D
+    oCeldaValor = oSheet.getCellByPosition(4, filaIdx)  ' columna E
+
+    ' Estilo TOTAL en D
+    oCeldaLabel.String = "TOTAL:"
+    oCeldaLabel.CharColor = RGB(255,255,255)
+    oCeldaLabel.CharWeight = com.sun.star.awt.FontWeight.BOLD
+    oCeldaLabel.CellBackColor = RGB(192,57,43)
+
+    ' Fórmula dinámica: suma desde fila FILA_PRODUCTOS_INICIO+1 hasta la fila anterior
+    Dim filaInicio As Integer
+    Dim filaFin As Integer
+
+    filaInicio = FILA_PRODUCTOS_INICIO + 1  ' en notación A1 (base 1)
+    filaFin    = filaIdx                    ' fila actual en base 1 (filaIdx base0 + 1 - 1 = filaIdx)
+
+    If filaFin < filaInicio Then
+        ' Tabla vacía: fórmula de rango vacío → 0
+        oCeldaValor.Formula = "=0"
+    Else
+        oCeldaValor.Formula = "=SUM(E" & filaInicio & ":E" & filaFin & ")"
+    End If
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' HELPER: Borra la fila de TOTAL (para moverla)
+' -----------------------------------------------------------------------------
+Sub LimpiarFilaTotal(oSheet As Object, filaIdx As Integer)
+
+    Dim oCeldaLabel As Object
+    Dim oCeldaValor As Object
+
+    oCeldaLabel = oSheet.getCellByPosition(3, filaIdx)
+    oCeldaValor = oSheet.getCellByPosition(4, filaIdx)
+
+    oCeldaLabel.clearContents(1023)
+    oCeldaValor.clearContents(1023)
+
+    ' Restaurar fondo por si quedó coloreado
+    oCeldaLabel.CellBackColor = -1
+    oCeldaValor.CellBackColor = -1
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' HELPER: Devuelve en qué fila (índice base 0) está actualmente el TOTAL
+' Se detecta buscando "TOTAL:" en columna D desde FILA_PRODUCTOS_INICIO en adelante
+' -----------------------------------------------------------------------------
+Function ObtenerFilaTotal(oSheet As Object) As Integer
+
+    Dim i As Integer
+
+    For i = FILA_PRODUCTOS_INICIO To 9999
+
+        If oSheet.getCellByPosition(3, i).String = "TOTAL:" Then
+            ObtenerFilaTotal = i
+            Exit Function
+        End If
+
+    Next i
+
+    ' Si no se encontró, devolver posición base
+    ObtenerFilaTotal = FILA_PRODUCTOS_INICIO
+
+End Function
+
+' -----------------------------------------------------------------------------
+' HELPER: Cuenta cuántos productos hay actualmente en la tabla
+' -----------------------------------------------------------------------------
+Function ContarProductos(oSheet As Object) As Integer
+
+    Dim n As Integer
+    Dim cuenta As Integer
+    cuenta = 0
+
+    For n = FILA_PRODUCTOS_INICIO To 9999
+
+        Dim s As String
+        s = oSheet.getCellByPosition(1, n).String
+
+        If s = "TOTAL:" Or s = "" Then
+            ' Llegamos al final (o a celda vacía antes del total)
+            ' En realidad los productos están en columna B (índice 1)
+            ' y el TOTAL está en columna D (índice 3), no B
+            ' así que seguimos hasta encontrar vacío en B
+            If s = "" Then Exit For
+        End If
+
+        If s <> "" Then cuenta = cuenta + 1
+
+    Next n
+
+    ContarProductos = cuenta
+
+End Function
+
+' -----------------------------------------------------------------------------
+' 3. INICIAR LISTENERS
+' -----------------------------------------------------------------------------
+Sub IniciarEscuchadorEnter
+
+    On Error Resume Next
+
+    oView = ThisComponent.CurrentController
+
+    If Not IsNull(oSelectionChangeListener) Then
+        oView.removeSelectionChangeListener(oSelectionChangeListener)
+    End If
+
+    If Not IsNull(oKeyHandler) Then
+        oView.removeKeyHandler(oKeyHandler)
+    End If
+
+    oSelectionChangeListener = CreateUnoListener( _
+        "Enter_", _
+        "com.sun.star.view.XSelectionChangeListener" _
+    )
+    oView.addSelectionChangeListener(oSelectionChangeListener)
+
+    oKeyHandler = CreateUnoListener( _
+        "Key_", _
+        "com.sun.star.awt.XKeyHandler" _
+    )
+    oView.addKeyHandler(oKeyHandler)
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' 4. BLOQUEO DE CURSOR
+' -----------------------------------------------------------------------------
+Sub Enter_selectionChanged(oEvent)
+
+    On Error Resume Next
+
+    If bBloqueandoCursor Then Exit Sub
+
+    ' ── Solo aplicar el bloqueo si estamos en la hoja TPV ──
+    Dim oHojaActiva As Object
+    oHojaActiva = ThisComponent.CurrentController.ActiveSheet
+
+    If oHojaActiva.Name <> "TPV" Then Exit Sub
+
+    Dim oSel As Object
+    oSel = ThisComponent.CurrentSelection
+
+    If oSel.supportsService("com.sun.star.table.Cell") Then
+        Dim r As Long
+        Dim c As Long
+        r = oSel.CellAddress.Row
+        c = oSel.CellAddress.Column
+
+        If r <> 2 Or (c < 1 Or c > 3) Then
+            bBloqueandoCursor = True
+            IrAB3
+            bBloqueandoCursor = False
+        End If
+    End If
+
+End Sub
+
+Sub ActualizarSugerencias
+End Sub
+
+' -----------------------------------------------------------------------------
+' 5. EVENTOS DE TECLADO
+' -----------------------------------------------------------------------------
+Function Key_keyPressed(oEvent) As Boolean
+
+
+    Key_keyPressed = False
+End Function
+
+Function Key_keyReleased(oEvent) As Boolean
+
+    On Error Resume Next
+
+    Dim keyCode As Integer
+    keyCode = oEvent.KeyCode
+
+    ' TAB → autocompletar si estamos en B3
+    If keyCode = 1282 Then
+        Dim oSel As Object
+        oSel = ThisComponent.CurrentSelection
+        If oSel.supportsService("com.sun.star.table.Cell") Then
+            If oSel.CellAddress.Row = 2 And oSel.CellAddress.Column = 1 Then
+                AutocompletarB3
+                Key_keyReleased = True
+                Exit Function
+            End If
+        End If
+    End If
+
+    If keyCode = 1280 Or keyCode = 1281 Then
+        AgregarProducto
+        Key_keyReleased = True
+        Exit Function
+    End If
+
+    If keyCode = 764 Then
+        FinalizarVentaEImprimir
+        Key_keyReleased = True
+        Exit Function
+    End If
+
+    Key_keyReleased = False
+
+End Function
+
+Sub Key_disposing(oEvent)
+End Sub
+
+' -----------------------------------------------------------------------------
+' 6. AGREGAR PRODUCTO  ← MODIFICADO
+' -----------------------------------------------------------------------------
+Sub AgregarProducto
+
+	' Confirmar cualquier edición activa antes de leer los valores
+    Dim oFrame As Object
+    Dim oDispatcher As Object
+    oFrame      = ThisComponent.CurrentController.Frame
+    oDispatcher = createUnoService("com.sun.star.frame.DispatchHelper")
+    oDispatcher.executeDispatch(oFrame, ".uno:AcceptFormula", "", 0, Array())
+
+    Dim oDoc As Object
+    Dim oSheet As Object
+
+    oDoc = ThisComponent
+    oSheet = oDoc.Sheets.getByName("TPV")
+
+    Dim prod As String
+    Dim precio As Double
+    Dim cant As Integer
+
+    prod   = CapitalizarTexto(oSheet.getCellRangeByName("B3").String)
+    precio = CDbl(SoloNumeros(CStr(oSheet.getCellRangeByName("C3").String)))
+    cant = CInt(Int(CDbl(SoloNumeros(CStr(oSheet.getCellRangeByName("D3").String)))))
+
+    If prod = "" Then
+        FinalizarVentaEImprimir
+        Exit Sub
+    End If
+
+    If cant <= 0 Then cant = 1
+
+    oSheet.unprotect("")
+
+    ' ── Encontrar dónde está el TOTAL actualmente ──
+    Dim filaTotal As Integer
+    filaTotal = ObtenerFilaTotal(oSheet)
+
+    ' ── Limpiar el TOTAL de donde está ──
+    LimpiarFilaTotal(oSheet, filaTotal)
+
+    ' ── Escribir el producto en esa fila (donde estaba el TOTAL) ──
+    oSheet.getCellByPosition(1, filaTotal).String  = prod
+    oSheet.getCellByPosition(2, filaTotal).Value   = precio
+    oSheet.getCellByPosition(3, filaTotal).Value   = cant
+    oSheet.getCellByPosition(4, filaTotal).Formula = _
+        "=C" & (filaTotal+1) & "*D" & (filaTotal+1)
+
+    ' ── Colocar el TOTAL en la siguiente fila ──
+    ColocarFilaTotal(oSheet, filaTotal + 1)
+
+    ' ── Limpiar input ──
+    oSheet.getCellRangeByName("B3:C3").clearContents(7)
+    oSheet.getCellRangeByName("D3").Value = 1
+
+    oSheet.protect("")
+    
+    GuardarArchivo
+
+    IrAB3
+
+End Sub
+
+Function SoloNumeros(s As String) As String
+    Dim i As Integer
+    Dim c As String
+    Dim resultado As String
+    Dim tuvoPunto As Boolean
+    resultado = ""
+    tuvoPunto = False
+    
+    For i = 1 To Len(s)
+        c = Mid(s, i, 1)
+        If c >= "0" And c <= "9" Then
+            resultado = resultado & c
+        ElseIf (c = "." Or c = ",") And Not tuvoPunto Then
+            resultado = resultado & "."
+            tuvoPunto = True
+        End If
+    Next i
+    
+    SoloNumeros = resultado
+End Function
+
+' -----------------------------------------------------------------------------
+' 7. COBRAR + IMPRIMIR
+' -----------------------------------------------------------------------------
+' -----------------------------------------------------------------------------
+' 7. COBRAR + IMPRIMIR (VERSIÓN OPTIMIZADA CON BUFFER GLOBAL Y QR INTEGRADO)
+' -----------------------------------------------------------------------------
+Sub FinalizarVentaEImprimir
+
+    On Error Resume Next
+    
+    ' PREGUNTAR MONTO
+    Dim sMontoCliente As String
+    sMontoCliente = InputBox("Monto recibido del cliente ($):", "Cobrar")
+    
+    If Trim(sMontoCliente) = "" Then Exit Sub
+    
+    Dim sLimpio As String
+    sLimpio = SoloNumeros(sMontoCliente)
+    
+    If sLimpio = "" Then Exit Sub
+    
+    Dim montoCliente As Double
+    montoCliente = CDbl(sLimpio)
+    
+    If montoCliente <= 0 Then Exit Sub
+    'FIN DE PREGUNTAR MONTO
+
+    Dim oDoc As Object
+    Dim oSheetTPV As Object
+    Dim oSheetHist As Object
+
+    oDoc = ThisComponent
+    oSheetTPV = oDoc.Sheets.getByName("TPV")
+
+    If Not oDoc.Sheets.hasByName("Historial") Then
+        oDoc.Sheets.insertNewByName("Historial", oDoc.Sheets.Count)
+    End If
+
+    oSheetHist = oDoc.Sheets.getByName("Historial")
+    oSheetHist.unprotect("")
+
+    Dim i As Integer
+    Dim lastRow As Long
+    Dim huboVenta As Boolean
+    huboVenta = False
+
+    Dim tActual As Date
+    tActual = Now()
+
+    ' 1. Encontrar fila del TOTAL para saber hasta dónde leer en la interfaz
+    Dim filaTotal As Integer
+    filaTotal = ObtenerFilaTotal(oSheetTPV)
+
+    Dim totalTicket As Double
+    totalTicket = oSheetTPV.getCellByPosition(4, filaTotal).Value
+
+    ' --- INICIALIZAR EL BUFFER GLOBAL DE IMPRESIÓN ---
+    Init() ' Esto limpia el buffer, añade ESC @ e inicializa las variables globales
+
+    ' 2. ENCABEZADO DEL TICKET (Configuraciones de línea compactas y alineación)
+    CommandPrint("3", 20) ' ESC 3 20 -> Espaciado de línea más compacto
+    
+    ' Alineación centrada y Negrita activada
+    AppendByte(ESC) : AppendByte(97) : AppendByte(1)  ' Centro
+    AppendByte(ESC) : AppendByte(69) : AppendByte(1)  ' Negrita ON
+    AddPrint("YAELI'S BOUTIQUE")
+    
+    ' Desactivar negrita y mantener centrado para dirección
+    AppendByte(ESC) : AppendByte(69) : AppendByte(0)  ' Negrita OFF
+    AddPrint("Calle Pinosuarez No. 412")
+    AddPrint("Zona Centro C.P. 34000")
+    AddPrint("RFC: CAAN8209242C0")
+    AddPrint("")
+    
+    ' Cambiar a alineación izquierda para fecha y hora
+    AppendByte(ESC) : AppendByte(97) : AppendByte(0)  ' Izquierda
+    CommandPrint("3", 10) ' Espaciado de línea ultra corto para metadatos
+    AddPrint("Fecha: " & Format(tActual, "dd/mm/yyyy"))
+    AddPrint("Hora:  " & Format(tActual, "hh:mm:ss"))
+    AddLinePrint()
+
+    ' ENCABEZADOS DE LA TABLA DE ARTÍCULOS
+    CommandPrint("3", 20)
+    AppendByte(ESC) : AppendByte(69) : AppendByte(1)  ' Negrita ON
+    AddPrint("PRODUCTO")
+    CommandPrint("3", 10)
+    AddPrint("PRECIO      CANT.   SUBTOTAL")
+    AppendByte(ESC) : AppendByte(69) : AppendByte(0)  ' Negrita OFF
+    AddLinePrint()
+    CommandPrint("3", 20)
+
+    ' 3. RECORRER PRODUCTOS, REGISTRAR EN HISTORIAL Y ENVIAR AL BUFFER
+    For i = FILA_PRODUCTOS_INICIO To filaTotal - 1
+
+        Dim prod As String
+        Dim precio As Double
+        Dim cant As Integer
+        Dim subtotal As Double
+
+        prod = oSheetTPV.getCellByPosition(1, i).String
+
+        If prod <> "" Then
+
+            huboVenta = True
+
+            precio   = oSheetTPV.getCellByPosition(2, i).Value
+            cant     = oSheetTPV.getCellByPosition(3, i).Value
+            subtotal = oSheetTPV.getCellByPosition(4, i).Value
+
+            ' Registrar de forma segura en la hoja Historial
+            Dim oCursor As Object
+            oCursor = oSheetHist.createCursor()
+            oCursor.gotoEndOfUsedArea(False)
+            lastRow = oCursor.RangeAddress.EndRow + 1
+
+            oSheetHist.getCellByPosition(0, lastRow).Value  = Int(tActual)
+            oSheetHist.getCellByPosition(1, lastRow).Value  = tActual - Int(tActual)
+            oSheetHist.getCellByPosition(2, lastRow).String = prod
+            oSheetHist.getCellByPosition(3, lastRow).Value  = precio
+            oSheetHist.getCellByPosition(4, lastRow).Value  = cant
+            oSheetHist.getCellByPosition(5, lastRow).Value  = subtotal
+
+            ' Armar formato de strings para las filas de productos
+            AddPrint(prod)
+            AddPrint("$" & Format(precio,"0.00") & "      " & cant & "        $" & Format(subtotal,"0.00"))
+                
+            ' Añadir una separación de línea controlada si no es el último artículo
+            If i < filaTotal - 1 Then
+                AddPrint("")
+            End If
+
+        End If
+
+    Next i
+
+    ' Control de contingencia en caso de intentar cobrar una tabla vacía
+    If Not huboVenta Then
+        oSheetHist.protect("")
+        MsgBox "No hay productos en el ticket actual.", 48, "TPV"
+        Exit Sub
+    End If
+
+    ' 4. PIE DE TICKET (Cierres aritméticos)
+    CommandPrint("3", 10)
+    AddLinePrint()
+    AppendByte(ESC) : AppendByte(69) : AppendByte(1)  ' Negrita ON
+    AddPrint("TOTAL: $" & Format(totalTicket,"0.00"))
+    AppendByte(ESC) : AppendByte(69) : AppendByte(0)  ' Negrita OFF
+    AddLinePrint()
+    
+    Dim cambio As Double
+    cambio = montoCliente - totalTicket
+    
+    AppendByte(ESC) : AppendByte(97) : AppendByte(0)  ' Izquierda
+    AddPrint("Recibido: $" & Format(montoCliente, "0.00"))
+    If cambio >= 0 Then
+        AppendByte(ESC) : AppendByte(69) : AppendByte(1)
+        AddPrint("Cambio:   $" & Format(cambio, "0.00"))
+        AppendByte(ESC) : AppendByte(69) : AppendByte(0)
+    Else
+        AddPrint("** MONTO INSUFICIENTE **")
+    End If
+    AppendByte(ESC) : AppendByte(97) : AppendByte(1)  ' Volver a centrado
+    AddLinePrint()
+    
+    CommandPrint("3", 20)
+    AddPrint("")
+    AppendByte(ESC) : AppendByte(97) : AppendByte(1)  ' Centrado
+    AddPrint("GRACIAS POR SU COMPRA")
+    AddPrint("")
+    AppendByte(ESC) : AppendByte(69) : AppendByte(1)  ' Negrita ON
+    AddPrint("No se aceptan cambios")
+    AddPrint("ni devoluciones.")
+    AppendByte(ESC) : AppendByte(69) : AppendByte(0)  ' Negrita OFF
+    AddPrint("")
+
+    ' --- EJECUCIÓN DEL SCRIPT DE PYTHON PARA GENERAR EL QR EN DISCO ---
+    ' Dim sURLTarget As String, sRutaScript As String, sRutaQR As String
+    ' sURLTarget = "https://yaelisboutique.com"
+    ' sRutaScript = "test.py" 
+    ' sRutaQR = "/tmp/qr_buffer.bin" ' Ruta síncrona con AddQRWebsitePrint
+    
+    ' El script de python escribe directo en /tmp/qr_buffer.bin de forma síncrona (True)
+    ' Shell("sh -c ""python3 " & sRutaScript & " '" & sURLTarget & "'""", 0, True)
+    
+    ' --- INYECCIÓN BINARIA DEL QR DESDE EL ARCHIVO AL BUFFER GLOBAL ---
+    ' Esta subrutina lee el archivo binario generado, calcula su tamaño e inyecta los comandos ESC/POS gráficos
+    AddQRWebsitePrint()
+    
+    ' 5. TEXTO POSTERIOR AL CÓDIGO QR Y COMANDOS DE APERTURA / CORTE
+    AppendByte(ESC) : AppendByte(97) : AppendByte(1)  ' Asegurar centrado post-QR
+    AppendByte(ESC) : AppendByte(69) : AppendByte(1)  
+    CommandPrint("3", 20)
+    AddPrint("Visita nuestra página.")
+    AppendByte(ESC) : AppendByte(69) : AppendByte(0)
+    AppendByte(ESC) : AppendByte(50)                  ' ESC 2 -> Restablecer espaciado de línea por defecto
+    
+    ' Alimentación de papel controlada para separación física de la cuchilla
+    AddPrint("")
+    AddPrint("")
+    AddPrint("")
+    
+    ' Comando ESC/POS para Apertura de Cajón de dinero (Pulse a pin 2)
+    AppendByte(ESC) : AppendByte(112) : AppendByte(0) : AppendByte(48) : AppendByte(48)
+    
+    
+    ' --- DESPACHO COMPLETO DEL TICKET ---
+    ' Vuelca todo el buffer de memoria construido a un único archivo binario y lo envía al hardware /dev/usb/lp0
+    DebugBuffer()
+    SendPrint()
+
+    ' 6. LIMPIEZA DE INTERFAZ Y REINICIO DE CICLO POS
+    ReiniciarTabla(oSheetTPV)
+    oSheetHist.protect("")
+    ActualizarTablasDinamicas()
+    IrAB3()
+
+    MsgBox "Venta procesada e impresa exitosamente.", 64, "TPV"
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' HELPER: Limpia toda la tabla y devuelve el TOTAL a la posición inicial
+' -----------------------------------------------------------------------------
+Sub ReiniciarTabla(oSheet As Object)
+
+    oSheet.unprotect("")
+
+    ' Borrar todo desde FILA_PRODUCTOS_INICIO hacia abajo
+    ' hasta encontrar una fila completamente vacía tras el TOTAL
+    Dim filaTotal As Integer
+    filaTotal = ObtenerFilaTotal(oSheet)
+
+    ' Limpiar productos
+    Dim rng As Object
+    Dim filaInicioA1 As Integer
+    Dim filaTotalA1  As Integer
+
+    filaInicioA1 = FILA_PRODUCTOS_INICIO + 1  ' base 1
+    filaTotalA1  = filaTotal + 1              ' base 1
+
+    If filaTotalA1 > filaInicioA1 Then
+        ' Hay al menos un producto: limpiar B:E desde inicio hasta fila del total inclusive
+        rng = oSheet.getCellRangeByName( _
+            "B" & filaInicioA1 & ":E" & filaTotalA1 _
+        )
+        rng.clearContents(1023)
+        ' Restaurar fondos
+        rng.CellBackColor = -1
+    End If
+
+    ' Limpiar input
+    oSheet.getCellRangeByName("B3:C3").clearContents(7)
+    oSheet.getCellRangeByName("D3").Value = 1
+
+    ' Colocar TOTAL de nuevo en la posición inicial
+    ColocarFilaTotal(oSheet, FILA_PRODUCTOS_INICIO)
+
+    oSheet.protect("")
+    
+    GuardarArchivo
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' 8. LIMPIAR TICKET
+' -----------------------------------------------------------------------------
+Sub LimpiarTicket
+
+    Dim oDoc As Object
+    Dim oSheet As Object
+
+    oDoc   = ThisComponent
+    oSheet = oDoc.Sheets.getByName("TPV")
+
+    ReiniciarTabla(oSheet)
+
+    IrAB3
+
+    MsgBox "Ticket limpiado.", 64, "TPV"
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' 9. ACTUALIZAR TABLAS
+' -----------------------------------------------------------------------------
+Sub ActualizarTablasDinamicas
+
+    Dim oDoc As Object
+    Dim i As Integer
+    Dim j As Integer
+
+    oDoc = ThisComponent
+    On Error Resume Next
+
+    For i = 0 To oDoc.Sheets.Count - 1
+        Dim oSheet As Object
+        Dim oPivots As Object
+        oSheet  = oDoc.Sheets.getByIndex(i)
+        oPivots = oSheet.DataPilotTables
+        For j = 0 To oPivots.Count - 1
+            oPivots.getByIndex(j).refresh()
+        Next j
+    Next i
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' 10. IR A B3 Y DEVOLVER ENFOQUE A LA HOJA
+' -----------------------------------------------------------------------------
+Sub IrAB3
+
+    On Error Resume Next
+    
+    ActualizarSugerencias
+
+    Dim oFrame As Object
+    Dim oDispatcher As Object
+    Dim args(0) As New com.sun.star.beans.PropertyValue
+
+    oFrame      = ThisComponent.CurrentController.Frame
+    oDispatcher = createUnoService("com.sun.star.frame.DispatchHelper")
+
+    ' 1. Mover la selección visual a B3
+    args(0).Name  = "ToPoint"
+    args(0).Value = "$B$3"
+    oDispatcher.executeDispatch(oFrame, ".uno:GoToCell", "", 0, args())
+
+    ' 2. ARREGLO DEL FOCO: Forzar a la ventana de la hoja a tomar el control del teclado
+    Dim oWindow As Object
+    oWindow = oFrame.getContainerWindow()
+    If Not IsNull(oWindow) Then
+        oWindow.setFocus()
+    End If
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' 11. CREAR BOTONES
+' -----------------------------------------------------------------------------
+Sub CrearBoton( _
+    oSheet As Object, _
+    x As Long, y As Long, _
+    ancho As Long, alto As Long, _
+    label As String, _
+    macroName As String _
+)
+    Dim oControlShape As Object
+    Dim oControlModel As Object
+
+    Dim aPos  As New com.sun.star.awt.Point
+    Dim aSize As New com.sun.star.awt.Size
+
+    aPos.X  = x      : aPos.Y  = y
+    aSize.Width = ancho : aSize.Height = alto
+
+    oControlShape = ThisComponent.createInstance("com.sun.star.drawing.ControlShape")
+    oControlModel = ThisComponent.createInstance("com.sun.star.form.component.CommandButton")
+
+    oControlShape.setControl(oControlModel)
+    oSheet.DrawPage.add(oControlShape)
+    oControlShape.setPosition(aPos)
+    oControlShape.setSize(aSize)
+
+    oControlShape.getControl().Label = label
+
+    Dim sMacroURL As String
+    sMacroURL = "vnd.sun.star.script:Standard.Module1." & macroName & "?language=Basic&location=document"
+
+    Dim aEvent As New com.sun.star.script.ScriptEventDescriptor
+    aEvent.ListenerType  = "XActionListener"
+    aEvent.EventMethod   = "actionPerformed"
+    aEvent.ScriptType    = "Script"
+    aEvent.ScriptCode    = sMacroURL
+
+    oSheet.DrawPage.Forms.getByIndex(0).registerScriptEvent( _
+        oSheet.DrawPage.Forms.getByIndex(0).Count - 1, _
+        aEvent _
+    )
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' RECUADRO DE INSTRUCCIONES
+' -----------------------------------------------------------------------------
+Sub CrearRecuadroInstrucciones(oSheet As Object)
+
+    ' Rango G2:I6
+    Dim rng As Object
+    rng = oSheet.getCellRangeByName("G2:I6")
+
+    rng.CellBackColor = RGB(250, 250, 250)
+
+    Dim oBorderLine As New com.sun.star.table.BorderLine2
+    oBorderLine.LineStyle = com.sun.star.table.BorderLineStyle.SOLID
+    oBorderLine.LineWidth = 26
+    oBorderLine.Color = RGB(44, 62, 80)
+
+    Dim oTableBorder As New com.sun.star.table.TableBorder2
+    oTableBorder.TopLine           = oBorderLine
+    oTableBorder.BottomLine        = oBorderLine
+    oTableBorder.LeftLine          = oBorderLine
+    oTableBorder.RightLine         = oBorderLine
+    oTableBorder.IsTopLineValid    = True
+    oTableBorder.IsBottomLineValid = True
+    oTableBorder.IsLeftLineValid   = True
+    oTableBorder.IsRightLineValid  = True
+
+    rng.TableBorder2 = oTableBorder
+
+    ' Título
+    oSheet.getCellRangeByName("G2:I2").merge(True)
+    Dim oTitulo As Object
+    oTitulo = oSheet.getCellByPosition(6, 1)
+    oTitulo.String = "INSTRUCCIONES"
+    oTitulo.CharColor = RGB(44, 62, 80)
+    oTitulo.CharWeight = com.sun.star.awt.FontWeight.BOLD
+    oTitulo.HoriJustify = com.sun.star.table.CellHoriJustify.CENTER
+    oTitulo.CellBackColor = RGB(213, 219, 219)
+
+    ' Instrucciones
+    Dim instrucciones(2) As String
+    instrucciones(0) = "1. Escribe Nombre y Precio"
+    instrucciones(1) = "2. Cambia la cantidad si es más de 1"
+    instrucciones(2) = "3. ENTER para agregar o cobrar"
+
+    Dim j As Integer
+    For j = 0 To 2
+        oSheet.getCellRangeByName("G" & (j+4) & ":I" & (j+4)).merge(True)
+        Dim oLinea As Object
+        oLinea = oSheet.getCellByPosition(6, j+3)
+        oLinea.String = instrucciones(j)
+        oLinea.CharColor = RGB(44, 62, 80)
+        oLinea.CellBackColor = RGB(250, 250, 250)
+        oLinea.CharHeight = 9
+    Next j
+
+End Sub
+
+' -----------------------------------------------------------------------------
+' 12. BORRAR BOTONES
+' -----------------------------------------------------------------------------
+Sub BorrarBotones(oSheet As Object)
+    On Error Resume Next
+    Dim i As Integer
+    For i = oSheet.DrawPage.Count - 1 To 0 Step -1
+        oSheet.DrawPage.remove(oSheet.DrawPage.getByIndex(i))
+    Next i
+End Sub
+
+' -----------------------------------------------------------------------------
+' 13. CAPITALIZAR
+' -----------------------------------------------------------------------------
+Function CapitalizarTexto(ByVal texto As String) As String
+
+    Dim palabras() As String
+    Dim i As Integer
+
+    texto    = LCase(Trim(texto))
+    palabras = Split(texto, " ")
+
+    For i = 0 To UBound(palabras)
+        If Len(palabras(i)) > 0 Then
+            palabras(i) = UCase(Left(palabras(i),1)) & Mid(palabras(i),2)
+        End If
+    Next i
+
+    CapitalizarTexto = Join(palabras, " ")
+
+End Function
+
+' -----------------------------------------------------------------------------
+' GUARDAR ARCHIVO
+' -----------------------------------------------------------------------------
+Sub GuardarArchivo
+    On Error Resume Next
+    ThisComponent.store()
+End Sub
+
+
+
+' =============================================================================
+' AUTOCOMPLETADO B3
+' =============================================================================
+
+' Preposiciones que se ignoran al generar acrónimos y al comparar
+Function EsPreposicion(palabra As String) As Boolean
+    Dim preps As String
+    preps = "|de|del|la|el|los|las|un|una|unos|unas|y|o|"
+    EsPreposicion = InStr(preps, "|" & LCase(palabra) & "|") > 0
+End Function
+
+' Genera acrónimo de un nombre de producto (ej: "Pantalón de Mezclilla Cargo" → "pmc")
+Function GenerarAcronimo(nombre As String) As String
+    Dim palabras() As String
+    Dim i As Integer
+    Dim resultado As String
+    resultado = ""
+    palabras = Split(nombre, " ")
+    For i = 0 To UBound(palabras)
+        Dim p As String
+        p = Trim(palabras(i))
+        If Len(p) > 0 And Not EsPreposicion(p) Then
+            resultado = resultado & LCase(Left(p, 1))
+        End If
+    Next i
+    GenerarAcronimo = resultado
+End Function
+
+' Devuelve array de productos del catálogo (columna K desde K3)
+Function ObtenerCatalogo() As Variant
+    Dim oSheet As Object
+    Dim lista() As String
+    Dim cuenta As Integer
+    Dim i As Integer
+
+    oSheet = ThisComponent.Sheets.getByName("TPV")
+    cuenta = 0
+
+    ' Contar productos
+    i = 2 ' fila índice base 0 → K3
+    Do While oSheet.getCellByPosition(10, i).String <> ""
+        cuenta = cuenta + 1
+        i = i + 1
+    Loop
+
+    If cuenta = 0 Then
+        ObtenerCatalogo = Array()
+        Exit Function
+    End If
+
+    ReDim lista(cuenta - 1)
+    For i = 0 To cuenta - 1
+        lista(i) = oSheet.getCellByPosition(10, i + 2).String
+    Next i
+
+    ObtenerCatalogo = lista
+End Function
+
+' Prefijo común por palabras completas entre dos strings
+' Ej: "Pantalón de Mezclilla Cargo" y "Pantalón de Mezclilla Campana" → "Pantalón de Mezclilla"
+Function PrefijoComunPalabras(a As String, b As String) As String
+    Dim pA() As String
+    Dim pB() As String
+    Dim i As Integer
+    Dim resultado As String
+    Dim limite As Integer
+
+    pA = Split(a, " ")
+    pB = Split(b, " ")
+
+    If UBound(pA) < UBound(pB) Then
+        limite = UBound(pA)
+    Else
+        limite = UBound(pB)
+    End If
+
+    resultado = ""
+    For i = 0 To limite
+        If LCase(pA(i)) = LCase(pB(i)) Then
+            If resultado = "" Then
+                resultado = pA(i)
+            Else
+                resultado = resultado & " " & pA(i)
+            End If
+        Else
+            Exit For
+        End If
+    Next i
+
+    PrefijoComunPalabras = resultado
+End Function
+
+' Expande tokens del input usando el diccionario de acrónimos generado en ejecución
+' Devuelve el texto expandido
+Function ExpandirAcronimos(inputTexto As String, catalogo As Variant) As String
+    Dim claves(200) As String
+    Dim valores(200) As String
+    Dim nClaves As Integer
+    nClaves = 0
+
+    Dim i As Integer
+    For i = 0 To UBound(catalogo)
+        Dim acr As String
+        acr = GenerarAcronimo(catalogo(i))
+
+        Dim j As Integer
+        Dim encontrado As Boolean
+        encontrado = False
+        For j = 0 To nClaves - 1
+            If claves(j) = acr Then
+                valores(j) = PrefijoComunPalabras(valores(j), catalogo(i))
+                encontrado = True
+                Exit For
+            End If
+        Next j
+
+        If Not encontrado Then
+            claves(nClaves) = acr
+            valores(nClaves) = catalogo(i)
+            nClaves = nClaves + 1
+        End If
+    Next i
+
+    Dim tokens() As String
+    tokens = Split(LCase(Trim(inputTexto)), " ")
+    Dim resultado As String
+    resultado = ""
+
+    For i = 0 To UBound(tokens)
+        Dim tok As String
+        tok = Trim(tokens(i))
+        If tok = "" Then GoTo SiguienteTok
+
+        Dim expandido As String
+        expandido = tok
+        Dim mejorLen As Integer
+        mejorLen = 0
+
+        For j = 0 To nClaves - 1
+            If Left(claves(j), Len(tok)) = tok Then
+                If mejorLen = 0 Then
+                    expandido = valores(j)
+                    mejorLen = 1
+                Else
+                    expandido = PrefijoComunPalabras(expandido, valores(j))
+                End If
+            End If
+        Next j
+
+        If resultado = "" Then
+            resultado = expandido
+        Else
+            resultado = resultado & " " & expandido
+        End If
+
+        SiguienteTok:
+    Next i
+
+    ExpandirAcronimos = resultado
+End Function
+
+' Verifica si todos los tokens aparecen como subcadena en el nombre del producto
+Function ProductoMatchea(nombre As String, tokens() As String) As Boolean
+    Dim i As Integer
+    Dim nombreLower As String
+    nombreLower = LCase(nombre)
+
+    For i = 0 To UBound(tokens)
+        Dim tok As String
+        tok = Trim(tokens(i))
+        If tok <> "" Then
+            If InStr(nombreLower, LCase(tok)) = 0 Then
+                ProductoMatchea = False
+                Exit Function
+            End If
+        End If
+    Next i
+
+    ProductoMatchea = True
+End Function
+
+' Función principal de autocompletado — se llama al presionar Tab en B3
+Sub AutocompletarB3
+
+    Dim oSheet As Object
+    oSheet = ThisComponent.Sheets.getByName("TPV")
+
+    Dim inputRaw As String
+    inputRaw = Trim(oSheet.getCellRangeByName("B3").String)
+
+    If inputRaw = "" Then MsgBox "Salió: input vacío" : Exit Sub
+
+    Dim catalogo As Variant
+    catalogo = ObtenerCatalogo()
+
+    If UBound(catalogo) < 0 Then MsgBox "Salió: catálogo vacío" : Exit Sub
+
+    Dim inputExpandido As String
+    inputExpandido = ExpandirAcronimos(inputRaw, catalogo)
+
+    Dim tokens() As String
+    tokens = Split(LCase(Trim(inputExpandido)), " ")
+
+    Dim candidatos(200) As String
+    Dim nCandidatos As Integer
+    nCandidatos = 0
+
+    Dim i As Integer
+    For i = 0 To UBound(catalogo)
+        If ProductoMatchea(catalogo(i), tokens) Then
+            candidatos(nCandidatos) = catalogo(i)
+            nCandidatos = nCandidatos + 1
+        End If
+    Next i
+
+    If nCandidatos = 0 Then Exit Sub
+
+    Dim resultado As String
+
+    If nCandidatos = 1 Then
+        resultado = candidatos(0)
+    Else
+        resultado = candidatos(0)
+        For i = 1 To nCandidatos - 1
+            resultado = PrefijoComunPalabras(resultado, candidatos(i))
+            ' If resultado = "" Then MsgBox "Salió: prefijo vacío" : Exit Sub
+        Next i
+    End If
+
+    If LCase(resultado) <> LCase(inputRaw) And resultado <> "" Then
+        oSheet.unprotect("")
+        oSheet.getCellRangeByName("B3").String = resultado
+        oSheet.protect("")
+    End If
+
+End Sub
