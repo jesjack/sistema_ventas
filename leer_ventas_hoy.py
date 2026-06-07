@@ -7,8 +7,8 @@ Uso:
 CSV de salida (sin encabezado, separado por comas):
     producto,cantidad,precio,subtotal
 
-Los productos se agrupan: si el mismo producto aparece en varias ventas del día
-se suman las cantidades y subtotales.
+Cada fila de venta se exporta por separado y se ordena de la hora más antigua
+a la más reciente.
 """
 
 import sys
@@ -32,18 +32,17 @@ if not os.path.exists(db_path):
 con = sqlite3.connect(db_path)
 cur = con.cursor()
 
-# Agrupar por producto: suma de cantidad y subtotal para las ventas de hoy
+# Exportar cada fila de venta por separado, ordenada por hora ascendente
 cur.execute("""
     SELECT
         i.producto,
-        SUM(i.cantidad)  AS total_cant,
+        i.cantidad       AS total_cant,
         i.precio,
-        SUM(i.subtotal)  AS total_sub
+        i.subtotal       AS total_sub
     FROM venta_items i
     JOIN ventas v ON v.id = i.venta_id
     WHERE v.fecha = ?
-    GROUP BY i.producto, i.precio
-    ORDER BY i.producto
+    ORDER BY v.hora ASC, v.id ASC, i.id ASC
 """, (hoy,))
 
 filas = cur.fetchall()

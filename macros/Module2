@@ -1,0 +1,181 @@
+REM  *****  BASIC  *****
+Global ESC As Byte
+Global GS As Byte
+Global buffer() As Byte
+Global bufLen As Long
+
+Const BUFFER_CHUNK As Long = 4096
+
+Sub Init
+    ESC = 27
+    GS  = 29
+    bufLen = 0
+    ReDim buffer(BUFFER_CHUNK)
+    AppendByte(ESC)
+    AppendByte(64) ' @
+End Sub
+
+Sub AppendByte(b As Byte)
+    If bufLen >= UBound(buffer) + 1 Then
+        ReDim Preserve buffer(UBound(buffer) + BUFFER_CHUNK)
+    End If
+    buffer(bufLen) = b
+    bufLen = bufLen + 1
+End Sub
+
+Sub AppendBytes(bytes() As Byte)
+    Dim i As Long
+    For i = 0 To UBound(bytes)
+        AppendByte(bytes(i))
+    Next i
+End Sub
+
+Sub CommandPrint(command As String, Optional val)
+    Dim i As Integer
+    AppendByte(ESC)
+    For i = 1 To Len(command)
+        AppendByte(Asc(Mid(command, i, 1)))
+    Next i
+    If Not IsMissing(val) Then
+        AppendByte(CByte(val))
+    End If
+End Sub
+
+Sub AddPrint(str As String)
+    Dim bytes() As Byte
+    bytes = StrConv(str & Chr(10), vbFromUnicode)
+    AppendBytes(bytes)
+End Sub
+
+Sub AddLinePrint
+    AddPrint("--------------------------------")
+End Sub
+
+Sub SendPrint
+    Dim sRuta As String
+    Dim fNum As Integer
+    sRuta = "/tmp/ticket.bin"
+    ' Kill es necesario: "Open For Binary" no trunca archivos existentes.
+	' Sin esto, tickets anteriores más largos dejan residuos al final.
+    If Dir(sRuta) <> "" Then Kill sRuta
+    fNum = FreeFile
+    Open sRuta For Binary As #fNum
+    Dim i As Long
+    For i = 0 To bufLen - 1
+        Put #fNum, , buffer(i)
+    Next i
+    Close #fNum
+    Shell("sh -c ""cat " & sRuta & " > /dev/usb/lp0""", 0)
+    Init
+End Sub
+
+Sub AddQRWebsitePrint()
+    Dim sRutaQR As String
+    Dim fNum As Integer
+    Dim fileLen As Long
+    Dim qrBytes() As Byte
+    Dim i As Long
+    
+    Shell("python3", 0, "test.py", True)
+    
+    ' 1. Ruta del archivo fijo creado por Python (ajusta la ruta según tu OS si es necesario)
+    ' Si estás en Windows usa algo como "C:\ruta\qr_buffer.bin"
+    sRutaQR = "/tmp/qr_buffer.bin" 
+    
+    ' Verificar si el archivo existe antes de intentar leerlo
+    If Dir(sRutaQR) = "" Then
+        MsgBox "Error: No se encontró el archivo " & sRutaQR, 16, "Error de Impresión"
+        Exit Sub
+    End If
+    
+    ' 2. Leer los bytes puros de la imagen desde el archivo
+    fNum = FreeFile
+    Open sRutaQR For Binary Access Read As #fNum
+    fileLen = LOF(fNum)
+    ReDim qrBytes(fileLen - 1)
+    Get #fNum, , qrBytes
+    Close #fNum
+    
+    ' 3. Calcular las dimensiones para el comando GS v 0 (Modo Raster)
+    ' Como el QR generado es cuadrado: Alto = Ancho en píxeles.
+    ' fileLen = alto * ancho_bytes. Por lo tanto: alto = Sqr(fileLen * 8) aprox.
+    ' Una forma directa y precisa basada en los bytes horizontales:
+    Dim alto As Long
+    Dim anchoBytes As Long
+    
+    alto = CLng(Sqr(fileLen * 8)) ' Estimación del alto en píxeles
+    anchoBytes = fileLen \ alto    ' Bytes de ancho reales
+    
+    ' Desglose de bytes de dimensión (Low/High byte) para el comando
+    Dim xL As Byte, xH As Byte
+    Dim yL As Byte, yH As Byte
+    
+    xL = CByte(anchoBytes And 255)
+    xH = CByte((anchoBytes \ 256) And 255)
+    yL = CByte(alto And 255)
+    yH = CByte((alto \ 256) And 255)
+    
+    ' 4. ENCABEZADOS ESC/POS
+    ' Comando: Centrar impresión (ESC a 1)
+    AppendByte(ESC)
+    AppendByte(97) ' a
+    AppendByte(1)  ' 0=Izquierda, 1=Centro, 2=Derecha
+    
+    ' Comando: Definir gráfico de bits raster (GS v 0 m xL xH yL yH)
+    AppendByte(GS)
+    AppendByte(118) ' v
+    AppendByte(48)  ' 0
+    AppendByte(0)   ' m = 0 (Modo normal)
+    AppendByte(xL)
+    AppendByte(xH)
+    AppendByte(yL)
+    AppendByte(yH)
+    
+    ' 5. DATOS DE LA IMAGEN
+    ' Inyectamos el buffer binario que leímos del archivo
+    AppendBytes(qrBytes)
+    
+    ' 6. COMANDOS DE FIN
+    ' Salto de línea (LF) para asegurar que se imprima el bloque gráfico
+    ' AppendByte(10) ' LF
+    
+    ' Restaurar alineación a la izquierda (ESC a 0)
+    AppendByte(ESC)
+    AppendByte(97) ' a
+    AppendByte(0)  ' 0=Izquierda
+End Sub
+
+Sub DebugBuffer
+    Dim sRuta As String
+    Dim fNum As Integer
+    Dim di As Long
+    Dim debugStr As String
+    
+    sRuta = "/tmp/debug_buffer.txt"
+    fNum = FreeFile
+    Open sRuta For Output As #fNum
+    
+    For di = 0 To bufLen - 1
+        If buffer(di) >= 32 And buffer(di) < 127 Then
+            debugStr = debugStr & Chr(buffer(di))
+        ElseIf buffer(di) = 10 Then
+            Print #fNum, debugStr
+            debugStr = ""
+        End If
+    Next di
+    
+    If debugStr <> "" Then Print #fNum, debugStr
+    Close #fNum
+End Sub
+
+Sub Test
+	Init
+	AddPrint("Hola Mundo")
+	AddQRWebsitePrint()
+	AddPrint("Mmmmmm")
+	SendPrint
+End Sub
+
+Sub Macro1
+
+End Sub
