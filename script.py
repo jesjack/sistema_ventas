@@ -70,7 +70,7 @@ with open(os.path.expanduser("~/script_funcionando.txt"), "w") as f:
     f.write(f"Geometría de B3 -> X: {pos_b3.X}, Y: {pos_b3.Y}, Ancho: {tam_b3.Width}\n")
 
 # Lanzar el modal visual en LibreOffice
-mostrar_modal_confirmacion(ctx, doc)
+# mostrar_modal_confirmacion(ctx, doc)
 
 
 # --- 5. LÓGICA DE MONITOREO DE PERIFÉRICOS (pynput) ---
