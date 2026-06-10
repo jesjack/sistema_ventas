@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import threading
 
 import uno
 import unohelper
@@ -10,6 +11,7 @@ from com.sun.star.awt import XKeyHandler
 from tpv_module.__module__ import autocompletar_b3
 
 LOG_PATH = "/tmp/tpv_tab_debug.log"
+RESULT_PATH = "/tmp/tpv_autocompletado_resultado.txt"
 
 
 def conectar_a_calc():
@@ -123,6 +125,46 @@ class CalcKeyHandler(unohelper.Base, XKeyHandler):
         self.hoja = hoja
         self.password = password
 
+    def aplicar_resultado_autocompletado(self) -> None:
+        """Revisa si existe resultado del autocompletado y lo aplica a B3."""
+        try:
+            if not os.path.exists(RESULT_PATH):
+                return
+            
+            with open(RESULT_PATH, "r") as f:
+                resultado = f.read().strip()
+            
+            if not resultado:
+                return
+            
+            log_tab(f"Aplicando resultado autocompletado: {resultado!r}")
+            
+            # Aplicar de forma thread-safe a la hoja
+            estaba_protegida = False
+            try:
+                estaba_protegida = bool(self.hoja.isProtected())
+            except Exception:
+                estaba_protegida = False
+            
+            try:
+                if estaba_protegida:
+                    self.hoja.unprotect(self.password)
+                
+                self.hoja.getCellRangeByName("B3").String = resultado
+                log_tab(f"Resultado aplicado correctamente a B3: {resultado!r}")
+            finally:
+                if estaba_protegida:
+                    self.hoja.protect(self.password)
+            
+            # Limpiar archivo de resultado
+            try:
+                os.remove(RESULT_PATH)
+            except Exception:
+                pass
+        
+        except Exception as e:
+            log_tab(f"Error aplicando resultado autocompletado: {e}")
+
     def keyPressed(self, event):
         if event.KeyCode != UnoKey.TAB:
             return False
@@ -132,14 +174,23 @@ class CalcKeyHandler(unohelper.Base, XKeyHandler):
         if es_b3_seleccion_actual(self.doc):
             try:
                 aceptar_edicion_activa(self.doc)
-                time.sleep(0.05)
-                log_tab("TAB en B3: ejecutando autocompletar_b3")
-                autocompletar_b3(self.hoja, doc=self.doc, password=self.password)
-                log_tab("TAB en B3: autocompletar_b3 finalizado")
+                log_tab("TAB en B3: lanzando autocompletar_b3 en thread")
+                
+                # Lanzar autocompletado en thread daemon
+                thread = threading.Thread(
+                    target=autocompletar_b3,
+                    args=(self.hoja,),
+                    kwargs={"doc": self.doc, "password": self.password},
+                    daemon=True
+                )
+                thread.start()
+                log_tab("TAB en B3: thread lanzado, consumiendo evento")
             except Exception as e:
                 with open(os.path.expanduser("~/error_autocompletado.txt"), "w") as f:
                     f.write(f"Error en autocompletado: {e}")
                 log_tab(f"Error en autocompletado: {e}")
+            
+            # Consumir el evento inmediatamente sin esperar
             return True
 
         log_tab("TAB detectado fuera de B3")
@@ -153,6 +204,7 @@ class CalcKeyHandler(unohelper.Base, XKeyHandler):
 
 
 def loop_principal(doc, hoja, password: str) -> None:
+    log_tab("Iniciando loop principal")
     celda_a1 = hoja.getCellRangeByName("A1")
     rojo = 0xFF0000
     verde = 0x00FF00
@@ -184,6 +236,9 @@ def loop_principal(doc, hoja, password: str) -> None:
 
                 ultimo_blink = ahora
 
+            # Revisar y aplicar resultado del autocompletado si existe
+            key_handler.aplicar_resultado_autocompletado()
+
             time.sleep(0.05)
     finally:
         try:
@@ -193,11 +248,13 @@ def loop_principal(doc, hoja, password: str) -> None:
 
 
 def main() -> None:
+    log_tab("Iniciando script principal")
     doc = conectar_a_calc()
     hoja = obtener_hoja_tpv(doc)
     password = os.getenv("TPV_SHEET_PASSWORD", "")
 
     comando = sys.argv[1] if len(sys.argv) > 1 else "loop"
+    log_tab(f"Comando recibido: {comando}")
 
     if comando == "loop":
         loop_principal(doc, hoja, password)
@@ -215,5 +272,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-
+    try:
+        main()
+    except KeyboardInterrupt:
+        log_tab("Script interrumpido por el usuario")
+    except Exception as e:
+        log_tab(f"Error inesperado: {e}")
