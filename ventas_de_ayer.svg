@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="52" height="80" viewBox="22 8 52 80">
+  <!-- Recibo / ticket -->
+  <rect x="22" y="16" width="52" height="64" rx="4" fill="#ede9fe"/>
+  <!-- Borde izquierdo -->
+  <rect x="22" y="16" width="5" height="64" rx="3" fill="#7c3aed"/>
+  <!-- Líneas del ticket -->
+  <rect x="33" y="26" width="30" height="4" rx="2" fill="#7c3aed" opacity="0.5"/>
+  <rect x="33" y="34" width="22" height="3" rx="1.5" fill="#a78bfa" opacity="0.6"/>
+  <rect x="33" y="41" width="26" height="3" rx="1.5" fill="#a78bfa" opacity="0.6"/>
+  <rect x="33" y="48" width="18" height="3" rx="1.5" fill="#a78bfa" opacity="0.6"/>
+  <!-- Separador -->
+  <line x1="27" y1="57" x2="69" y2="57" stroke="#c4b5fd" stroke-width="1" stroke-dasharray="3,2"/>
+  <!-- AYER grande abajo -->
+  <text x="48" y="73" font-family="Arial, sans-serif" font-size="13" font-weight="500" fill="#4c1d95" text-anchor="middle">AYER</text>
+  <!-- Badge TOTAL arriba -->
+  <rect x="28" y="8" width="40" height="13" rx="6" fill="#7c3aed"/>
+  <text x="48" y="18" font-family="Arial, sans-serif" font-size="8" font-weight="500" fill="#ede9fe" text-anchor="middle">TOTAL</text>
+</svg>

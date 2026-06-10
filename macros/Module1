@@ -23,14 +23,14 @@ Const FILA_PRODUCTOS_INICIO As Integer = 9  ' índice base 0 → fila 10 en pant
 ' -----------------------------------------------------------------------------
 Sub LanzarPythonExterno(oSheet As Object)
     On Error Resume Next
-    Dim comando As String
     Dim resultado As Long
+    Dim rutaScript As String
 
     ' Comando limpio para ejecutar tu script externo de Python en segundo plano
-    comando = "/usr/bin/python3 script.py"
+    rutaScript = ObtenerRutaCarpeta() & "script.py"
 
     ' Ejecutar de forma asíncrona (False) para que Calc no se congele
-    resultado = Shell(comando, 0, , False)
+    resultado = Shell( "/usr/bin/python3", 0, Chr(34) & rutaScript & Chr(34) & " loop", False )
 End Sub
 
 ' -----------------------------------------------------------------------------
@@ -476,19 +476,6 @@ Function Key_keyReleased(oEvent) As Boolean
 
     Dim keyCode As Integer
     keyCode = oEvent.KeyCode
-
-    ' TAB → autocompletar si estamos en B3
-    If keyCode = 1282 Then
-        Dim oSel As Object
-        oSel = ThisComponent.CurrentSelection
-        If oSel.supportsService("com.sun.star.table.Cell") Then
-            If oSel.CellAddress.Row = 2 And oSel.CellAddress.Column = 1 Then
-                AutocompletarB3
-                Key_keyReleased = True
-                Exit Function
-            End If
-        End If
-    End If
 
     If keyCode = 1280 Or keyCode = 1281 Then
         AgregarProducto
@@ -1215,227 +1202,9 @@ End Sub
 
 
 ' =============================================================================
-' AUTOCOMPLETADO B3
+' AUTOCOMPLETADO B3 (delegado a Python)
 ' =============================================================================
-
-Function EsPreposicion(palabra As String) As Boolean
-    Dim preps As String
-    preps = "|de|del|la|el|los|las|un|una|unos|unas|y|o|"
-    EsPreposicion = InStr(preps, "|" & LCase(palabra) & "|") > 0
-End Function
-
-Function GenerarAcronimo(nombre As String) As String
-    Dim palabras() As String
-    Dim i As Integer
-    Dim resultado As String
-    resultado = ""
-    palabras = Split(nombre, " ")
-    For i = 0 To UBound(palabras)
-        Dim p As String
-        p = Trim(palabras(i))
-        If Len(p) > 0 And Not EsPreposicion(p) Then
-            resultado = resultado & LCase(Left(p, 1))
-        End If
-    Next i
-    GenerarAcronimo = resultado
-End Function
-
-Function ObtenerCatalogo() As Variant
-    Dim oSheet As Object
-    Dim lista() As String
-    Dim cuenta As Integer
-    Dim i As Integer
-
-    oSheet = ThisComponent.Sheets.getByName("TPV")
-    cuenta = 0
-
-    i = 2 ' fila índice base 0 → L3
-    Do While oSheet.getCellByPosition(11, i).String <> ""
-        cuenta = cuenta + 1
-        i = i + 1
-    Loop
-
-    If cuenta = 0 Then
-        ObtenerCatalogo = Array()
-        Exit Function
-    End If
-
-    ReDim lista(cuenta - 1)
-    For i = 0 To cuenta - 1
-        lista(i) = oSheet.getCellByPosition(11, i + 2).String
-    Next i
-
-    ObtenerCatalogo = lista
-End Function
-
-Function PrefijoComunPalabras(a As String, b As String) As String
-    Dim pA() As String
-    Dim pB() As String
-    Dim i As Integer
-    Dim resultado As String
-    Dim limite As Integer
-
-    pA = Split(a, " ")
-    pB = Split(b, " ")
-
-    If UBound(pA) < UBound(pB) Then
-        limite = UBound(pA)
-    Else
-        limite = UBound(pB)
-    End If
-
-    resultado = ""
-    For i = 0 To limite
-        If LCase(pA(i)) = LCase(pB(i)) Then
-            If resultado = "" Then
-                resultado = pA(i)
-            Else
-                resultado = resultado & " " & pA(i)
-            End If
-        Else
-            Exit For
-        End If
-    Next i
-
-    PrefijoComunPalabras = resultado
-End Function
-
-Function ExpandirAcronimos(inputTexto As String, catalogo As Variant) As String
-    Dim claves(200) As String
-    Dim valores(200) As String
-    Dim nClaves As Integer
-    nClaves = 0
-
-    Dim i As Integer
-    For i = 0 To UBound(catalogo)
-        Dim acr As String
-        acr = GenerarAcronimo(catalogo(i))
-
-        Dim j As Integer
-        Dim encontrado As Boolean
-        encontrado = False
-        For j = 0 To nClaves - 1
-            If claves(j) = acr Then
-                valores(j) = PrefijoComunPalabras(valores(j), catalogo(i))
-                encontrado = True
-                Exit For
-            End If
-        Next j
-
-        If Not encontrado Then
-            claves(nClaves) = acr
-            valores(nClaves) = catalogo(i)
-            nClaves = nClaves + 1
-        End If
-    Next i
-
-    Dim tokens() As String
-    tokens = Split(LCase(Trim(inputTexto)), " ")
-    Dim resultado As String
-    resultado = ""
-
-    For i = 0 To UBound(tokens)
-        Dim tok As String
-        tok = Trim(tokens(i))
-        If tok = "" Then GoTo SiguienteTok
-
-        Dim expandido As String
-        expandido = tok
-        Dim mejorLen As Integer
-        mejorLen = 0
-
-        For j = 0 To nClaves - 1
-            If Left(claves(j), Len(tok)) = tok Then
-                If mejorLen = 0 Then
-                    expandido = valores(j)
-                    mejorLen = 1
-                Else
-                    expandido = PrefijoComunPalabras(expandido, valores(j))
-                End If
-            End If
-        Next j
-
-        If resultado = "" Then
-            resultado = expandido
-        Else
-            resultado = resultado & " " & expandido
-        End If
-
-        SiguienteTok:
-    Next i
-
-    ExpandirAcronimos = resultado
-End Function
-
-Function ProductoMatchea(nombre As String, tokens() As String) As Boolean
-    Dim i As Integer
-    Dim nombreLower As String
-    nombreLower = LCase(nombre)
-
-    For i = 0 To UBound(tokens)
-        Dim tok As String
-        tok = Trim(tokens(i))
-        If tok <> "" Then
-            If InStr(nombreLower, LCase(tok)) = 0 Then
-                ProductoMatchea = False
-                Exit Function
-            End If
-        End If
-    Next i
-
-    ProductoMatchea = True
-End Function
-
 Sub AutocompletarB3
-
-    Dim oSheet As Object
-    oSheet = ThisComponent.Sheets.getByName("TPV")
-
-    Dim inputRaw As String
-    inputRaw = Trim(oSheet.getCellRangeByName("B3").String)
-
-    If inputRaw = "" Then Exit Sub
-
-    Dim catalogo As Variant
-    catalogo = ObtenerCatalogo()
-
-    If UBound(catalogo) < 0 Then Exit Sub
-
-    Dim inputExpandido As String
-    inputExpandido = ExpandirAcronimos(inputRaw, catalogo)
-
-    Dim tokens() As String
-    tokens = Split(LCase(Trim(inputExpandido)), " ")
-
-    Dim candidatos(200) As String
-    Dim nCandidatos As Integer
-    nCandidatos = 0
-
-    Dim i As Integer
-    For i = 0 To UBound(catalogo)
-        If ProductoMatchea(catalogo(i), tokens) Then
-            candidatos(nCandidatos) = catalogo(i)
-            nCandidatos = nCandidatos + 1
-        End If
-    Next i
-
-    If nCandidatos = 0 Then Exit Sub
-
-    Dim resultado As String
-
-    If nCandidatos = 1 Then
-        resultado = candidatos(0)
-    Else
-        resultado = candidatos(0)
-        For i = 1 To nCandidatos - 1
-            resultado = PrefijoComunPalabras(resultado, candidatos(i))
-        Next i
-    End If
-
-    If LCase(resultado) <> LCase(inputRaw) And resultado <> "" Then
-        oSheet.unprotect("")
-        oSheet.getCellRangeByName("B3").String = resultado
-        oSheet.protect("")
-    End If
-
+    On Error Resume Next
+    ' Sin uso: autocompletado ahora vive 100% en Python.
 End Sub
