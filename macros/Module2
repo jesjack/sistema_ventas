@@ -69,6 +69,61 @@ Sub SendPrint
     Init
 End Sub
 
+Sub AddLogoPrint()
+    Dim sRutaLogo As String
+    Dim fNum As Integer
+    Dim fileLen As Long
+    Dim logoBytes() As Byte
+    
+    Dim sBase As String
+	sBase = ConvertFromURL(ThisComponent.getURL())
+	sBase = Left(sBase, Len(sBase) - Len(Dir(sBase)))
+	sRutaLogo = sBase & "img/logo_buffer.bin"
+    
+    If Dir(sRutaLogo) = "" Then
+        MsgBox "Error: No se encontró " & sRutaLogo, 16, "Error de Impresión"
+        Exit Sub
+    End If
+    
+    ' Leer el buffer del logo
+    fNum = FreeFile
+    Open sRutaLogo For Binary Access Read As #fNum
+    fileLen = LOF(fNum)
+    ReDim logoBytes(fileLen - 1)
+    Get #fNum, , logoBytes
+    Close #fNum
+    
+    ' Dimensiones fijas del logo generado
+    ' 72 bytes de ancho (576 px), 314 filas de alto
+    Dim xL As Byte, xH As Byte
+    Dim yL As Byte, yH As Byte
+    xL = 48  : xH = 0
+	yL = 180 : yH = 0   ' alto=180
+    
+    ' Centrar
+    AppendByte(ESC)
+    AppendByte(97) ' a
+    AppendByte(1)  ' Centro
+    
+    ' GS v 0 — imagen raster
+    AppendByte(GS)
+    AppendByte(118) ' v
+    AppendByte(48)  ' 0
+    AppendByte(0)   ' m=0 normal
+    AppendByte(xL)
+    AppendByte(xH)
+    AppendByte(yL)
+    AppendByte(yH)
+    
+    ' Datos del logo
+    AppendBytes(logoBytes)
+    
+    ' Restaurar alineación izquierda
+    AppendByte(ESC)
+    AppendByte(97) ' a
+    AppendByte(0)
+End Sub
+
 Sub AddQRWebsitePrint()
     Dim sRutaQR As String
     Dim fNum As Integer
@@ -169,11 +224,13 @@ Sub DebugBuffer
 End Sub
 
 Sub Test
-	Init
-	AddPrint("Hola Mundo")
-	AddQRWebsitePrint()
-	AddPrint("Mmmmmm")
-	SendPrint
+    Init
+    AddLogoPrint()
+    AddLinePrint
+    AddPrint("Yaeli's Boutique")
+    ' ... resto del ticket ...
+    AddQRWebsitePrint()
+    SendPrint
 End Sub
 
 Sub Macro1

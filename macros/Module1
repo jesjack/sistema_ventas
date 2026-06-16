@@ -61,57 +61,209 @@ End Function
 ' -----------------------------------------------------------------------------
 Function CargarCatalogoDesdeTXT(rutaArchivo As String) As Variant
     On Error GoTo ErrorCatalogo
-    
+
     Dim aProductos() As String
     Dim iFile As Integer
     Dim sLinea As String
-    Dim nLineas As Integer
-    Dim i As Integer
-    
-    ' Contar líneas primero
-    nLineas = 0
+    Dim nombre As String
+    Dim precio As Double
+    Dim tienePrecio As Boolean
+    Dim codigo As String
+    Dim nProductos As Integer
+
+    nProductos = -1
     iFile = FreeFile()
     Open rutaArchivo For Input As #iFile
         Do While Not EOF(iFile)
             Line Input #iFile, sLinea
-            If Len(Trim(sLinea)) > 0 Then
-                nLineas = nLineas + 1
+            ParsearLineaCatalogo sLinea, nombre, precio, tienePrecio, codigo
+            If Len(Trim(nombre)) > 0 Then
+                nProductos = nProductos + 1
+                If nProductos = 0 Then
+                    ReDim aProductos(0)
+                Else
+                    ReDim Preserve aProductos(nProductos)
+                End If
+                aProductos(nProductos) = nombre
             End If
         Loop
     Close #iFile
-    
-    ' Si no hay productos, retornar array vacío
-    If nLineas = 0 Then
+
+    If nProductos < 0 Then
         Dim aVacio() As String
         CargarCatalogoDesdeTXT = aVacio
         Exit Function
     End If
     
-    ' Dimensionar el array
-    ReDim aProductos(nLineas - 1)
-    
-    ' Leer nuevamente y llenar array
-    i = 0
-    iFile = FreeFile()
-    Open rutaArchivo For Input As #iFile
-        Do While Not EOF(iFile)
-            Line Input #iFile, sLinea
-            sLinea = Trim(sLinea)
-            If Len(sLinea) > 0 Then
-                aProductos(i) = sLinea
-                i = i + 1
-            End If
-        Loop
-    Close #iFile
-    
     CargarCatalogoDesdeTXT = aProductos
     Exit Function
     
 ErrorCatalogo:
+    On Error Resume Next
+    Close #iFile
     MsgBox "Error al cargar catálogo: " & Err & " - " & Error, 48, "TPV"
     Dim aError() As String
     CargarCatalogoDesdeTXT = aError
 End Function
+
+Function EsNumeroTexto(valor As String) As Boolean
+    Dim limpio As String
+    Dim i As Integer
+    Dim c As String
+
+    limpio = Trim(valor)
+    If limpio = "" Then Exit Function
+
+    For i = 1 To Len(limpio)
+        c = Mid(limpio, i, 1)
+        If Not ((c >= "0" And c <= "9") Or c = "." Or c = ",") Then
+            Exit Function
+        End If
+    Next i
+
+    EsNumeroTexto = True
+End Function
+
+Function EsCodigoTexto(valor As String) As Boolean
+    Dim limpio As String
+    Dim i As Integer
+    Dim c As String
+    Dim tieneLetraONumero As Boolean
+
+    limpio = Trim(valor)
+    If limpio = "" Then Exit Function
+
+    If InStr(limpio, " ") > 0 Then Exit Function
+
+    tieneLetraONumero = False
+    For i = 1 To Len(limpio)
+        c = Mid(limpio, i, 1)
+        If ((c >= "A" And c <= "Z") Or (c >= "a" And c <= "z") Or (c >= "0" And c <= "9") Or c = "-" Or c = "_") Then
+            tieneLetraONumero = True
+        Else
+            Exit Function
+        End If
+    Next i
+
+    If Not tieneLetraONumero Then Exit Function
+
+    If InStr(limpio, "0") > 0 Or InStr(limpio, "1") > 0 Or InStr(limpio, "2") > 0 Or InStr(limpio, "3") > 0 Or InStr(limpio, "4") > 0 Or InStr(limpio, "5") > 0 Or InStr(limpio, "6") > 0 Or InStr(limpio, "7") > 0 Or InStr(limpio, "8") > 0 Or InStr(limpio, "9") > 0 Then
+        EsCodigoTexto = True
+        Exit Function
+    End If
+
+    If UCase(limpio) = limpio And Len(limpio) <= 8 Then
+        EsCodigoTexto = True
+        Exit Function
+    End If
+
+End Function
+
+Function UnirPartesArray(partes() As String, inicio As Integer, fin As Integer) As String
+    Dim resultado As String
+    Dim i As Integer
+
+    resultado = ""
+
+    If fin < inicio Then
+        UnirPartesArray = ""
+        Exit Function
+    End If
+
+    For i = inicio To fin
+        If Trim(partes(i)) <> "" Then
+            If resultado = "" Then
+                resultado = partes(i)
+            Else
+                resultado = resultado & " " & partes(i)
+            End If
+        End If
+    Next i
+
+    UnirPartesArray = resultado
+End Function
+
+Sub ParsearLineaCatalogo(linea As String, ByRef nombre As String, ByRef precio As Double, ByRef tienePrecio As Boolean, ByRef codigo As String)
+
+    Dim partes() As String
+
+    nombre = ""
+    precio = 0
+    tienePrecio = False
+    codigo = ""
+
+    linea = Trim(linea)
+    If linea = "" Then Exit Sub
+
+    partes = Split(linea, " ")
+    If UBound(partes) < 0 Then Exit Sub
+
+    nombre = linea
+
+    If UBound(partes) >= 1 Then
+        If EsNumeroTexto(partes(UBound(partes) - 1)) And Not EsNumeroTexto(partes(UBound(partes))) Then
+            nombre = UnirPartesArray(partes, 0, UBound(partes) - 2)
+            precio = CDbl(Replace(partes(UBound(partes) - 1), ",", "."))
+            tienePrecio = (precio > 0)
+            codigo = partes(UBound(partes))
+        ElseIf EsNumeroTexto(partes(UBound(partes))) Then
+            nombre = UnirPartesArray(partes, 0, UBound(partes) - 1)
+            precio = CDbl(Replace(partes(UBound(partes)), ",", "."))
+            tienePrecio = (precio > 0)
+        ElseIf EsCodigoTexto(partes(UBound(partes))) Then
+            nombre = UnirPartesArray(partes, 0, UBound(partes) - 1)
+            codigo = partes(UBound(partes))
+        End If
+    ElseIf EsNumeroTexto(partes(0)) Then
+        nombre = linea
+        precio = CDbl(Replace(partes(0), ",", "."))
+        tienePrecio = (precio > 0)
+    End If
+
+    If Trim(nombre) = "" Then nombre = linea
+
+End Sub
+
+Sub BuscarProductoPorCodigoEnTXT(rutaArchivo As String, codigoBuscado As String, ByRef nombre As String, ByRef precio As Double, ByRef encontrado As Boolean)
+
+    On Error GoTo ErrorBusqueda
+
+    Dim iFile As Integer
+    Dim sLinea As String
+    Dim nombreLinea As String
+    Dim precioLinea As Double
+    Dim tienePrecio As Boolean
+    Dim codigoLinea As String
+    Dim codigoNormalizado As String
+
+    nombre = ""
+    precio = 0
+    encontrado = False
+
+    codigoNormalizado = UCase(Trim(codigoBuscado))
+    If codigoNormalizado = "" Then Exit Sub
+
+    iFile = FreeFile()
+    Open rutaArchivo For Input As #iFile
+    Do While Not EOF(iFile)
+        Line Input #iFile, sLinea
+        ParsearLineaCatalogo sLinea, nombreLinea, precioLinea, tienePrecio, codigoLinea
+        If UCase(Trim(codigoLinea)) = codigoNormalizado Then
+            nombre = nombreLinea
+            precio = precioLinea
+            encontrado = True
+            Exit Do
+        End If
+    Loop
+    Close #iFile
+    Exit Sub
+
+ErrorBusqueda:
+    On Error Resume Next
+    Close #iFile
+    MsgBox "Error al buscar código en catálogo: " & Err & " - " & Error, 48, "TPV"
+
+End Sub
 
 ' -----------------------------------------------------------------------------
 ' HELPER: Registra una venta completa en SQLite invocando db_ventas.py
@@ -232,6 +384,18 @@ Sub ConfigurarTodoElSistema
     Dim oSheet As Object
     Dim oCell As Object
     Dim i As Integer
+    Dim rutaCatalogo As String
+    Dim iFileCatalogo As Integer
+    Dim sLineaCatalogo As String
+    Dim nombreCatalogo As String
+    Dim precioCatalogo As Double
+    Dim tienePrecioCatalogo As Boolean
+    Dim codigoCatalogo As String
+    Dim filaCatalogo As Integer
+    Dim oHdrCatalogo As Object
+    Dim oCeldaNombre As Object
+    Dim oCeldaPrecio As Object
+    Dim oCeldaCodigo As Object
 
     oDoc = ThisComponent
 
@@ -296,40 +460,56 @@ Sub ConfigurarTodoElSistema
     End If
 
     ' ── Catálogo de productos: cargar desde catalogo.txt ──────────────────
-    Dim oCatSheet As Object
-    oCatSheet = oDoc.Sheets.getByName("TPV")
-    oCatSheet.unprotect("")
+    rutaCatalogo = ObtenerRutaCarpeta() & "catalogo.txt"
 
-    Dim productos() As String
-    productos = CargarCatalogoDesdeTXT(ObtenerRutaCarpeta() & "catalogo.txt")
+    oSheet.getCellRangeByName("L2:M200").clearContents(1023)
+    oHdrCatalogo = oSheet.getCellByPosition(11, 1)
+    oHdrCatalogo.String      = "CATÁLOGO"
+    oHdrCatalogo.CharColor   = RGB(255, 255, 255)
+    oHdrCatalogo.CharWeight  = com.sun.star.awt.FontWeight.BOLD
+    oHdrCatalogo.CellBackColor = RGB(44, 62, 80)
+    oHdrCatalogo.HoriJustify = com.sun.star.table.CellHoriJustify.CENTER
 
-    ' Encabezado — columna M (índice 12)
-    Dim oKHeader As Object
-    oKHeader = oSheet.getCellByPosition(11, 1)  ' L2
-    oKHeader.String      = "CATÁLOGO"
-    oKHeader.CharColor   = RGB(255, 255, 255)
-    oKHeader.CharWeight  = com.sun.star.awt.FontWeight.BOLD
-    oKHeader.CellBackColor = RGB(44, 62, 80)
-    oKHeader.HoriJustify = com.sun.star.table.CellHoriJustify.CENTER
+    oSheet.getCellByPosition(12, 1).String = "PRECIO"
+    oSheet.getCellByPosition(12, 1).CharColor = RGB(255, 255, 255)
+    oSheet.getCellByPosition(12, 1).CharWeight = com.sun.star.awt.FontWeight.BOLD
+    oSheet.getCellByPosition(12, 1).CellBackColor = RGB(44, 62, 80)
+    oSheet.getCellByPosition(12, 1).HoriJustify = com.sun.star.table.CellHoriJustify.CENTER
 
-    ' Filas de productos desde L3 en adelante
-    Dim p As Integer
-    For p = 0 To UBound(productos)
-        Dim oKCell As Object
-        oKCell = oSheet.getCellByPosition(11, p + 2)  ' L3, L4, …
-        oKCell.String = productos(p)
-        oKCell.CharColor = RGB(44, 62, 80)
-        If (p Mod 2) = 0 Then
-            oKCell.CellBackColor = RGB(236, 240, 241)
-        Else
-            oKCell.CellBackColor = RGB(255, 255, 255)
+    filaCatalogo = 2
+    iFileCatalogo = FreeFile()
+    Open rutaCatalogo For Input As #iFileCatalogo
+    Do While Not EOF(iFileCatalogo)
+        Line Input #iFileCatalogo, sLineaCatalogo
+        ParsearLineaCatalogo sLineaCatalogo, nombreCatalogo, precioCatalogo, tienePrecioCatalogo, codigoCatalogo
+
+        If Len(Trim(nombreCatalogo)) > 0 Then
+            oCeldaNombre = oSheet.getCellByPosition(11, filaCatalogo)
+            oCeldaPrecio = oSheet.getCellByPosition(12, filaCatalogo)
+
+            oCeldaNombre.String = nombreCatalogo
+            oCeldaNombre.CharColor = RGB(44, 62, 80)
+            If (filaCatalogo Mod 2) = 0 Then
+                oCeldaNombre.CellBackColor = RGB(236, 240, 241)
+                oCeldaPrecio.CellBackColor = RGB(236, 240, 241)
+            Else
+                oCeldaNombre.CellBackColor = RGB(255, 255, 255)
+                oCeldaPrecio.CellBackColor = RGB(255, 255, 255)
+            End If
+
+            If tienePrecioCatalogo Then
+                oCeldaPrecio.Value = precioCatalogo
+            Else
+                oCeldaPrecio.clearContents(1023)
+            End If
+
+            filaCatalogo = filaCatalogo + 1
         End If
-    Next p
+    Loop
+    Close #iFileCatalogo
 
-    ' Ancho cómodo para la columna L
     oSheet.getColumns().getByName("L").Width = 5500
-
-    oCatSheet.protect("")
+    oSheet.getColumns().getByName("M").Width = 2200
     ' ── Fin catálogo ─────────────────────────────────────────────────────
 
     IrAB3
@@ -507,6 +687,10 @@ Function Key_keyReleased(oEvent) As Boolean
 
     Dim keyCode As Integer
     keyCode = oEvent.KeyCode
+    
+    Dim oSheet As Object
+    Dim textoB3 As String
+    textoB3 = ""
 
     ' TAB → autocompletar si estamos en B3
     If keyCode = 1282 Then
@@ -521,7 +705,23 @@ Function Key_keyReleased(oEvent) As Boolean
         End If
     End If
 
-    If keyCode = 1280 Or keyCode = 1281 Then
+    If keyCode = 1280 Then
+        oSheet = ThisComponent.Sheets.getByName("TPV")
+        textoB3 = LCase(Trim(oSheet.getCellRangeByName("B3").String))
+
+        If textoB3 = "cobrar" Then
+            oSheet.getCellRangeByName("B3").clearContents(1023)
+            FinalizarVentaEImprimir
+            Key_keyReleased = True
+            Exit Function
+        End If
+
+        If textoB3 = "limpiar" Then
+            LimpiarTicket
+            Key_keyReleased = True
+            Exit Function
+        End If
+
         AgregarProducto
         Key_keyReleased = True
         Exit Function
@@ -548,6 +748,10 @@ Sub AgregarProducto
     ' Confirmar cualquier edición activa antes de leer los valores
     Dim oFrame As Object
     Dim oDispatcher As Object
+    Dim codigoBuscado As String
+    Dim nombreEncontrado As String
+    Dim precioEncontrado As Double
+    Dim encontrado As Boolean
     oFrame      = ThisComponent.CurrentController.Frame
     oDispatcher = createUnoService("com.sun.star.frame.DispatchHelper")
     oDispatcher.executeDispatch(oFrame, ".uno:AcceptFormula", "", 0, Array())
@@ -566,6 +770,29 @@ Sub AgregarProducto
     precio = CDbl(SoloNumeros(CStr(oSheet.getCellRangeByName("C3").String)))
     cant   = CInt(Int(CDbl(SoloNumeros(CStr(oSheet.getCellRangeByName("D3").String)))))
 
+    If UCase(Left(Trim(prod), 2)) = "C " Then
+        codigoBuscado = Trim(Mid(Trim(prod), 3))
+        Call BuscarProductoPorCodigoEnTXT(ObtenerRutaCarpeta() & "catalogo.txt", codigoBuscado, nombreEncontrado, precioEncontrado, encontrado)
+
+        If Not encontrado Then
+            MsgBox "Producto no encontrado para el código: " & codigoBuscado, 48, "TPV"
+            Exit Sub
+        End If
+
+        prod = nombreEncontrado
+        precio = precioEncontrado
+
+        If precio <= 0 Then
+            oSheet.unprotect("")
+            oSheet.getCellRangeByName("B3").String = prod
+            oSheet.getCellRangeByName("C3").clearContents(1023)
+            oSheet.getCellRangeByName("D3").Value = 1
+            oSheet.protect("")
+            IrAC3
+            Exit Sub
+        End If
+    End If
+
     If prod = "" Then
         FinalizarVentaEImprimir
         Exit Sub
@@ -578,6 +805,32 @@ Sub AgregarProducto
     ' ── Encontrar dónde está el TOTAL actualmente ──
     Dim filaTotal As Integer
     filaTotal = ObtenerFilaTotal(oSheet)
+
+    ' ── Si el producto ya existe, solo aumentar la cantidad ──
+    Dim filaExistente As Integer
+    filaExistente = BuscarFilaProductoEnCarrito(oSheet, prod, precio)
+
+    If filaExistente >= FILA_PRODUCTOS_INICIO And filaExistente < filaTotal Then
+        Dim cantidadActual As Double
+        cantidadActual = oSheet.getCellByPosition(3, filaExistente).Value
+
+        oSheet.getCellByPosition(3, filaExistente).Value = cantidadActual + cant
+        oSheet.getCellByPosition(4, filaExistente).Formula = _
+            "=C" & (filaExistente + 1) & "*D" & (filaExistente + 1)
+
+        ' Recolocar el TOTAL donde corresponde
+        LimpiarFilaTotal(oSheet, filaTotal)
+        ColocarFilaTotal(oSheet, filaTotal)
+
+        oSheet.getCellRangeByName("B3:C3").clearContents(7)
+        oSheet.getCellRangeByName("D3").Value = 1
+
+        oSheet.protect("")
+
+        GuardarArchivo
+        IrAB3
+        Exit Sub
+    End If
 
     ' ── Limpiar el TOTAL de donde está ──
     LimpiarFilaTotal(oSheet, filaTotal)
@@ -601,6 +854,54 @@ Sub AgregarProducto
     GuardarArchivo
 
     IrAB3
+
+End Sub
+
+Function BuscarFilaProductoEnCarrito(oSheet As Object, prod As String, precio As Double) As Integer
+
+    Dim filaTotal As Integer
+    Dim i As Integer
+    Dim nombreFila As String
+    Dim precioFila As Double
+
+    filaTotal = ObtenerFilaTotal(oSheet)
+
+    For i = FILA_PRODUCTOS_INICIO To filaTotal - 1
+        nombreFila = Trim(oSheet.getCellByPosition(1, i).String)
+        precioFila = oSheet.getCellByPosition(2, i).Value
+
+        If LCase(nombreFila) = LCase(Trim(prod)) Then
+            If Abs(precioFila - precio) < 0.0001 Or precio = 0 Then
+                BuscarFilaProductoEnCarrito = i
+                Exit Function
+            End If
+        End If
+    Next i
+
+    BuscarFilaProductoEnCarrito = -1
+
+End Function
+
+Sub IrAC3
+
+    On Error Resume Next
+
+    Dim oFrame As Object
+    Dim oDispatcher As Object
+    Dim args(0) As New com.sun.star.beans.PropertyValue
+
+    oFrame      = ThisComponent.CurrentController.Frame
+    oDispatcher = createUnoService("com.sun.star.frame.DispatchHelper")
+
+    args(0).Name  = "ToPoint"
+    args(0).Value = "$C$3"
+    oDispatcher.executeDispatch(oFrame, ".uno:GoToCell", "", 0, args())
+
+    Dim oWindow As Object
+    oWindow = oFrame.getContainerWindow()
+    If Not IsNull(oWindow) Then
+        oWindow.setFocus()
+    End If
 
 End Sub
 
@@ -684,7 +985,7 @@ Sub FinalizarVentaEImprimir
 
     AppendByte(ESC) : AppendByte(97) : AppendByte(1)
     AppendByte(ESC) : AppendByte(69) : AppendByte(1)
-    AddPrint("YAELI'S BOUTIQUE")
+    AddLogoPrint()
 
     AppendByte(ESC) : AppendByte(69) : AppendByte(0)
     AddPrint("Calle Pinosuarez No. 412")
@@ -977,17 +1278,13 @@ End Sub
 ' RECUADRO DE INSTRUCCIONES
 ' -----------------------------------------------------------------------------
 Sub CrearRecuadroInstrucciones(oSheet As Object)
-
     Dim rng As Object
-    rng = oSheet.getCellRangeByName("G2:H6")
-
+    rng = oSheet.getCellRangeByName("G2:H4")
     rng.CellBackColor = RGB(250, 250, 250)
-
     Dim oBorderLine As New com.sun.star.table.BorderLine2
     oBorderLine.LineStyle = com.sun.star.table.BorderLineStyle.SOLID
     oBorderLine.LineWidth = 26
     oBorderLine.Color = RGB(44, 62, 80)
-
     Dim oTableBorder As New com.sun.star.table.TableBorder2
     oTableBorder.TopLine           = oBorderLine
     oTableBorder.BottomLine        = oBorderLine
@@ -997,34 +1294,24 @@ Sub CrearRecuadroInstrucciones(oSheet As Object)
     oTableBorder.IsBottomLineValid = True
     oTableBorder.IsLeftLineValid   = True
     oTableBorder.IsRightLineValid  = True
-
     rng.TableBorder2 = oTableBorder
-
     oSheet.getCellRangeByName("G2:H2").merge(True)
     Dim oTitulo As Object
     oTitulo = oSheet.getCellByPosition(6, 1)
-    oTitulo.String = "INSTRUCCIONES"
+    oTitulo.String = "TIP"
     oTitulo.CharColor = RGB(44, 62, 80)
     oTitulo.CharWeight = com.sun.star.awt.FontWeight.BOLD
     oTitulo.HoriJustify = com.sun.star.table.CellHoriJustify.CENTER
     oTitulo.CellBackColor = RGB(213, 219, 219)
-
-    Dim instrucciones(2) As String
-    instrucciones(0) = "1. Escribe Nombre y Precio"
-    instrucciones(1) = "2. Cambia la cantidad si es más de 1"
-    instrucciones(2) = "3. ENTER para agregar o cobrar"
-
-    Dim j As Integer
-    For j = 0 To 2
-        oSheet.getCellRangeByName("G" & (j+4) & ":H" & (j+4)).merge(True)
-        Dim oLinea As Object
-        oLinea = oSheet.getCellByPosition(6, j+3)
-        oLinea.String = instrucciones(j)
-        oLinea.CharColor = RGB(44, 62, 80)
-        oLinea.CellBackColor = RGB(250, 250, 250)
-        oLinea.CharHeight = 9
-    Next j
-
+    oSheet.getCellRangeByName("G3:H4").merge(True)
+    Dim oLinea As Object
+    oLinea = oSheet.getCellByPosition(6, 2)
+    oLinea.String = "Escribe las iniciales de un producto y presiona Tabulador"
+    oLinea.CharColor = RGB(44, 62, 80)
+    oLinea.CellBackColor = RGB(250, 250, 250)
+    oLinea.CharHeight = 9
+    oLinea.IsTextWrapped = True
+    oLinea.VertJustify = com.sun.star.table.CellVertJustify2.CENTER
 End Sub
 
 ' -----------------------------------------------------------------------------
