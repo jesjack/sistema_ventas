@@ -34,6 +34,13 @@ def parsear_linea_catalogo(linea):
     if not linea:
         return None
 
+    es_reservada = linea.lower().endswith(" -r") or linea.lower().endswith("-r")
+    # Marcador de código reservado al final de línea ("-r")
+    if linea.lower().endswith(" -r"):
+        linea = linea[:-3].strip()
+    elif linea.lower().endswith("-r"):
+        linea = linea[:-2].strip()
+
     partes = linea.split()
     if not partes:
         return None
@@ -43,7 +50,27 @@ def parsear_linea_catalogo(linea):
     tiene_precio = False
     codigo = ""
 
-    if len(partes) >= 2 and es_numero_texto(partes[-2]) and not es_numero_texto(partes[-1]):
+    if es_reservada:
+        indice_precio = -1
+        for i in range(0, len(partes) - 1):
+            if es_numero_texto(partes[i]):
+                indice_precio = i
+                break
+
+        if indice_precio > 0 and indice_precio < len(partes) - 1:
+            nombre = unir_partes(partes, 0, indice_precio - 1)
+            precio = float(partes[indice_precio].replace(",", "."))
+            tiene_precio = precio > 0
+            codigo = " ".join(partes[indice_precio + 1 :])
+            if codigo.strip():
+                return {
+                    "nombre": nombre,
+                    "precio": precio,
+                    "tiene_precio": tiene_precio,
+                    "codigo": codigo,
+                }
+
+    if len(partes) >= 3 and es_numero_texto(partes[-2]) and (not es_numero_texto(partes[-1]) or es_codigo_texto(partes[-1])):
         nombre = unir_partes(partes, 0, len(partes) - 3)
         precio = float(partes[-2].replace(",", "."))
         tiene_precio = precio > 0
