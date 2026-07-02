@@ -1,0 +1,41 @@
+keyPressed recibido: keyCode=1026
+keyPressed recibido: keyCode=516
+keyPressed recibido: keyCode=1282
+TAB recibido en completar_si_corresponde
+Leyendo input actual: 'e'
+Buscando autocompletado para 'e': 2 coincidencias
+Abriendo selector con 2 opciones
+selector inicio: opciones=2 texto_base='e'
+selector etapa: creando dialog_model
+selector etapa: creando etiqueta de opcion
+keyPressed recibido: keyCode=1026
+keyPressed recibido: keyCode=516
+keyPressed recibido: keyCode=1282
+TAB recibido en completar_si_corresponde
+Leyendo input actual: 'e'
+Buscando autocompletado para 'e': 2 coincidencias
+Abriendo selector con 2 opciones
+selector inicio: opciones=2 texto_base='e'
+selector etapa: creando dialog_model
+selector etapa: creando etiqueta de opcion
+keyPressed recibido: keyCode=1281
+keyPressed recibido: keyCode=1026
+keyPressed recibido: keyCode=516
+keyPressed recibido: keyCode=1282
+TAB recibido en completar_si_corresponde
+Leyendo input actual: 'e'
+Buscando autocompletado para 'e': 2 coincidencias
+Abriendo selector con 2 opciones
+selector inicio: opciones=2 texto_base='e'
+selector etapa: creando dialog_model
+selector etapa: creando etiqueta de opcion
+keyPressed recibido: keyCode=1026
+keyPressed recibido: keyCode=516
+keyPressed recibido: keyCode=1282
+TAB recibido en completar_si_corresponde
+Leyendo input actual: 'e'
+Buscando autocompletado para 'e': 2 coincidencias
+Abriendo selector con 2 opciones
+selector inicio: opciones=2 texto_base='e'
+selector etapa: creando dialog_model
+selector etapa: creando etiqueta de opcion

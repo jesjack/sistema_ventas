@@ -54,6 +54,42 @@ try:
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS eventos_especiales (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha    TEXT NOT NULL,
+            hora     TEXT NOT NULL,
+            evento   TEXT NOT NULL,
+            detalle  TEXT
+        )
+    """)
+
+    cur.execute("PRAGMA table_info(autorizaciones_codigos)")
+    columnas_aut = {fila[1] for fila in cur.fetchall()}
+    if columnas_aut and {"fecha", "hora"}.issubset(columnas_aut):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS autorizaciones_codigos_nueva (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo    TEXT NOT NULL,
+                evento_id INTEGER REFERENCES eventos_especiales(id)
+            )
+        """)
+        cur.execute("""
+            INSERT INTO autorizaciones_codigos_nueva (id, codigo, evento_id)
+            SELECT id, codigo, evento_id
+            FROM autorizaciones_codigos
+        """)
+        cur.execute("DROP TABLE autorizaciones_codigos")
+        cur.execute("ALTER TABLE autorizaciones_codigos_nueva RENAME TO autorizaciones_codigos")
+    else:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS autorizaciones_codigos (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo    TEXT NOT NULL,
+                evento_id INTEGER REFERENCES eventos_especiales(id)
+            )
+        """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS venta_items (
             id       INTEGER PRIMARY KEY AUTOINCREMENT,
             venta_id INTEGER NOT NULL REFERENCES ventas(id),

@@ -1,0 +1,26 @@
+1782161174.498523: El documento ha sido cerrado o no es accesible.
+Excepción: <class 'AttributeError'>
+1782161225.370354: El documento ha sido cerrado o no es accesible.
+Excepción: <class 'AttributeError'>
+Detalles: 'builtin_function_or_method' object has no attribute 'sleep'
+1782337035.9627852: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1782763914.4503741: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1782770909.7927547: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1782775253.9324486: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1782776297.9761505: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1782955734.0273778: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1782956750.2155726: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title

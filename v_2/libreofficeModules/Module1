@@ -1,0 +1,20 @@
+REM  *****  BASIC  *****
+
+Sub Main
+    Dim os As String
+    Dim comando As String
+    Dim objShell As Object
+    
+    os = GetGUIType()
+    
+    If os = 1 Then
+        ' Windows: usar WScript.Shell para mejor control de la ventana
+        comando = """C:\Program Files\LibreOffice\program\python.exe"" C:\Users\jesjack\sistema_ventas\v_2\main.py"
+        Set objShell = CreateObject("WScript.Shell")
+        objShell.Run comando, 1, False
+    Else
+        ' Linux: usar Shell para ejecutar en segundo plano
+        comando = "/usr/bin/python3 /home/jesjack/sistema_ventas/v_2/main.py > /home/jesjack/sistema_ventas/v_2/output.log 2>&1"
+        Shell(comando, 0, "", False)
+    End If
+End Sub
