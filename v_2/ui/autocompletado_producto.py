@@ -8,7 +8,9 @@ from com.sun.star.awt import Key as UnoKey  # pyright: ignore[reportMissingImpor
 from com.sun.star.awt import XKeyHandler  # pyright: ignore[reportMissingImports]
 
 
-LOG_PATH = Path(__file__).with_name("autocompletado_producto.log")
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+LOG_PATH = LOGS_DIR / "autocompletado_producto.log"
 
 
 class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
@@ -165,7 +167,7 @@ class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
 
         if len(coincidencias) == 1:
             self._log(f"Coincidencia unica detectada: {coincidencias[0][1]!r}")
-            return coincidencias[0][1]
+            return coincidencias[0]
 
         self._log(f"Se encontraron {len(coincidencias)} coincidencias; abriendo selector modal.")
         dialog = self._crear_dialogo_selector(coincidencias)
@@ -183,7 +185,7 @@ class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
                 return None
 
             self._log(f"Selector confirmado con indice={indice}, producto={coincidencias[indice][1]!r}.")
-            return coincidencias[indice][1]
+            return coincidencias[indice]
         finally:
             self.selector_activo = False
             dialog.dispose()
@@ -194,7 +196,7 @@ class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
         self._log(f"Producto escrito en B4: {producto!r}")
 
         try:
-            from calc_focus import enfocar_celda_sin_azul
+            from calc.calc_focus import enfocar_celda_sin_azul
 
             enfocar_celda_sin_azul(self.documento, 1, 3)
         except Exception:
@@ -219,8 +221,16 @@ class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
             self._log("No se aplico ningun producto desde el selector.")
             return True
 
-        self._escribir_producto_en_b4(producto)
+        self._escribir_producto_en_b4(producto[1])
         return True
+
+    def seleccionar_producto(self, prefijo=None, limite=25):
+        if prefijo:
+            coincidencias = self.ventas_service.buscar_catalogo_por_iniciales(prefijo, limite=limite)
+        else:
+            coincidencias = self.ventas_service.listar_catalogo_autocompletado()
+
+        return self._elegir_producto(coincidencias)
 
     def keyPressed(self, event):
         if event.KeyCode != UnoKey.TAB:

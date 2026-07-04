@@ -1,8 +1,8 @@
 import time
 
-from cobro_uno import solicitar_monto_cliente
-from ventas_service import VentasService
-from ticket_printer import imprimir_ticket_venta
+from dialogs.cobro_uno import solicitar_monto_cliente
+from services.ventas_service import VentasService
+from hardware.ticket_printer import imprimir_ticket_venta
 
 ventas_service = VentasService()
 

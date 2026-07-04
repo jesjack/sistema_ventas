@@ -19,7 +19,9 @@ class TicketPrinter:
     def __init__(self, printer_device="/dev/usb/lp0", website_url="https://fb.com/share/1E14r1SK7f"):
         self.printer_device = printer_device
         self.website_url = website_url
-        self.base_dir = Path(__file__).resolve().parent
+        self.base_dir = Path(__file__).resolve().parent.parent
+        self.logs_dir = self.base_dir / "logs"
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.buffer = bytearray()
         self.reset()
 
@@ -144,7 +146,7 @@ class TicketPrinter:
         return True
 
     def _log_error(self, message):
-        log_path = self.base_dir / "error_log.txt"
+        log_path = self.logs_dir / "error_log.txt"
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(f"[{timestamp}] {message}\n")

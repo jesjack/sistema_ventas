@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import threading
+from pathlib import Path
 
 import uno
 import unohelper
@@ -9,6 +10,9 @@ from com.sun.star.awt import Key as UnoKey
 from com.sun.star.awt import XKeyHandler
 
 from tpv_module.__module__ import autocompletar_b3
+
+LOGS_DIR = Path(__file__).resolve().parent / "v_2" / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_PATH = "/tmp/tpv_tab_debug.log"
 RESULT_PATH = "/tmp/tpv_autocompletado_resultado.txt"
@@ -186,7 +190,7 @@ class CalcKeyHandler(unohelper.Base, XKeyHandler):
                 thread.start()
                 log_tab("TAB en B3: thread lanzado, consumiendo evento")
             except Exception as e:
-                with open(os.path.expanduser("~/error_autocompletado.txt"), "w") as f:
+                with open(LOGS_DIR / "error_autocompletado.txt", "w", encoding="utf-8") as f:
                     f.write(f"Error en autocompletado: {e}")
                 log_tab(f"Error en autocompletado: {e}")
             

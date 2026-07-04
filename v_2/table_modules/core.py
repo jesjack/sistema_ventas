@@ -317,11 +317,12 @@ class Table(list):
 
     def clear(self):
         super().clear()
+        fin_columna = self.x + len(self.columnas) - 1
         i = self.base_y + bool(self._titulo) + 1
         while True:
-            if self._view._fila_esta_limpia(i, 1, 4):
+            if self._view._fila_esta_limpia(i, self.x, fin_columna):
                 break
-            self._view._limpiar_rango_fila(i, 1, 4)
+            self._view._limpiar_rango_fila(i, self.x, fin_columna)
             i += 1
         print("Carrito limpio.")
         self._render()

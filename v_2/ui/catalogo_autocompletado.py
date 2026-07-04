@@ -2,7 +2,7 @@ import sqlite3
 import unohelper
 from com.sun.star.awt import XActionListener
 
-from ventas_service import VentasService
+from services.ventas_service import VentasService
 
 PREPOSICIONES = {
     "de",

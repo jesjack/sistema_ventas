@@ -1,3 +1,5 @@
+import getpass
+import os
 import unohelper
 from com.sun.star.awt import XActionListener, XFocusListener, XMouseListener, XTopWindowListener, XWindowListener
 import unicodedata
@@ -66,7 +68,24 @@ class VentanaAcciones:
         self._padding = int(padding)
         self._gap_y = int(gap_y)
         self._boton_alto = int(boton_alto)
-        self._boton_ancho = max(int(ancho) - (2 * self._padding), 80)
+        self._boton_ancho = max(int(ancho) - (2 * self._padding), 48)
+        self._usuario_actual = self._obtener_usuario_actual()
+
+    def _obtener_usuario_actual(self):
+        for obtenedor in (getpass.getuser, os.getlogin):
+            try:
+                nombre = obtenedor()
+                if nombre:
+                    return self._normalizar_texto(nombre).strip().lower()
+            except Exception:
+                pass
+
+        for clave in ("USERNAME", "USER"):
+            valor = os.environ.get(clave)
+            if valor:
+                return self._normalizar_texto(valor).strip().lower()
+
+        return "desconocido"
 
     def _aplicar_anclaje(self):
         if self._posicion is None:
@@ -94,7 +113,7 @@ class VentanaAcciones:
         self._dialog_model.PositionY = max(int(y), 0)
 
     def _ancho_texto_boton(self, texto):
-        return max(70, min(260, 14 + (len(str(texto)) * 7)))
+        return max(46, min(220, 10 + (len(str(texto)) * 5)))
 
     def _normalizar_texto(self, texto):
         texto_normalizado = unicodedata.normalize("NFKD", str(texto))
@@ -146,7 +165,7 @@ class VentanaAcciones:
 
         self._boton_ancho = boton_ancho_maximo
         ancho_total = boton_ancho_maximo + (2 * self._padding)
-        self._dialog_model.Width = max(ancho_total, 140)
+        self._dialog_model.Width = max(ancho_total, self._padding * 2 + 48)
         self._dialog_model.Height = max(alto_total, 60)
 
     def _crear_ejecutor_accion(self, accion_id, accion):
@@ -169,7 +188,30 @@ class VentanaAcciones:
 
         return ejecutar_accion
 
-    def agregar_boton(self, texto, accion, nombre=None):
+    def _normalizar_listado_usuarios(self, usuarios):
+        if usuarios is None:
+            return ["all"]
+
+        if isinstance(usuarios, str):
+            usuarios = [usuarios]
+
+        return [self._normalizar_texto(usuario).strip().lower() for usuario in usuarios if str(usuario).strip()]
+
+    def _boton_es_visible_para_usuario(self, usuarios):
+        usuarios_normalizados = self._normalizar_listado_usuarios(usuarios)
+        if not usuarios_normalizados or "all" in usuarios_normalizados:
+            return True
+
+        return self._usuario_actual in usuarios_normalizados
+
+    def agregar_boton(self, texto, accion, usuarios=None, nombre=None):
+        if nombre is None and isinstance(usuarios, str):
+            nombre = usuarios
+            usuarios = None
+
+        if not self._boton_es_visible_para_usuario(usuarios):
+            return self
+
         nombre = nombre or f"btnAccion{len(self._botones_pendientes) + 1}"
         indice = len(self._botones_pendientes)
         posicion_y = self._padding + (indice * (self._boton_alto + self._gap_y))

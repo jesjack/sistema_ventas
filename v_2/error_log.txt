@@ -1,6 +1,0 @@
-[2026-06-29 14:55:33] No se pudo imprimir en /dev/usb/lp0: [Errno 2] No such file or directory: '/dev/usb/lp0'
-[2026-06-29 16:09:09] No se pudo imprimir en /dev/usb/lp0: [Errno 2] No such file or directory: '/dev/usb/lp0'
-[2026-06-29 16:13:31] No se pudo imprimir en /dev/usb/lp0: [Errno 2] No such file or directory: '/dev/usb/lp0'
-1782778963.583954: El documento ha sido cerrado o no es accesible.
-Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
-Detalles: cannot get value Title
