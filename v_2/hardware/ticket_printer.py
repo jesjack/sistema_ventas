@@ -3,6 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import tempfile
+import os
+import glob
+import platform
+import shutil
+import subprocess
 
 
 try:
@@ -151,16 +156,159 @@ class TicketPrinter:
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(f"[{timestamp}] {message}\n")
 
+    def find_printer_device(self):
+        """Try to locate a usable printer device.
+
+        Returns:
+            str | None: Path to device or special Windows marker 'win32:PRINTER_NAME'.
+        """
+        # If current device already exists as a file, use it
+        try:
+            # If it's a Windows marker already, return it
+            if isinstance(self.printer_device, str) and self.printer_device.startswith("win32:"):
+                return self.printer_device
+
+            path = Path(self.printer_device)
+            if path.exists():
+                return str(path)
+        except Exception:
+            pass
+
+        # Windows: try to use the default or first available printer via win32print
+        if os.name == "nt":
+            try:
+                import win32print  # type: ignore
+
+                try:
+                    default = win32print.GetDefaultPrinter()
+                except Exception:
+                    default = None
+
+                if default:
+                    return f"win32:{default}"
+
+                # enumerate printers and return first
+                printers = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)
+                if printers:
+                    # printers entries are tuples where name usually is element 2 or 2 depending on platform
+                    name = printers[0][2] if len(printers[0]) > 2 else printers[0][0]
+                    return f"win32:{name}"
+            except Exception:
+                # win32print not available or failed
+                return None
+
+        # POSIX / Linux: search common device locations first (prefer direct device)
+        candidates = []
+        # common USB/serial device globs
+        candidates.extend(glob.glob('/dev/usb/lp*'))
+        candidates.extend(glob.glob('/dev/ttyUSB*'))
+        candidates.extend(glob.glob('/dev/ttyACM*'))
+        candidates.extend(glob.glob('/dev/serial/by-id/*'))
+        candidates.extend(glob.glob('/dev/pts/*'))
+        candidates.extend(glob.glob('/dev/lp*'))
+
+        # Add some common exact paths
+        candidates.extend(['/dev/usb/lp0', '/dev/lp0', '/dev/parallel0'])
+
+        for p in candidates:
+            try:
+                if Path(p).exists():
+                    return p
+            except Exception:
+                continue
+
+        # If no direct device found, try CUPS (lp/lpr) if available
+        try:
+            if shutil.which('lp') or shutil.which('lpr'):
+                # try to get default printer name via lpstat
+                try:
+                    out = subprocess.check_output(['lpstat', '-d'], stderr=subprocess.DEVNULL, text=True)
+                    # expected: "system default destination: PRINTER_NAME"
+                    if ':' in out:
+                        name = out.strip().split(':', 1)[1].strip()
+                        if name:
+                            return f"cups:{name}"
+                except Exception:
+                    # fallback marker indicating use of lp/lpr without specific name
+                    return 'cups:default'
+        except Exception:
+            pass
+
+        return None
+
     def send_print(self):
+        # Save a copy for debugging
         ticket_path = Path(tempfile.gettempdir()) / "ticket.bin"
         ticket_path.write_bytes(self.buffer)
 
+        device = self.find_printer_device() or self.printer_device
+
+        # Windows raw printing using win32print when device is a win32 marker
+        if isinstance(device, str) and device.startswith("win32:") and os.name == "nt":
+            try:
+                import win32print  # type: ignore
+
+                printer_name = device.split(":", 1)[1]
+                hPrinter = win32print.OpenPrinter(printer_name)
+                try:
+                    # Doc info: (name, outputfile, datatype)
+                    doc = ("Ticket", None, "RAW")
+                    win32print.StartDocPrinter(hPrinter, 1, doc)
+                    win32print.StartPagePrinter(hPrinter)
+                    win32print.WritePrinter(hPrinter, bytes(self.buffer))
+                    win32print.EndPagePrinter(hPrinter)
+                    win32print.EndDocPrinter(hPrinter)
+                finally:
+                    win32print.ClosePrinter(hPrinter)
+            except Exception as exc:
+                self._log_error(f"No se pudo imprimir en '{device}': {exc}")
+                return False
+
+            self.reset()
+            return True
+        # CUPS / lp/lpr fallback for Linux/Unix when device is 'cups:' marker
+        if isinstance(device, str) and device.startswith('cups:'):
+            # Avoid evaluating platform in the outer condition (Pylance may statically evaluate it).
+            if os.name == 'nt':
+                self._log_error('CUPS printing requested but running on Windows')
+                return False
+            
+            try:
+                printer_name = device.split(":", 1)[1]
+                # Use the saved temp file and call lp/lpr
+                if printer_name and printer_name not in ('', 'default'):
+                    if shutil.which('lp'):
+                        cmd = ['lp', '-d', printer_name, str(ticket_path)]
+                    elif shutil.which('lpr'):
+                        cmd = ['lpr', '-P', printer_name, str(ticket_path)]
+                    else:
+                        cmd = None
+                else:
+                    if shutil.which('lp'):
+                        cmd = ['lp', str(ticket_path)]
+                    elif shutil.which('lpr'):
+                        cmd = ['lpr', str(ticket_path)]
+                    else:
+                        cmd = None
+
+                if cmd is None:
+                    raise RuntimeError('No lp/lpr command available')
+
+                subprocess.check_call(cmd)
+            except Exception as exc:
+                self._log_error(f"No se pudo imprimir vía CUPS ({device}): {exc}")
+                return False
+
+            self.reset()
+            return True
+
+        # Fallback: try to open as a file/device on POSIX
         try:
-            with open(self.printer_device, "wb") as printer:
+            with open(device, "wb") as printer:
                 printer.write(self.buffer)
                 printer.flush()
         except Exception as exc:
-            self._log_error(f"No se pudo imprimir en {self.printer_device}: {exc}")
+            self._log_error(f"No se pudo imprimir en {device}: {exc}")
             return False
 
         self.reset()

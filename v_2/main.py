@@ -1,6 +1,10 @@
 import atexit
+import ctypes
+import os
 import sys
 import time
+import shutil
+import subprocess
 from pathlib import Path
 
 from services.scanner_detector import get_scanned_string, is_scan
@@ -114,6 +118,42 @@ if __name__ == "__main__":
         selling = False
         return pasing
 
+    def calc_esta_enfocado():
+        if sys.platform == "win32":
+            # Mientras desarrollamos en Windows, validamos el foco con la ventana activa.
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return False
+
+            longitud = user32.GetWindowTextLengthW(hwnd)
+            titulo = ctypes.create_unicode_buffer(longitud + 1)
+            user32.GetWindowTextW(hwnd, titulo, longitud + 1)
+            return "libreoffice calc" in titulo.value.lower()
+
+        if sys.platform.startswith("linux"):
+            sesion = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+            if sesion == "wayland":
+                return False
+
+            if shutil.which("xdotool") is None:
+                return False
+
+            try:
+                resultado = subprocess.run(
+                    ["xdotool", "getactivewindow", "getwindowname"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except Exception:
+                return False
+
+            titulo = resultado.stdout.strip().lower()
+            return "libreoffice calc" in titulo or "calc" in titulo
+
+        return False
+
     def on_scan():
         barcode = get_scanned_string(clear=True)
         barcode = str(barcode).strip()
@@ -157,6 +197,8 @@ if __name__ == "__main__":
         global selling
         if autocompletado_handler.selector_activo:
             return
+        if not calc_esta_enfocado():
+            return
         enfocar_celda_sin_azul(documento, 1, 3)
         if selling:
             print("Venta en curso. Por favor, espere...")
@@ -164,7 +206,6 @@ if __name__ == "__main__":
         if is_scan():
             print("Se detectó un escaneo. Procesando venta...")
             on_scan()
-            return #TODO: Implementar procesamiento de venta por escaneo
         cobrar = False
         with sheet_admin.temporary_unlock():
             if not table_manager.add_item_to_cart(input, cart):
