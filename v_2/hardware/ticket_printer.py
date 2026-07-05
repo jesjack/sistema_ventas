@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-import tempfile
 import os
 import glob
 import platform
@@ -26,7 +25,9 @@ class TicketPrinter:
         self.website_url = website_url
         self.base_dir = Path(__file__).resolve().parent.parent
         self.logs_dir = self.base_dir / "logs"
+        self.runtime_dir = self.base_dir / "runtime"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self.buffer = bytearray()
         self.reset()
 
@@ -238,8 +239,11 @@ class TicketPrinter:
 
     def send_print(self):
         # Save a copy for debugging
-        ticket_path = Path(tempfile.gettempdir()) / "ticket.bin"
-        ticket_path.write_bytes(self.buffer)
+        ticket_path = self.runtime_dir / "ticket.bin"
+        try:
+            ticket_path.write_bytes(self.buffer)
+        except Exception as exc:
+            self._log_error(f"No se pudo guardar la copia temporal del ticket en '{ticket_path}': {exc}")
 
         device = self.find_printer_device() or self.printer_device
 

@@ -70,3 +70,24 @@ Detalles: cannot get value Title
 1783190401.6438918: El documento ha sido cerrado o no es accesible.
 Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
 Detalles: cannot get value Title
+1783216469.6259174: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1783216796.3668787: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1783217184.7269652: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1783217210.3685565: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1783217392.323202: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1783217556.571187: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title
+1783217646.2554975: El documento ha sido cerrado o no es accesible.
+Excepción: <class '__main__.com.sun.star.beans.UnknownPropertyException'>
+Detalles: cannot get value Title

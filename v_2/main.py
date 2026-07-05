@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from services.scanner_detector import get_scanned_string, is_scan
+from services.scanner_detector import clear_buffer, get_scanned_string, is_scan
 
 BASE_DIR = Path(__file__).resolve().parent
 LOGS_DIR = BASE_DIR / "logs"
@@ -174,7 +174,7 @@ if __name__ == "__main__":
                     print("No se pudo agregar el producto al carrito.")
             return
 
-        print("Codigo no registrado. Abriendo selector de autocompletado...")
+        print(f"Codigo no registrado: {barcode}. Abriendo selector de autocompletado...")
         seleccionado = autocompletado_handler.seleccionar_producto()
         if seleccionado is None:
             print("Registro de codigo cancelado por el usuario.")
@@ -195,40 +195,43 @@ if __name__ == "__main__":
 
     def on_enter():
         global selling
-        if autocompletado_handler.selector_activo:
-            return
-        if not calc_esta_enfocado():
-            return
-        enfocar_celda_sin_azul(documento, 1, 3)
-        if selling:
-            print("Venta en curso. Por favor, espere...")
-            return
-        if is_scan():
-            print("Se detectó un escaneo. Procesando venta...")
-            on_scan()
-        cobrar = False
-        with sheet_admin.temporary_unlock():
-            if not table_manager.add_item_to_cart(input, cart):
-                cobrar = True
-        if cobrar:
-            if sell() == "code":
-                codigo = solicitar_codigo(context)
-                if codigo is not None:
-                    print(f"Codigo ingresado: {codigo}")
-                    if codigo == "7410":
-                        try:
-                            printer = TicketPrinter()
-                            printer.open_cash_drawer()
-                        except Exception as exc:
-                            print(f"No se pudo abrir la caja: {exc}")
-                        finally:
-                            with sheet_admin.temporary_unlock():
-                                table_manager.registrar_evento_especial(
-                                    ventas,
-                                    "APERTURA DE CAJA",
-                                    codigo=codigo,
-                                    detalle="Se abrió la caja con el código autorizado.",
-                                )
+        try:
+            if autocompletado_handler.selector_activo:
+                return
+            # if not calc_esta_enfocado():
+            #     return
+            enfocar_celda_sin_azul(documento, 1, 3)
+            if selling:
+                print("Venta en curso. Por favor, espere...")
+                return
+            if is_scan(min_length=2):
+                print("Se detectó un escaneo. Procesando venta...")
+                on_scan()
+            cobrar = False
+            with sheet_admin.temporary_unlock():
+                if not table_manager.add_item_to_cart(input, cart):
+                    cobrar = True
+            if cobrar:
+                if sell() == "code":
+                    codigo = solicitar_codigo(context)
+                    if codigo is not None:
+                        print(f"Codigo ingresado: {codigo}")
+                        if codigo == "7410":
+                            try:
+                                printer = TicketPrinter()
+                                printer.open_cash_drawer()
+                            except Exception as exc:
+                                print(f"No se pudo abrir la caja: {exc}")
+                            finally:
+                                with sheet_admin.temporary_unlock():
+                                    table_manager.registrar_evento_especial(
+                                        ventas,
+                                        "APERTURA DE CAJA",
+                                        codigo=codigo,
+                                        detalle="Se abrió la caja con el código autorizado.",
+                                    )
+        finally:
+            clear_buffer()
 
     def clean_cart():
         print("Limpiando carrito...")

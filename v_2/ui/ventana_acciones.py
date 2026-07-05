@@ -1,5 +1,6 @@
 import getpass
 import os
+import pwd
 import unohelper
 from com.sun.star.awt import XActionListener, XFocusListener, XMouseListener, XTopWindowListener, XWindowListener
 import unicodedata
@@ -72,6 +73,21 @@ class VentanaAcciones:
         self._usuario_actual = self._obtener_usuario_actual()
 
     def _obtener_usuario_actual(self):
+        for clave in ("SUDO_USER", "PKEXEC_UID"):
+            valor = os.environ.get(clave)
+            if not valor:
+                continue
+
+            if clave == "PKEXEC_UID":
+                try:
+                    valor = pwd.getpwuid(int(valor)).pw_name
+                except Exception:
+                    continue
+
+            valor = str(valor).strip()
+            if valor and valor.lower() != "root":
+                return self._normalizar_texto(valor).strip().lower()
+
         for obtenedor in (getpass.getuser, os.getlogin):
             try:
                 nombre = obtenedor()
@@ -201,7 +217,6 @@ class VentanaAcciones:
         usuarios_normalizados = self._normalizar_listado_usuarios(usuarios)
         if not usuarios_normalizados or "all" in usuarios_normalizados:
             return True
-
         return self._usuario_actual in usuarios_normalizados
 
     def agregar_boton(self, texto, accion, usuarios=None, nombre=None):

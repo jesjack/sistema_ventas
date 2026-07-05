@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 def _parse_monto(texto):
     if texto is None:
         return None

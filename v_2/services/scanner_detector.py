@@ -45,10 +45,10 @@ def get_scanned_string(clear=False):
 		return text
 
 
-def is_scan():
+def is_scan(min_length=MIN_LENGTH, max_avg_ms=MAX_AVG_MS, max_allowed_gap_ms=MAX_ALLOWED_GAP_MS, max_std_ms=MAX_STD_MS):
 	"""Devuelve True si las ultimas teclas registradas parecen venir de un scanner."""
 	with _lock:
-		if len(timestamps) < MIN_LENGTH:
+		if len(timestamps) < int(min_length):
 			return False
 
 		intervals_ms = [
@@ -60,9 +60,9 @@ def is_scan():
 		std_ms = statistics.pstdev(intervals_ms) if len(intervals_ms) > 1 else 0.0
 
 		return (
-			avg_ms <= MAX_AVG_MS
-			and max_gap_ms <= MAX_ALLOWED_GAP_MS
-			and std_ms <= MAX_STD_MS
+			avg_ms <= float(max_avg_ms)
+			and max_gap_ms <= float(max_allowed_gap_ms)
+			and std_ms <= float(max_std_ms)
 		)
 
 

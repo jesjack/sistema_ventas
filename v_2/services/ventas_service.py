@@ -156,6 +156,12 @@ class VentasService:
                 )
                 """
             )
+            if not self._tabla_tiene_columnas(
+                cur,
+                "usuarios_sistema",
+                {"sistema_operativo", "version_sistema", "nombre_equipo", "dominio", "creado_en", "ultimo_acceso"},
+            ):
+                self._migrar_usuarios_sistema(cur)
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sesiones_sistema (
@@ -192,6 +198,79 @@ class VentasService:
         )
         cur.execute("DROP TABLE autorizaciones_codigos")
         cur.execute("ALTER TABLE autorizaciones_codigos_nueva RENAME TO autorizaciones_codigos")
+
+    def _migrar_usuarios_sistema(self, cur):
+        cur.execute("PRAGMA table_info(usuarios_sistema)")
+        columnas_existentes = [fila[1] for fila in cur.fetchall()]
+        if not columnas_existentes:
+            return
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usuarios_sistema_nueva (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre_usuario    TEXT NOT NULL COLLATE NOCASE,
+                sistema_operativo TEXT NOT NULL,
+                version_sistema   TEXT,
+                nombre_equipo     TEXT,
+                dominio           TEXT,
+                creado_en         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ultimo_acceso     TEXT,
+                UNIQUE(nombre_usuario, sistema_operativo, nombre_equipo, dominio)
+            )
+            """
+        )
+
+        columnas_insert = ["id", "nombre_usuario"]
+        valores_select = ["id", "nombre_usuario"]
+
+        if "sistema_operativo" in columnas_existentes:
+            columnas_insert.append("sistema_operativo")
+            valores_select.append("COALESCE(sistema_operativo, 'desconocido')")
+        else:
+            columnas_insert.append("sistema_operativo")
+            valores_select.append("'desconocido'")
+
+        if "version_sistema" in columnas_existentes:
+            columnas_insert.append("version_sistema")
+            valores_select.append("COALESCE(version_sistema, '')")
+        else:
+            columnas_insert.append("version_sistema")
+            valores_select.append("''")
+
+        if "nombre_equipo" in columnas_existentes:
+            columnas_insert.append("nombre_equipo")
+            valores_select.append("COALESCE(nombre_equipo, '')")
+        else:
+            columnas_insert.append("nombre_equipo")
+            valores_select.append("''")
+
+        if "dominio" in columnas_existentes:
+            columnas_insert.append("dominio")
+            valores_select.append("COALESCE(dominio, '')")
+        else:
+            columnas_insert.append("dominio")
+            valores_select.append("''")
+
+        if "creado_en" in columnas_existentes:
+            columnas_insert.append("creado_en")
+            valores_select.append("creado_en")
+        else:
+            columnas_insert.append("creado_en")
+            valores_select.append("CURRENT_TIMESTAMP")
+
+        if "ultimo_acceso" in columnas_existentes:
+            columnas_insert.append("ultimo_acceso")
+            valores_select.append("ultimo_acceso")
+        else:
+            columnas_insert.append("ultimo_acceso")
+            valores_select.append("NULL")
+
+        cur.execute(
+            f"INSERT INTO usuarios_sistema_nueva ({', '.join(columnas_insert)}) SELECT {', '.join(valores_select)} FROM usuarios_sistema"
+        )
+        cur.execute("DROP TABLE usuarios_sistema")
+        cur.execute("ALTER TABLE usuarios_sistema_nueva RENAME TO usuarios_sistema")
 
     def registrar_venta(self, items: Iterable, recibido=0, cambio=0, fecha=None, hora=None):
         items = list(items)
