@@ -1,20 +1,356 @@
 REM  *****  BASIC  *****
 
+Option Explicit
+
+Global gTPVCommandCursor As Long
+Global gTPVButtonY As Long
+
+Const TPV_BUTTON_PREFIX = "tpv_action_"
+Const TPV_BUTTON_FORM_NAME = "TPVButtonsForm"
+Const TPV_BUTTON_X = 27500
+Const TPV_BUTTON_WIDTH = 4600
+Const TPV_BUTTON_HEIGHT = 900
+Const TPV_BUTTON_GAP = 250
+Const TPV_BUTTON_START_Y = 1200
+
 Sub Main
     Dim os As String
     Dim comando As String
-    Dim objShell As Object
-    
+    Dim documento As Object
+    Dim hoja As Object
+
     os = GetGUIType()
-    
+    documento = ThisComponent
+    hoja = documento.Sheets.getByIndex(0)
+
+    TPV_PrepararComunicacion os
+    TPV_LimpiarBotones hoja
+
     If os = 1 Then
-        ' Windows: usar WScript.Shell para mejor control de la ventana
-        comando = """C:\Program Files\LibreOffice\program\python.exe"" C:\Users\jesjack\sistema_ventas\v_2\main.py"
-        Set objShell = CreateObject("WScript.Shell")
-        objShell.Run comando, 1, False
+        ' /c ejecuta y cierra. El 0 al final de Shell() oculta la ventana por completo.
+        comando = "cmd.exe /c ""C:\Program Files\LibreOffice\program\python.exe"" C:\Users\jesjack\sistema_ventas\v_2\main.py"
+        Shell(comando, 0, "", False)
     Else
-        ' Linux: usar Shell para ejecutar en segundo plano
-        comando = "/usr/bin/python3 /home/jesjack/sistema_ventas/v_2/main.py > /home/jesjack/sistema_ventas/v_2/output.log 2>&1"
+        comando = "sudo /usr/bin/python3 /home/jesjack/sistema_ventas/v_2/main.py > /home/jesjack/sistema_ventas/v_2/output.log 2>&1"
+        ' comando = "sudo /usr/bin/python3 /home/jesjack/sistema_ventas/v_2/main.py"
         Shell(comando, 0, "", False)
     End If
 End Sub
+
+Sub TPV_PrepararComunicacion(os As String)
+    Dim carpeta As String
+
+    carpeta = TPV_DirectorioComunicacion(os)
+    gTPVButtonY = TPV_BUTTON_START_Y
+End Sub
+
+Sub TPV_PrepararComunicacionMacro()
+    TPV_PrepararComunicacion GetGUIType()
+End Sub
+
+Sub TPV_LimpiarBotonesMacro()
+    Dim documento As Object
+    Dim hoja As Object
+
+    documento = ThisComponent
+    hoja = documento.Sheets.getByIndex(0)
+    TPV_LimpiarBotones hoja
+End Sub
+
+Sub TPV_CrearBotonMacro(accionId As String, etiqueta As String)
+    Dim documento As Object
+    Dim hoja As Object
+
+    documento = ThisComponent
+    hoja = documento.Sheets.getByIndex(0)
+    TPV_CrearBoton documento, hoja, accionId, etiqueta
+End Sub
+
+Function TPV_DirectorioComunicacion(os As String) As String
+    If os = 1 Then
+        TPV_DirectorioComunicacion = "C:\Users\jesjack\sistema_ventas\v_2\logs"
+    Else
+        TPV_DirectorioComunicacion = "/home/jesjack/sistema_ventas/v_2/logs"
+    End If
+End Function
+
+Function TPV_ArchivoOrdenes(os As String) As String
+    TPV_ArchivoOrdenes = TPV_DirectorioComunicacion(os) & "/button_commands.txt"
+    If os = 1 Then
+        TPV_ArchivoOrdenes = TPV_DirectorioComunicacion(os) & "\\button_commands.txt"
+    End If
+End Function
+
+Function TPV_ArchivoEventos(os As String) As String
+    TPV_ArchivoEventos = TPV_DirectorioComunicacion(os) & "/button_events.txt"
+    If os = 1 Then
+        TPV_ArchivoEventos = TPV_DirectorioComunicacion(os) & "\\button_events.txt"
+    End If
+End Function
+
+Sub TPV_AsegurarDirectorio(ruta As String)
+    If Dir(ruta, 16) = "" Then
+        MkDir ruta
+    End If
+End Sub
+
+Function TPV_LimpiarTexto(valor As String) As String
+    Dim limpio As String
+
+    limpio = Replace(CStr(valor), "|", "/")
+    limpio = Replace(limpio, Chr(13), " ")
+    limpio = Replace(limpio, Chr(10), " ")
+    TPV_LimpiarTexto = limpio
+End Function
+
+Function TPV_UsuarioActual() As String
+    Dim valor As String
+
+    valor = Environ("SUDO_USER")
+    If valor <> "" Then
+        TPV_UsuarioActual = valor
+        Exit Function
+    End If
+
+    valor = Environ("USER")
+    If valor <> "" Then
+        TPV_UsuarioActual = valor
+        Exit Function
+    End If
+
+    valor = Environ("USERNAME")
+    If valor <> "" Then
+        TPV_UsuarioActual = valor
+        Exit Function
+    End If
+
+    TPV_UsuarioActual = "desconocido"
+End Function
+
+Sub TPV_LimpiarBotones(hoja As Object)
+    Dim drawPage As Object
+    Dim forms As Object
+    Dim indice As Long
+    Dim forma As Object
+
+    drawPage = hoja.getDrawPage()
+
+    For indice = drawPage.getCount() - 1 To 0 Step -1
+        forma = drawPage.getByIndex(indice)
+        On Error Resume Next
+        If forma.supportsService("com.sun.star.drawing.ControlShape") Then
+            drawPage.remove(forma)
+        End If
+        On Error GoTo 0
+    Next indice
+
+    forms = drawPage.getForms()
+    For indice = forms.getCount() - 1 To 0 Step -1
+        forma = forms.getByIndex(indice)
+        Do While forma.getCount() > 0
+            forma.removeByIndex(0)
+        Loop
+    Next indice
+
+    gTPVButtonY = TPV_BUTTON_START_Y
+End Sub
+
+Sub TPV_CrearBoton(documento As Object, hoja As Object, accionId As String, etiqueta As String)
+    Dim drawPage As Object
+    Dim forms As Object
+    Dim formulario As Object
+    Dim modeloBoton As Object
+    Dim formaControl As Object
+    Dim evento As Object
+    Dim nombreBoton As String
+    Dim posicionFormulario As Long
+
+    accionId = TPV_LimpiarTexto(accionId)
+    etiqueta = TPV_LimpiarTexto(etiqueta)
+    nombreBoton = TPV_BUTTON_PREFIX & accionId
+
+    TPV_EliminarBoton hoja, nombreBoton
+
+    drawPage = hoja.getDrawPage()
+    forms = drawPage.getForms()
+    If forms.getCount() = 0 Then
+        formulario = documento.createInstance("com.sun.star.form.component.Form")
+        formulario.Name = TPV_BUTTON_FORM_NAME
+        forms.insertByIndex(0, formulario)
+    Else
+        formulario = forms.getByIndex(0)
+    End If
+
+    modeloBoton = documento.createInstance("com.sun.star.form.component.CommandButton")
+    modeloBoton.Name = nombreBoton
+    modeloBoton.Label = etiqueta
+    formulario.insertByName(nombreBoton, modeloBoton)
+
+    evento = CreateUnoStruct("com.sun.star.script.ScriptEventDescriptor")
+    evento.ListenerType = "XActionListener"
+    evento.EventMethod = "actionPerformed"
+    evento.AddListenerParam = ""
+    evento.ScriptType = "StarBasic"
+    evento.ScriptCode = "document:Standard.Module1.TPV_ButtonAction"
+
+    posicionFormulario = formulario.getCount() - 1
+    formulario.registerScriptEvent(posicionFormulario, evento)
+
+    formaControl = documento.createInstance("com.sun.star.drawing.ControlShape")
+    formaControl.setControl(modeloBoton)
+    formaControl.Name = nombreBoton
+    formaControl.Position = TPV_CrearPunto(TPV_BUTTON_X, gTPVButtonY)
+    formaControl.Size = TPV_CrearTamano(TPV_BUTTON_WIDTH, TPV_BUTTON_HEIGHT)
+    drawPage.add(formaControl)
+
+    gTPVButtonY = gTPVButtonY + TPV_BUTTON_HEIGHT + TPV_BUTTON_GAP
+End Sub
+
+Sub TPV_EliminarBoton(hoja As Object, nombreBoton As String)
+    Dim drawPage As Object
+    Dim forms As Object
+    Dim indice As Long
+    Dim forma As Object
+
+    nombreBoton = TPV_LimpiarTexto(nombreBoton)
+    drawPage = hoja.getDrawPage()
+
+    For indice = drawPage.getCount() - 1 To 0 Step -1
+        forma = drawPage.getByIndex(indice)
+        On Error Resume Next
+        If forma.supportsService("com.sun.star.drawing.ControlShape") Then
+            If forma.Name = nombreBoton Then
+                drawPage.remove(forma)
+            End If
+        End If
+        On Error GoTo 0
+    Next indice
+
+    forms = drawPage.getForms()
+    If forms.getCount() > 0 Then
+        forma = forms.getByIndex(0)
+        On Error Resume Next
+        If forma.hasByName(nombreBoton) Then
+            forma.removeByName(nombreBoton)
+        End If
+        On Error GoTo 0
+    End If
+End Sub
+
+Sub TPV_ButtonAction(oEvent)
+    Dim control As Object
+    Dim nombreBoton As String
+    Dim accionId As String
+    Dim etiqueta As String
+
+    nombreBoton = ""
+    accionId = ""
+    etiqueta = ""
+
+    On Error Resume Next
+    control = oEvent.Source
+    nombreBoton = control.Model.Name
+    If nombreBoton = "" Then
+        nombreBoton = control.Name
+    End If
+    etiqueta = control.Model.Label
+    If etiqueta = "" Then
+        etiqueta = control.Label
+    End If
+    On Error GoTo 0
+
+    If nombreBoton = "" Then
+        Exit Sub
+    End If
+
+    accionId = nombreBoton
+    If Left(accionId, Len(TPV_BUTTON_PREFIX)) = TPV_BUTTON_PREFIX Then
+        accionId = Mid(accionId, Len(TPV_BUTTON_PREFIX) + 1)
+    End If
+
+    TPV_AgregarTexto TPV_ArchivoEventos(GetGUIType()), "CLICK|" & TPV_LimpiarTexto(accionId) & "|" & TPV_LimpiarTexto(etiqueta) & "|" & TPV_LimpiarTexto(TPV_UsuarioActual()) & "|" & TPV_LimpiarTexto(CStr(Now))
+    TPV_RestaurarFocoCalc
+End Sub
+
+Sub TPV_RestaurarFocoCalc()
+    Dim controlador As Object
+    Dim frame As Object
+    Dim ventana As Object
+    Dim vistaActual As String
+
+    On Error Resume Next
+    controlador = ThisComponent.getCurrentController()
+    If controlador Is Nothing Then
+        Exit Sub
+    End If
+
+    vistaActual = controlador.ViewData
+    If vistaActual <> "" Then
+        controlador.restoreViewData(vistaActual)
+    End If
+
+    frame = controlador.getFrame()
+    If Not frame Is Nothing Then
+        ventana = frame.getComponentWindow()
+        If ventana Is Nothing Then
+            ventana = frame.getContainerWindow()
+        End If
+        If Not ventana Is Nothing Then
+            ventana.setFocus()
+        End If
+    End If
+    On Error GoTo 0
+End Sub
+
+Sub TPV_AgregarTexto(rutaArchivo As String, texto As String)
+    Dim directorio As String
+    Dim ultimoSeparador As Long
+    Dim archivo As Integer
+
+    ultimoSeparador = TPV_UltimoSeparadorRuta(rutaArchivo)
+
+    If ultimoSeparador > 0 Then
+        directorio = Left(rutaArchivo, ultimoSeparador - 1)
+        TPV_AsegurarDirectorio directorio
+    End If
+
+    archivo = FreeFile
+    Open rutaArchivo For Output As #archivo
+    Print #archivo, texto
+    Close #archivo
+End Sub
+
+Function TPV_UltimoSeparadorRuta(rutaArchivo As String) As Long
+    Dim indice As Long
+    Dim caracter As String
+
+    For indice = Len(rutaArchivo) To 1 Step -1
+        caracter = Mid(rutaArchivo, indice, 1)
+        If caracter = "/" Or caracter = "\" Then
+            TPV_UltimoSeparadorRuta = indice
+            Exit Function
+        End If
+    Next indice
+
+    TPV_UltimoSeparadorRuta = 0
+End Function
+
+Function TPV_CrearPunto(x As Long, y As Long)
+    Dim punto As Object
+
+    punto = CreateUnoStruct("com.sun.star.awt.Point")
+    punto.X = x
+    punto.Y = y
+    TPV_CrearPunto = punto
+End Function
+
+Function TPV_CrearTamano(ancho As Long, alto As Long)
+    Dim tamano As Object
+
+    tamano = CreateUnoStruct("com.sun.star.awt.Size")
+    tamano.Width = ancho
+    tamano.Height = alto
+    TPV_CrearTamano = tamano
+End Function
+
+

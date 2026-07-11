@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 import struct
 import tempfile
+import threading
 import time
+import traceback
 
 from PIL import Image
 from barcode import Code128
@@ -11,10 +13,48 @@ from barcode.writer import ImageWriter
 from niimprint import SerialTransport, PrinterClient
 from niimprint.packet import NiimbotPacket
 
+try:
+    from serial.tools import list_ports
+except ImportError:  # pragma: no cover - fallback if pyserial is unavailable
+    list_ports = None
+
+RESAMPLING = getattr(Image, "Resampling", Image)
+
 ANCHO_PX = 400
 ALTO_PX = 224
 ROTAR_90 = True
 MARGEN_SUPERIOR = 16  # aprox. 2 mm a 203 dpi
+
+_PRINT_LOCK = threading.Lock()
+
+
+def resolver_puerto_impresora(preferido="auto"):
+    if preferido and preferido != "auto":
+        return preferido
+
+    if list_ports is None:
+        return preferido
+
+    puertos = list(list_ports.comports())
+    candidatos = []
+
+    for puerto in puertos:
+        descripcion = f"{puerto.description} {puerto.manufacturer} {puerto.product}"
+        if puerto.device == "/dev/ttyACM0":
+            return puerto.device
+        if "B1 LABEL PRINTER" in descripcion or (puerto.vid == 0x3513 and puerto.pid == 0x0002):
+            candidatos.append(puerto.device)
+
+    if len(candidatos) == 1:
+        return candidatos[0]
+
+    if len(puertos) == 1:
+        return puertos[0].device
+
+    if candidatos:
+        return candidatos[0]
+
+    return preferido
 
 
 def generar_codigo_barras_code128(texto, ancho_maximo, alto_maximo):
@@ -39,7 +79,7 @@ def generar_codigo_barras_code128(texto, ancho_maximo, alto_maximo):
             max(1, int(imagen.width * escala)),
             max(1, int(imagen.height * escala)),
         )
-        imagen = imagen.resize(nuevo_tamano, Image.Resampling.LANCZOS)
+        imagen = imagen.resize(nuevo_tamano, RESAMPLING.LANCZOS)
 
     canvas = Image.new("L", (ancho_maximo, alto_maximo), color=255)
     offset_x = max(0, (ancho_maximo - imagen.width) // 2)
@@ -58,7 +98,7 @@ def ajustar_codigo_barras(imagen, ancho, alto, rotar_90=False, margen_superior=0
         imagen = imagen.crop(bbox)
 
     alto_util = max(1, alto - margen_superior)
-    imagen = imagen.resize((ancho, alto_util), Image.Resampling.NEAREST)
+    imagen = imagen.resize((ancho, alto_util), RESAMPLING.NEAREST)
 
     canvas = Image.new("L", (ancho, alto), color=255)
     canvas.paste(imagen, (0, margen_superior))
@@ -121,11 +161,12 @@ class PrinterClientFixed(PrinterClient):
 
 
 class BarcodePrinter:
-    def __init__(self, ancho_px=ANCHO_PX, alto_px=ALTO_PX, rotar_90=ROTAR_90, margen_superior=MARGEN_SUPERIOR):
+    def __init__(self, ancho_px=ANCHO_PX, alto_px=ALTO_PX, rotar_90=ROTAR_90, margen_superior=MARGEN_SUPERIOR, puerto_impresora="auto"):
         self.ancho_px = ancho_px
         self.alto_px = alto_px
         self.rotar_90 = rotar_90
         self.margen_superior = margen_superior
+        self.puerto_impresora = puerto_impresora
         self.base_dir = Path(__file__).resolve().parent
         self.ruta_imagen = self.base_dir / "etiqueta_usb.png"
 
@@ -143,29 +184,50 @@ class BarcodePrinter:
             margen_superior=self.margen_superior,
         )
 
-    def imprimir_codigo_barras(self, texto_codigo, numero_copias=1, density=1):
+    def _imprimir_codigo_barras_bloqueante(self, texto_codigo, numero_copias=1, density=1):
         imagen = self._crear_imagen(texto_codigo)
         imagen.save(self.ruta_imagen)
 
-        transporte = SerialTransport()
-        cliente = PrinterClientFixed(transporte)
+        with _PRINT_LOCK:
+            puerto = resolver_puerto_impresora(self.puerto_impresora)
+            transporte = SerialTransport(port=puerto)
+            cliente = PrinterClientFixed(transporte)
 
-        with Image.open(self.ruta_imagen) as img:
-            total_copias = max(1, int(numero_copias))
-            for indice in range(total_copias):
-                cliente.print_image(img, density=density, esperar_final=(indice == total_copias - 1))
+            with Image.open(self.ruta_imagen) as img:
+                total_copias = max(1, int(numero_copias))
+                for indice in range(total_copias):
+                    cliente.print_image(img, density=density, esperar_final=(indice == total_copias - 1))
 
         return True
+
+    def imprimir_codigo_barras(self, texto_codigo, numero_copias=1, density=1, en_segundo_plano=True):
+        if not en_segundo_plano:
+            return self._imprimir_codigo_barras_bloqueante(texto_codigo, numero_copias=numero_copias, density=density)
+
+        def trabajo():
+            try:
+                self._imprimir_codigo_barras_bloqueante(
+                    texto_codigo,
+                    numero_copias=numero_copias,
+                    density=density,
+                )
+            except Exception:
+                traceback.print_exc()
+
+        hilo = threading.Thread(target=trabajo, daemon=True)
+        hilo.start()
+        return hilo
 
 
 _default_barcode_printer = BarcodePrinter()
 
 
-def imprimir_codigo_barras(texto_codigo, numero_copias=1, density=1):
+def imprimir_codigo_barras(texto_codigo, numero_copias=1, density=1, en_segundo_plano=True):
     return _default_barcode_printer.imprimir_codigo_barras(
         texto_codigo,
         numero_copias=numero_copias,
         density=density,
+        en_segundo_plano=en_segundo_plano,
     )
 
 

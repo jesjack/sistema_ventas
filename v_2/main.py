@@ -1,10 +1,13 @@
+from calc.calc_window_focus import es_libreoffice_calc_enfocado
+
+
+print("Iniciando sistema de ventas...")
+
 import atexit
-import ctypes
+import getpass
 import os
 import sys
 import time
-import shutil
-import subprocess
 from pathlib import Path
 
 from services.scanner_detector import clear_buffer, get_scanned_string, is_scan
@@ -15,25 +18,90 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-import uno
+try:
+    import uno
+except ImportError:
+    print("Warning: 'uno' module not found. Make sure you're running from LibreOffice Python.")
+    sys.exit(1)
+
 from table_modules import create_table
 from table_modules.table_manager import TableManager
 from calc.sheet_admin import SheetAdmin
 import keyboard
 from rich.traceback import install
-from calc.calc_focus import enfocar_celda_sin_azul, enfocar_ventana_de_calc
+from calc.calc_focus import enfocar_celda_sin_azul, enfocar_ventana_de_calc, registrar_seguimiento_foco_calc
 from dialogs.codigo_autorizacion import solicitar_codigo
+from dialogs.aviso_impresion import mostrar_aviso_impresion
 from dialogs.imprimir_codigo_barras import solicitar_datos_codigo_barras
 from dialogs.seleccionar_fecha_ventas import solicitar_fecha_ventas
 from dialogs.ver_ventas_del_dia import abrir_ventana_ventas_del_dia
 from dialogs.precio_venta import solicitar_precio_venta
 from hardware.barcode_printer import imprimir_codigo_barras
 from hardware.ticket_printer import TicketPrinter
+from services.button_bridge import SheetButtonBridge
 from services.seguimiento_sesion import SeguimientoSesionSistema
 from ui.catalogo_autocompletado import abrir_editor_catalogo_autocompletado
 from ui.autocompletado_producto import AutocompletadoProductoHandler
-from ui.ventana_acciones import VentanaAcciones, crear_ventana_acciones
 install(show_locals=True) # Muestra las variables locales al fallar
+
+
+def obtener_usuario_actual():
+    for clave in ("SUDO_USER", "PKEXEC_UID"):
+        valor = os.environ.get(clave)
+        if not valor:
+            continue
+
+        if clave == "PKEXEC_UID":
+            try:
+                import pwd
+
+                valor = pwd.getpwuid(int(valor)).pw_name
+            except Exception:
+                continue
+
+        valor = str(valor).strip()
+        if valor and valor.lower() != "root":
+            return valor.lower()
+
+    for obtenedor in (getpass.getuser, os.getlogin):
+        try:
+            valor = obtenedor()
+            if valor:
+                return str(valor).strip().lower()
+        except Exception:
+            pass
+
+    for clave in ("USER", "USERNAME"):
+        valor = os.environ.get(clave)
+        if valor:
+            return str(valor).strip().lower()
+
+    return "desconocido"
+
+
+def obtener_documento_calc(desktop):
+    componente = desktop.getCurrentComponent()
+    if componente is not None:
+        try:
+            if hasattr(componente, "supportsService") and componente.supportsService("com.sun.star.sheet.SpreadsheetDocument"):
+                return componente
+            if hasattr(componente, "getSheets"):
+                return componente
+        except Exception:
+            pass
+
+    componentes = desktop.getComponents().createEnumeration()
+    while componentes.hasMoreElements():
+        componente = componentes.nextElement()
+        try:
+            if hasattr(componente, "supportsService") and componente.supportsService("com.sun.star.sheet.SpreadsheetDocument"):
+                return componente
+            if hasattr(componente, "getSheets"):
+                return componente
+        except Exception:
+            continue
+
+    return None
 
 if __name__ == "__main__":
     # Conectar a LibreOffice
@@ -41,8 +109,15 @@ if __name__ == "__main__":
     resolver = local_context.ServiceManager.createInstanceWithContext("com.sun.star.bridge.UnoUrlResolver", local_context)
     context = resolver.resolve("uno:socket,host=localhost,port=2002;urp;StarOffice.ComponentContext")
     desktop = context.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", context)
-    documento = desktop.getCurrentComponent()
-    hoja = documento.Sheets[0]
+    documento = obtener_documento_calc(desktop)
+    if documento is None:
+        print("No se encontro un documento de Calc abierto.")
+        sys.exit(1)
+
+    hojas = documento.getSheets()
+    hoja = hojas.getByIndex(0)
+
+    # conectar_y_verificar_foco(ctx=context)
     
     sheet_admin = SheetAdmin(hoja, document=documento)
     table_manager = TableManager(uno_context=context)
@@ -54,6 +129,7 @@ if __name__ == "__main__":
     else:
         atexit.register(seguimiento_sesion.cerrar)
     controlador = documento.getCurrentController()
+    registrar_seguimiento_foco_calc(documento)
 
     with sheet_admin.temporary_unlock():
         sheet_admin.set_column_width(0, 600)
@@ -118,42 +194,6 @@ if __name__ == "__main__":
         selling = False
         return pasing
 
-    def calc_esta_enfocado():
-        if sys.platform == "win32":
-            # Mientras desarrollamos en Windows, validamos el foco con la ventana activa.
-            user32 = ctypes.windll.user32
-            hwnd = user32.GetForegroundWindow()
-            if not hwnd:
-                return False
-
-            longitud = user32.GetWindowTextLengthW(hwnd)
-            titulo = ctypes.create_unicode_buffer(longitud + 1)
-            user32.GetWindowTextW(hwnd, titulo, longitud + 1)
-            return "libreoffice calc" in titulo.value.lower()
-
-        if sys.platform.startswith("linux"):
-            sesion = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
-            if sesion == "wayland":
-                return False
-
-            if shutil.which("xdotool") is None:
-                return False
-
-            try:
-                resultado = subprocess.run(
-                    ["xdotool", "getactivewindow", "getwindowname"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except Exception:
-                return False
-
-            titulo = resultado.stdout.strip().lower()
-            return "libreoffice calc" in titulo or "calc" in titulo
-
-        return False
-
     def on_scan():
         barcode = get_scanned_string(clear=True)
         barcode = str(barcode).strip()
@@ -194,6 +234,10 @@ if __name__ == "__main__":
             print(f"No se pudo registrar el codigo de barras: {exc}")
 
     def on_enter():
+        if not es_libreoffice_calc_enfocado(ctx=context):
+            print("Calc no tiene el foco. Ignorando la tecla Enter.")
+            return
+        print("Tecla Enter detectada. Verificando si hay un escaneo...")
         global selling
         try:
             if autocompletado_handler.selector_activo:
@@ -204,9 +248,10 @@ if __name__ == "__main__":
             if selling:
                 print("Venta en curso. Por favor, espere...")
                 return
-            if is_scan(min_length=2):
+            if is_scan():
                 print("Se detectó un escaneo. Procesando venta...")
                 on_scan()
+                return
             cobrar = False
             with sheet_admin.temporary_unlock():
                 if not table_manager.add_item_to_cart(input, cart):
@@ -233,18 +278,18 @@ if __name__ == "__main__":
         finally:
             clear_buffer()
 
-    def clean_cart():
+    def clear_cart():
         print("Limpiando carrito...")
         with sheet_admin.temporary_unlock():
             cart.clear()
 
-    def catalogo_autocompletado():
+    def autocomplete():
         abrir_editor_catalogo_autocompletado(
             context,
             ventas_service=table_manager.ventas_service,
         )
 
-    def ver_ventas_por_fecha():
+    def view_sales():
         fecha = solicitar_fecha_ventas(context)
         if fecha is None:
             return
@@ -252,41 +297,33 @@ if __name__ == "__main__":
         abrir_ventana_ventas_del_dia(context, table_manager.ventas_service, fecha)
         print(f"Ventas consultadas para la fecha {fecha}")
 
-    def imprimir_codigo_barras_manual():
+    def print_barcode():
         datos = solicitar_datos_codigo_barras(context)
         if datos is None:
             return
 
         codigo, copias = datos
         try:
-            imprimir_codigo_barras(codigo, numero_copias=copias, density=1)
-            print(f"Codigo de barras impreso: {codigo} ({copias} copias)")
+            imprimir_codigo_barras(codigo, numero_copias=copias, density=1, en_segundo_plano=True)
+            mostrar_aviso_impresion(context)
+            print(f"Codigo de barras enviado a impresion: {codigo} ({copias} copias)")
         except Exception as exc:
             print(f"No se pudo imprimir el codigo de barras: {exc}")
 
-    def volver_a_la_hoja():
-        enfocar_ventana_de_calc(documento)
-
-    def registrar_atajo_accion(hotkey, accion):
-        keyboard.add_hotkey(hotkey, accion)
-
-    ventana_acciones = crear_ventana_acciones(
-        context,
-        titulo="Acciones de venta",
-        ancho=110,
-        alto=84,
-        posicion="superior_derecha",
-        margen=12,
-        al_recuperar_foco=volver_a_la_hoja,
-        registrar_atajo=registrar_atajo_accion,
-    )
     admins = ["jesjack", "nancy"]
-    ventana_acciones.agregar_boton("COBRAR CARRITO", sell)
-    ventana_acciones.agregar_boton("LIMPIAR CARRITO", clean_cart)
-    ventana_acciones.agregar_boton("VER VENTAS", ver_ventas_por_fecha, admins)
-    ventana_acciones.agregar_boton("AUTOCOMPLETADO", catalogo_autocompletado, admins)
-    ventana_acciones.agregar_boton("IMPRIMIR CODIGO DE BARRAS", imprimir_codigo_barras_manual, admins)
-    ventana_acciones.mostrar()
+    usuario_actual = obtener_usuario_actual()
+
+    bridge = SheetButtonBridge(context, documento, BASE_DIR)
+    bridge.add_button("COBRAR CARRITO", sell)
+    bridge.add_button("LIMPIAR CARRITO", clear_cart)
+
+    if usuario_actual in admins:
+        bridge.add_button("VER VENTAS", view_sales)
+        bridge.add_button("AUTOCOMPLETADO", autocomplete)
+        bridge.add_button("IMPRIMIR CODIGO DE BARRAS", print_barcode)
+
+    bridge.activate(clear_events=True)
+    atexit.register(bridge.close)
 
     keyboard.add_hotkey("enter", on_enter)
 
@@ -308,6 +345,10 @@ if __name__ == "__main__":
                 seguimiento_sesion.cerrar(exitosa=False)
             except Exception:
                 pass
+        try:
+            bridge.close()
+        except Exception:
+            pass
         # Si da error porque el documento ya no existe, limpiamos el teclado y cerramos
         try:
             controlador.removeKeyHandler(autocompletado_handler)

@@ -1,98 +1,90 @@
-import sys
-from pathlib import Path
+""" import uno
+from com.sun.star.uno import Exception as UnoException
 
-BASE_DIR = Path(__file__).resolve().parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
+def ejecutar_macro_basic():
+    # 1. Conectar con la instancia de LibreOffice
+    local_context = uno.getComponentContext()
+    resolver = local_context.ServiceManager.createInstanceWithContext(
+        "com.sun.star.bridge.UnoUrlResolver", local_context
+    )
+    
+    try:
+        context = resolver.resolve("uno:socket,host=localhost,port=2002;urp;StarOffice.ComponentContext")
+        smgr = context.ServiceManager
+        
+        # 2. Obtener el escritorio (Desktop) para acceder a los documentos
+        desktop = smgr.createInstanceWithContext("com.sun.star.frame.Desktop", context)
+        doc = desktop.getCurrentComponent() # Obtiene el documento activo
+        
+        if not doc:
+            print("No hay ningún documento activo abierto.")
+            return
 
-import main
+        # 3. Acceder al proveedor de scripts
+        script_provider = doc.getScriptProvider()
+        
+        # 4. Definir la URI de la macro Basic
+        # Formato: macro://[Origen]/[Librería].[Módulo].[NombreMacro]
+        macro_uri = "vnd.sun.star.script:Standard.Module1.HelloWorld?language=Basic&location=document"
+        
+        # 5. Obtener y ejecutar la macro
+        script = script_provider.getScript(macro_uri)
+        
+        # Los argumentos deben pasarse como una tupla (vacía si no lleva)
+        argumentos = () 
+        resultado, out_params, out_indices = script.invoke(argumentos, (), ())
+        
+        print("Macro ejecutada con éxito. Resultado:", resultado)
 
-
-class MockButton:
-    def __init__(self, name):
-        self.name = name
-        self.listener = None
-
-    def addActionListener(self, listener):
-        self.listener = listener
-        print(f"{self.name}: listener tiene getTypes:", hasattr(listener, "getTypes"))
-        print(f"{self.name}: tipos UNO:", listener.getTypes())
-
-
-class MockDialog:
-    def __init__(self):
-        self.buttons = {}
-        self.visible = False
-
-    def setModel(self, model):
-        self.model = model
-
-    def createPeer(self, toolkit, parent):
-        self.toolkit = toolkit
-
-    def getControl(self, name):
-        if name not in self.buttons:
-            self.buttons[name] = MockButton(name)
-        return self.buttons[name]
-
-    def setVisible(self, visible):
-        self.visible = visible
-
-
-class MockModel:
-    def __init__(self):
-        self.props = {}
-
-    def createInstance(self, service_name):
-        return MockModel()
-
-    def insertByName(self, name, value):
-        self.props[name] = value
-
-    def __setattr__(self, name, value):
-        if name in {"props"}:
-            object.__setattr__(self, name, value)
-        else:
-            self.props[name] = value
-
-
-class MockServiceManager:
-    def __init__(self):
-        self.dialog = MockDialog()
-
-    def createInstanceWithContext(self, service_name, context):
-        if service_name == "com.sun.star.awt.UnoControlDialogModel":
-            return MockModel()
-        if service_name == "com.sun.star.awt.UnoControlDialog":
-            return self.dialog
-        if service_name == "com.sun.star.awt.ExtToolkit":
-            return object()
-        raise ValueError(service_name)
-
-
-class MockContext:
-    def __init__(self):
-        self.ServiceManager = MockServiceManager()
-
-
-def probar_crear_boton():
-    contexto = MockContext()
-    ventana = main.crear_ventana_acciones(contexto, titulo="Prueba de boton", x=20, y=20, ancho=120, alto=20)
-
-    ventana.agregar_boton("PRUEBA", lambda: print("accion 1"))
-    ventana.agregar_boton("PRUEBA MAS LARGA", lambda: print("accion 2"))
-    dialog = ventana.mostrar()
-
-    print("dialogo creado:", dialog is not None)
-    print("mismo dialogo para ambos botones:", len(dialog.buttons) == 2)
-    print("visible:", dialog.visible)
-    print("botones en vertical:", dialog.model.props["btnAccion1"].props["PositionY"] < dialog.model.props["btnAccion2"].props["PositionY"])
-    print("mismo ancho:", dialog.model.props["btnAccion1"].props["Width"] == dialog.model.props["btnAccion2"].props["Width"])
-    print("padding simetrico:", dialog.model.props["btnAccion1"].props["PositionX"] == dialog.model.props["btnAccion2"].props["PositionX"])
-    print("ancho crecio con el texto:", dialog.model.props["Width"] > dialog.model.props["btnAccion1"].props["Width"])
-    print("alto crecio con mas botones:", dialog.model.props["Height"] > 20)
-    return dialog
-
+    except UnoException as e:
+        print("Error de UNO:", e.Message)
+    except Exception as e:
+        print("Error de conexión:", e)
 
 if __name__ == "__main__":
-    probar_crear_boton()
+    ejecutar_macro_basic()
+ """
+
+import uno
+from com.sun.star.uno import Exception as UnoException
+
+def invocar_funcion_basic():
+    local_context = uno.getComponentContext()
+    resolver = local_context.ServiceManager.createInstanceWithContext(
+        "com.sun.star.bridge.UnoUrlResolver", local_context
+    )
+    
+    try:
+        # Conexión al socket activo
+        context = resolver.resolve("uno:socket,host=localhost,port=2002;urp;StarOffice.ComponentContext")
+        desktop = context.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", context)
+        doc = desktop.getCurrentComponent()
+        
+        if not doc:
+            print("Por favor, abre un documento en LibreOffice primero.")
+            return
+
+        # 1. Localizar la función usando el protocolo interno de LibreOffice
+        script_provider = doc.getScriptProvider()
+        
+        # CORRECCIÓN: Protocolo 'vnd.sun.star.script:' apuntando a 'location=document'
+        macro_uri = "vnd.sun.star.script:Standard.Module1.CalcularPrecioTotal?language=Basic&location=document"
+        script = script_provider.getScript(macro_uri)
+        
+        # 2. Definir los parámetros que enviaremos (precioBase=100.0, impuesto=0.16)
+        parametros = (100.0, 0.16)
+        
+        # 3. Invocar la función pasando los parámetros en la tupla
+        resultado, out_params, out_indices = script.invoke(parametros, (), ())
+        
+        # 4. Mostrar el valor retornado por la función Basic
+        print("Respuesta recibida desde Basic:", resultado)
+        # Me funcionó: Respuesta recibida desde Basic: El precio total con impuestos es: $116
+
+    except UnoException as e:
+        print("Error de UNO:", e.Message)
+    except Exception as e:
+        print("Error:", e)
+
+if __name__ == "__main__":
+    invocar_funcion_basic()

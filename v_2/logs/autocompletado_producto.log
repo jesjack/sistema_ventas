@@ -132,3 +132,188 @@
 2026-07-04T20:11:34 Selector cancelado por el usuario.
 2026-07-04T20:13:25 Se encontraron 36 coincidencias; abriendo selector modal.
 2026-07-04T20:14:02 Selector cancelado por el usuario.
+2026-07-05T14:04:53 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-05T14:04:57 Selector cancelado por el usuario.
+2026-07-05T14:05:18 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-05T14:05:34 Selector cancelado por el usuario.
+2026-07-05T14:42:03 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-05T14:42:07 Selector cancelado por el usuario.
+2026-07-05T14:42:23 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-05T14:42:26 Selector cancelado por el usuario.
+2026-07-05T14:49:45 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-05T14:53:18 Selector cancelado por el usuario.
+2026-07-05T14:54:02 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-05T14:54:07 Selector cancelado por el usuario.
+2026-07-06T12:21:56 TAB detectado por el manejador de autocompletado.
+2026-07-06T12:21:57 Edicion activa aceptada antes de autocompletar.
+2026-07-06T12:21:57 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-06T12:21:57 Coincidencias por iniciales encontradas: 0
+2026-07-06T12:21:57 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T11:34:54 TAB detectado por el manejador de autocompletado.
+2026-07-07T11:34:54 Edicion activa aceptada antes de autocompletar.
+2026-07-07T11:34:54 Buscando coincidencias por iniciales: 't' -> 't'
+2026-07-07T11:34:54 Coincidencias por iniciales encontradas: 2
+2026-07-07T11:34:54 Se encontraron 2 coincidencias; abriendo selector modal.
+2026-07-07T11:34:56 Selector confirmado con indice=0, producto='test'.
+2026-07-07T11:34:56 Producto escrito en B4: 'test'
+2026-07-07T11:34:56 TAB detectado por el manejador de autocompletado.
+2026-07-07T11:34:56 Edicion activa aceptada antes de autocompletar.
+2026-07-07T11:34:56 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T11:34:56 Coincidencias por iniciales encontradas: 0
+2026-07-07T11:34:56 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T12:07:41 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-07T12:08:53 Selector cancelado por el usuario.
+2026-07-07T12:09:00 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-07T12:09:08 Selector cancelado por el usuario.
+2026-07-07T12:12:27 TAB detectado por el manejador de autocompletado.
+2026-07-07T12:12:27 Edicion activa aceptada antes de autocompletar.
+2026-07-07T12:12:27 Buscando coincidencias por iniciales: 'mayon' -> 'mayon'
+2026-07-07T12:12:27 Coincidencias por iniciales encontradas: 0
+2026-07-07T12:12:27 No se encontraron coincidencias para las iniciales: 'mayon'
+2026-07-07T12:14:08 TAB detectado por el manejador de autocompletado.
+2026-07-07T12:14:08 Edicion activa aceptada antes de autocompletar.
+2026-07-07T12:14:08 Buscando coincidencias por iniciales: 'cd' -> 'cd'
+2026-07-07T12:14:08 Coincidencias por iniciales encontradas: 2
+2026-07-07T12:14:08 Se encontraron 2 coincidencias; abriendo selector modal.
+2026-07-07T12:14:14 Selector confirmado con indice=1, producto='conjunto deportivo'.
+2026-07-07T12:14:14 Producto escrito en B4: 'conjunto deportivo'
+2026-07-07T12:15:00 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-07T12:15:08 Selector confirmado con indice=31, producto='test'.
+2026-07-07T12:20:40 Se encontraron 36 coincidencias; abriendo selector modal.
+2026-07-07T12:20:48 Selector confirmado con indice=1, producto='blusa'.
+2026-07-07T12:52:19 TAB detectado por el manejador de autocompletado.
+2026-07-07T12:52:19 Edicion activa aceptada antes de autocompletar.
+2026-07-07T12:52:19 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T12:52:19 Coincidencias por iniciales encontradas: 0
+2026-07-07T12:52:19 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:04:30 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:04:30 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:04:30 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:04:30 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:04:30 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:05:30 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:05:30 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:05:30 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:05:30 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:05:30 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:15:56 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:15:56 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:15:56 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:15:56 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:15:56 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:27:07 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:27:08 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:27:08 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:27:08 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:27:08 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:40:50 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:40:50 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:40:50 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:40:50 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:40:50 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:43:01 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:43:01 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:43:01 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:43:01 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:43:01 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:47:19 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:47:19 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:47:19 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:47:19 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:47:19 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T13:58:54 TAB detectado por el manejador de autocompletado.
+2026-07-07T13:58:54 Edicion activa aceptada antes de autocompletar.
+2026-07-07T13:58:54 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T13:58:54 Coincidencias por iniciales encontradas: 0
+2026-07-07T13:58:54 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T14:01:48 TAB detectado por el manejador de autocompletado.
+2026-07-07T14:01:48 Edicion activa aceptada antes de autocompletar.
+2026-07-07T14:01:48 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T14:01:48 Coincidencias por iniciales encontradas: 0
+2026-07-07T14:01:48 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T17:05:20 TAB detectado por el manejador de autocompletado.
+2026-07-07T17:05:20 Edicion activa aceptada antes de autocompletar.
+2026-07-07T17:05:20 Buscando coincidencias por iniciales: 'pms' -> 'pms'
+2026-07-07T17:05:20 Coincidencias por iniciales encontradas: 1
+2026-07-07T17:05:20 Coincidencia unica detectada: 'pantalón de mezclilla skinny'
+2026-07-07T17:05:20 Producto escrito en B4: 'pantalón de mezclilla skinny'
+2026-07-07T17:05:28 TAB detectado por el manejador de autocompletado.
+2026-07-07T17:05:28 Edicion activa aceptada antes de autocompletar.
+2026-07-07T17:05:28 Buscando coincidencias por iniciales: 'pantalón de mezclilla skinny' -> 'pantalondemezclillaskinny'
+2026-07-07T17:05:28 Coincidencias por iniciales encontradas: 0
+2026-07-07T17:05:28 No se encontraron coincidencias para las iniciales: 'pantalondemezclillaskinny'
+2026-07-07T17:06:37 TAB detectado por el manejador de autocompletado.
+2026-07-07T17:06:37 Edicion activa aceptada antes de autocompletar.
+2026-07-07T17:06:37 Buscando coincidencias por iniciales: 'b' -> 'b'
+2026-07-07T17:06:37 Coincidencias por iniciales encontradas: 5
+2026-07-07T17:06:37 Se encontraron 5 coincidencias; abriendo selector modal.
+2026-07-07T17:06:50 Selector cancelado por el usuario.
+2026-07-07T17:06:50 No se aplico ningun producto desde el selector.
+2026-07-07T17:07:09 TAB detectado por el manejador de autocompletado.
+2026-07-07T17:07:09 Edicion activa aceptada antes de autocompletar.
+2026-07-07T17:07:09 Buscando coincidencias por iniciales: 'm' -> 'm'
+2026-07-07T17:07:09 Coincidencias por iniciales encontradas: 1
+2026-07-07T17:07:09 Coincidencia unica detectada: 'mayón deportivo'
+2026-07-07T17:07:09 Producto escrito en B4: 'mayón deportivo'
+2026-07-07T17:07:30 TAB detectado por el manejador de autocompletado.
+2026-07-07T17:07:30 Edicion activa aceptada antes de autocompletar.
+2026-07-07T17:07:30 Buscando coincidencias por iniciales: 'v' -> 'v'
+2026-07-07T17:07:30 Coincidencias por iniciales encontradas: 3
+2026-07-07T17:07:30 Se encontraron 3 coincidencias; abriendo selector modal.
+2026-07-07T17:10:19 Selector confirmado con indice=0, producto='vestido'.
+2026-07-07T17:10:19 Producto escrito en B4: 'vestido'
+2026-07-07T18:38:13 TAB detectado por el manejador de autocompletado.
+2026-07-07T18:38:13 Edicion activa aceptada antes de autocompletar.
+2026-07-07T18:38:13 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T18:38:13 Coincidencias por iniciales encontradas: 0
+2026-07-07T18:38:13 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-07T18:40:41 TAB detectado por el manejador de autocompletado.
+2026-07-07T18:40:41 Edicion activa aceptada antes de autocompletar.
+2026-07-07T18:40:41 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-07T18:40:41 Coincidencias por iniciales encontradas: 0
+2026-07-07T18:40:41 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-10T18:26:32 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:26:32 Edicion activa aceptada antes de autocompletar.
+2026-07-10T18:26:32 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-10T18:26:32 Coincidencias por iniciales encontradas: 0
+2026-07-10T18:26:32 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-10T18:30:55 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:30:55 Edicion activa aceptada antes de autocompletar.
+2026-07-10T18:30:55 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-10T18:30:55 Coincidencias por iniciales encontradas: 0
+2026-07-10T18:30:55 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-10T18:31:04 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:31:04 Edicion activa aceptada antes de autocompletar.
+2026-07-10T18:31:04 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-10T18:31:04 Coincidencias por iniciales encontradas: 0
+2026-07-10T18:31:04 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-10T18:34:35 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:34:35 Edicion activa aceptada antes de autocompletar.
+2026-07-10T18:34:35 Buscando coincidencias por iniciales: 'PRODUCTO' -> 'producto'
+2026-07-10T18:34:35 Coincidencias por iniciales encontradas: 0
+2026-07-10T18:34:35 No se encontraron coincidencias para las iniciales: 'producto'
+2026-07-10T18:34:39 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:34:39 TAB ignorado: celda activa fuera de B4 (col=2 fila=3).
+2026-07-10T18:34:41 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:34:41 TAB ignorado: celda activa fuera de B4 (col=3 fila=3).
+2026-07-10T18:34:47 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:34:47 Edicion activa aceptada antes de autocompletar.
+2026-07-10T18:34:47 Buscando coincidencias por iniciales: 'pantalon' -> 'pantalon'
+2026-07-10T18:34:47 Coincidencias por iniciales encontradas: 0
+2026-07-10T18:34:47 No se encontraron coincidencias para las iniciales: 'pantalon'
+2026-07-10T18:34:51 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:34:51 TAB ignorado: celda activa fuera de B4 (col=2 fila=3).
+2026-07-10T18:45:23 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:45:23 Edicion activa aceptada antes de autocompletar.
+2026-07-10T18:45:23 Buscando coincidencias por iniciales: 'tset' -> 'tset'
+2026-07-10T18:45:23 Coincidencias por iniciales encontradas: 0
+2026-07-10T18:45:23 No se encontraron coincidencias para las iniciales: 'tset'
+2026-07-10T18:45:28 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:45:28 TAB ignorado: celda activa fuera de B4 (col=2 fila=3).
+2026-07-10T18:45:30 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:45:30 Edicion activa aceptada antes de autocompletar.
+2026-07-10T18:45:30 Buscando coincidencias por iniciales: 'test' -> 'test'
+2026-07-10T18:45:30 Coincidencias por iniciales encontradas: 0
+2026-07-10T18:45:30 No se encontraron coincidencias para las iniciales: 'test'
+2026-07-10T18:45:31 TAB detectado por el manejador de autocompletado.
+2026-07-10T18:45:31 TAB ignorado: celda activa fuera de B4 (col=2 fila=3).

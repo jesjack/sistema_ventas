@@ -8,6 +8,13 @@ import time
 from barcode import Code128
 from barcode.writer import ImageWriter
 
+try:
+    from serial.tools import list_ports
+except ImportError:  # pragma: no cover - fallback if pyserial is unavailable
+    list_ports = None
+
+RESAMPLING = getattr(Image, "Resampling", Image)
+
 # Obtener la ruta absoluta del directorio donde está ESTE script
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ruta_imagen = os.path.join(BASE_DIR, "etiqueta_usb.png")
@@ -17,6 +24,35 @@ ANCHO_PX = 400
 ALTO_PX = 224
 ROTAR_90 = False # nota, no mover esto, la impresora no es compatible así
 MARGEN_SUPERIOR = 16  # aprox. 2 mm a 203 dpi
+
+
+def resolver_puerto_impresora(preferido="auto"):
+    if preferido and preferido != "auto":
+        return preferido
+
+    if list_ports is None:
+        return preferido
+
+    puertos = list(list_ports.comports())
+    candidatos = []
+
+    for puerto in puertos:
+        descripcion = f"{puerto.description} {puerto.manufacturer} {puerto.product}"
+        if puerto.device == "/dev/ttyACM0":
+            return puerto.device
+        if "B1 LABEL PRINTER" in descripcion or (puerto.vid == 0x3513 and puerto.pid == 0x0002):
+            candidatos.append(puerto.device)
+
+    if len(candidatos) == 1:
+        return candidatos[0]
+
+    if len(puertos) == 1:
+        return puertos[0].device
+
+    if candidatos:
+        return candidatos[0]
+
+    return preferido
 
 
 def generar_codigo_barras_code128(texto, ancho_maximo, alto_maximo):
@@ -41,7 +77,7 @@ def generar_codigo_barras_code128(texto, ancho_maximo, alto_maximo):
             max(1, int(imagen.width * escala)),
             max(1, int(imagen.height * escala)),
         )
-        imagen = imagen.resize(nuevo_tamano, Image.Resampling.LANCZOS)
+        imagen = imagen.resize(nuevo_tamano, RESAMPLING.LANCZOS)
 
     canvas = Image.new("L", (ancho_maximo, alto_maximo), color=255)
     offset_x = max(0, (ancho_maximo - imagen.width) // 2)
@@ -60,7 +96,7 @@ def ajustar_codigo_barras(imagen, ancho, alto, rotar_90=False, margen_superior=0
         imagen = imagen.crop(bbox)
 
     alto_util = max(1, alto - margen_superior)
-    imagen = imagen.resize((ancho, alto_util), Image.Resampling.NEAREST)
+    imagen = imagen.resize((ancho, alto_util), RESAMPLING.NEAREST)
 
     canvas = Image.new("L", (ancho, alto), color=255)
     canvas.paste(imagen, (0, margen_superior))
@@ -135,8 +171,8 @@ imagen.save(ruta_imagen)
 # puerto_usb = "COM4" 
 
 try:
-    # En lugar de usar SerialTransport(port="COM4")
-    transporte = SerialTransport() # Deja que la librería auto-detecte el puerto de la impresora
+    puerto = resolver_puerto_impresora("auto")
+    transporte = SerialTransport(port=puerto)
     cliente = PrinterClientFixed(transporte)
 
     

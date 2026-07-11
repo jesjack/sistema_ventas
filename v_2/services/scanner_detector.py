@@ -17,14 +17,20 @@ _hook_handle = None
 _listener_started = False
 
 
+def _reset_history_for_new_segment(timestamp):
+	"""Arranca un nuevo tramo de lectura y descarta el historial previo."""
+	timestamps[:] = [timestamp]
+	scanned_chars.clear()
+
+
 def record_key(timestamp=None):
 	"""Registra la pulsacion actual para evaluar luego si vino de un scanner."""
 	if timestamp is None:
 		timestamp = time.perf_counter()
 	with _lock:
 		if timestamps and (timestamp - timestamps[-1]) * 1000.0 > MAX_ALLOWED_GAP_MS:
-			timestamps.clear()
-			scanned_chars.clear()
+			_reset_history_for_new_segment(timestamp)
+			return
 		timestamps.append(timestamp)
 
 
@@ -45,10 +51,10 @@ def get_scanned_string(clear=False):
 		return text
 
 
-def is_scan(min_length=MIN_LENGTH, max_avg_ms=MAX_AVG_MS, max_allowed_gap_ms=MAX_ALLOWED_GAP_MS, max_std_ms=MAX_STD_MS):
+def is_scan():
 	"""Devuelve True si las ultimas teclas registradas parecen venir de un scanner."""
 	with _lock:
-		if len(timestamps) < int(min_length):
+		if len(timestamps) < MIN_LENGTH:
 			return False
 
 		intervals_ms = [
@@ -60,9 +66,9 @@ def is_scan(min_length=MIN_LENGTH, max_avg_ms=MAX_AVG_MS, max_allowed_gap_ms=MAX
 		std_ms = statistics.pstdev(intervals_ms) if len(intervals_ms) > 1 else 0.0
 
 		return (
-			avg_ms <= float(max_avg_ms)
-			and max_gap_ms <= float(max_allowed_gap_ms)
-			and std_ms <= float(max_std_ms)
+			avg_ms <= MAX_AVG_MS
+			and max_gap_ms <= MAX_ALLOWED_GAP_MS
+			and std_ms <= MAX_STD_MS
 		)
 
 
@@ -97,7 +103,7 @@ def _on_key(event):
 	if not name:
 		return
 	if _is_printable_key(name):
-		record_key()
+		record_key(getattr(event, "time", None))
 		char = _key_to_char(name)
 		if char:
 			with _lock:

@@ -1,6 +1,7 @@
 import sqlite3
 import unohelper
 from com.sun.star.awt import XActionListener
+
 from services.ventas_service import VentasService
 
 PREPOSICIONES = {

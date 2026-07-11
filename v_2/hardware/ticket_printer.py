@@ -8,7 +8,6 @@ import platform
 import shutil
 import subprocess
 
-
 try:
     import qrcode
 except ImportError:  # pragma: no cover - fallback para entornos sin dependencia
@@ -54,6 +53,13 @@ class TicketPrinter:
     def add_line_print(self):
         self.add_print("--------------------------------")
 
+    def add_cash_drawer_open(self, m=0, t1=25, t2=250):
+        self.append_byte(self.ESC)
+        self.append_byte(112)
+        self.append_byte(m)
+        self.append_byte(t1)
+        self.append_byte(t2)
+
     def _candidate_logo_paths(self):
         return [
             self.base_dir / "img" / "logo_buffer.bin",
@@ -65,6 +71,9 @@ class TicketPrinter:
             if path.exists():
                 return path.read_bytes()
         return None
+
+    def _qr_buffer_path(self):
+        return Path("/tmp/qr_buffer.bin")
 
     def add_logo_print(self):
         logo_bytes = self._load_logo_bytes()
@@ -99,30 +108,43 @@ class TicketPrinter:
         if qrcode is None:
             return None
 
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=8,
-            border=1,
-        )
-        qr.add_data(text)
-        qr.make(fit=True)
+        qr_path = self._qr_buffer_path()
+        try:
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=8,
+                border=1,
+            )
+            qr.add_data(text)
+            qr.make(fit=True)
 
-        image = qr.make_image(fill_color="black", back_color="white").convert("1")
-        width, height = image.size
-        width_bytes = (width + 7) // 8
+            img = qr.make_image(fill_color="black", back_color="white").convert("1")
+            ancho, alto = img.size
+            ancho_bytes = (ancho + 7) // 8
 
-        data = bytearray()
-        for y in range(height):
-            for byte_index in range(width_bytes):
-                byte_value = 0
-                for bit_index in range(8):
-                    x = byte_index * 8 + bit_index
-                    if x < width and image.getpixel((x, y)) == 0:
-                        byte_value |= 1 << (7 - bit_index)
-                data.append(byte_value)
+            datos_imagen = bytearray()
+            for y in range(alto):
+                for b in range(ancho_bytes):
+                    byte_actual = 0
+                    for bit in range(8):
+                        x = b * 8 + bit
+                        if x < ancho:
+                            pixel = img.getpixel((x, y))
+                            if pixel == 0:
+                                byte_actual |= (1 << (7 - bit))
+                    datos_imagen.append(byte_actual)
 
-        return width_bytes, height, bytes(data)
+            try:
+                qr_path.write_bytes(datos_imagen)
+            except Exception as exc:
+                self._log_error(f"No se pudo guardar el QR temporal en '{qr_path}': {exc}")
+
+            return ancho_bytes, alto, bytes(datos_imagen)
+        except Exception as exc:
+            self._log_error(f"No se pudo generar el QR en memoria: {exc}")
+
+        return None
 
     def add_qr_website_print(self, website_url=None):
         website_url = website_url or self.website_url
@@ -282,16 +304,16 @@ class TicketPrinter:
                 # Use the saved temp file and call lp/lpr
                 if printer_name and printer_name not in ('', 'default'):
                     if shutil.which('lp'):
-                        cmd = ['lp', '-d', printer_name, str(ticket_path)]
+                        cmd = ['lp', '-d', printer_name, '-o', 'raw', str(ticket_path)]
                     elif shutil.which('lpr'):
-                        cmd = ['lpr', '-P', printer_name, str(ticket_path)]
+                        cmd = ['lpr', '-P', printer_name, '-l', str(ticket_path)]
                     else:
                         cmd = None
                 else:
                     if shutil.which('lp'):
-                        cmd = ['lp', str(ticket_path)]
+                        cmd = ['lp', '-o', 'raw', str(ticket_path)]
                     elif shutil.which('lpr'):
-                        cmd = ['lpr', str(ticket_path)]
+                        cmd = ['lpr', '-l', str(ticket_path)]
                     else:
                         cmd = None
 
@@ -320,18 +342,24 @@ class TicketPrinter:
 
     def open_cash_drawer(self, m=0, t1=25, t2=250):
         self.reset()
-        self.append_byte(self.ESC)
-        self.append_byte(112)
-        self.append_byte(m)
-        self.append_byte(t1)
-        self.append_byte(t2)
+        self.add_cash_drawer_open(m=m, t1=t1, t2=t2)
         return self.send_print()
 
     def print_sale(self, items, total, recibido, cambio, title="Yaeli's Boutique", website_url=None):
         self.reset()
+        self.add_cash_drawer_open()
         self.add_logo_print()
         self.append_byte(10)
         self.append_byte(10)
+
+        self.add_print("Calle Pinosuarez No. 412")
+        self.add_print("Zona Centro C.P. 34000")
+        self.add_print("RFC: CAAN8209242C0")
+        self.add_print("")
+
+        self.add_print(datetime.now().strftime("Fecha: %d/%m/%Y"))
+        self.add_print(datetime.now().strftime("Hora:  %H:%M:%S"))
+        self.add_line_print()
 
         self.append_byte(self.ESC)
         self.append_byte(97)
@@ -358,7 +386,9 @@ class TicketPrinter:
         self.append_byte(10)
         self.add_qr_website_print(website_url)
         self.append_byte(10)
-        self.append_byte(10)
+        self.add_print("")
+        self.add_print("")
+        self.add_print("")
         return self.send_print()
 
 
