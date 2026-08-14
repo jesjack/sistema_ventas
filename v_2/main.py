@@ -1,5 +1,5 @@
 from calc.calc_window_focus import es_libreoffice_calc_enfocado
-
+from cameras.dvr_timeline_app import main as dvr_app
 
 print("Iniciando sistema de ventas...")
 
@@ -321,6 +321,7 @@ if __name__ == "__main__":
         bridge.add_button("VER VENTAS", view_sales)
         bridge.add_button("AUTOCOMPLETADO", autocomplete)
         bridge.add_button("IMPRIMIR CODIGO DE BARRAS", print_barcode)
+        bridge.add_button("VER CAMARAS", dvr_app)
 
     bridge.activate(clear_events=True)
     atexit.register(bridge.close)

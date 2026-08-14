@@ -31,8 +31,8 @@ Sub Main
         comando = "cmd.exe /c ""C:\Program Files\LibreOffice\program\python.exe"" C:\Users\jesjack\sistema_ventas\v_2\main.py"
         Shell(comando, 0, "", False)
     Else
-        comando = "sudo /usr/bin/python3 /home/jesjack/sistema_ventas/v_2/main.py > /home/jesjack/sistema_ventas/v_2/output.log 2>&1"
-        ' comando = "sudo /opt/python_global/bin/python /home/jesjack/sistema_ventas/v_2/main.py"
+        ' comando = "sudo /usr/bin/python3 /home/jesjack/sistema_ventas/v_2/main.py > /home/jesjack/sistema_ventas/v_2/output.log 2>&1"
+        comando = "sudo /opt/python_global/bin/python /home/jesjack/sistema_ventas/v_2/main.py"
         Shell(comando, 0, "", False)
     End If
 End Sub
