@@ -50,6 +50,10 @@ resolve_desktop_dir() {
 copy_to_dir /etc/skel/Desktop
 copy_to_dir /etc/skel/Escritorio
 
+# Usuarios para los que fallo la copia, para reportar al final sin que un
+# solo tropiezo (permisos raros, home inaccesible, etc.) frene el resto.
+failed_users=()
+
 # Usuario actual que invocó sudo, si aplica.
 if [[ -n "${SUDO_USER:-}" ]]; then
     sudo_passwd_entry="$(getent passwd "$SUDO_USER" || true)"
@@ -57,12 +61,16 @@ if [[ -n "${SUDO_USER:-}" ]]; then
         sudo_home_dir="$(printf '%s\n' "$sudo_passwd_entry" | cut -d: -f6)"
         sudo_primary_group="$(printf '%s\n' "$sudo_passwd_entry" | cut -d: -f4 | xargs getent group | cut -d: -f1)"
         if [[ -n "$sudo_home_dir" && -n "$sudo_primary_group" ]]; then
-            copy_to_dir "$(resolve_desktop_dir "$sudo_home_dir")" "$SUDO_USER" "$sudo_primary_group"
+            copy_to_dir "$(resolve_desktop_dir "$sudo_home_dir")" "$SUDO_USER" "$sudo_primary_group" \
+                || failed_users+=("$SUDO_USER")
         fi
     fi
 fi
 
 # Usuarios ya creados: copiar a los escritorios más comunes.
+# Nota: set -e no detiene un bucle while por si solo cuando el comando que
+# falla esta combinado con "||" -- por eso cada copia se maneja asi en vez de
+# dejar que un solo usuario problematico aborte el resto del barrido.
 while IFS=: read -r user home_dir _rest; do
     [[ -n "$home_dir" ]] || continue
     [[ "$home_dir" == /home/* ]] || continue
@@ -70,8 +78,15 @@ while IFS=: read -r user home_dir _rest; do
 
     primary_group="$(getent passwd "$user" | cut -d: -f4 | xargs getent group | cut -d: -f1)"
     if [[ -n "$primary_group" ]]; then
-        copy_to_dir "$(resolve_desktop_dir "$home_dir")" "$user" "$primary_group"
+        copy_to_dir "$(resolve_desktop_dir "$home_dir")" "$user" "$primary_group" \
+            || failed_users+=("$user")
+    else
+        failed_users+=("$user")
     fi
 done < <(getent passwd)
 
 echo "Sincronización completada desde: $SOURCE_FILE"
+
+if [[ ${#failed_users[@]} -gt 0 ]]; then
+    echo "Aviso: no se pudo copiar el icono para estos usuarios: ${failed_users[*]}" >&2
+fi

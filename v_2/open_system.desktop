@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Abrir sistema ventas
-Comment=Abre LibreOffice con el archivo del sistema y el puerto 2002
-Exec=libreoffice --accept="socket,host=localhost,port=2002;urp;" /home/jesjack/sistema_ventas/v_2/share/main.ods
+Comment=Pre-hornea la hoja de ventas y abre LibreOffice con el puerto 2002
+Exec=/bin/bash /home/jesjack/sistema_ventas/v_2/open_system.sh
 Terminal=false
 Icon=/home/jesjack/sistema_ventas/v_2/share/icono_tpv_yaeli.svg
 Categories=Office;
