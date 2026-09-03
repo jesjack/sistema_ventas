@@ -1,5 +1,13 @@
 from calc.calc_window_focus import es_libreoffice_calc_enfocado
-from cameras.dvr_timeline_app import main as dvr_app
+
+
+def dvr_app():
+    # Import diferido: dvr_timeline_app usa tkinter, que no esta disponible en
+    # el Python embebido de LibreOffice. Importarlo aqui (solo al hacer clic en
+    # "VER CAMARAS") evita que todo el sistema de ventas truene al arrancar.
+    from cameras.dvr_timeline_app import main as _dvr_main
+
+    _dvr_main()
 
 print("Iniciando sistema de ventas...")
 
@@ -24,7 +32,7 @@ except ImportError:
     print("Warning: 'uno' module not found. Make sure you're running from LibreOffice Python.")
     sys.exit(1)
 
-from table_modules import create_table
+from table_modules import Table, create_table, attach_existing
 from table_modules.table_manager import TableManager
 from calc.sheet_admin import SheetAdmin
 import keyboard
@@ -131,48 +139,66 @@ if __name__ == "__main__":
     controlador = documento.getCurrentController()
     registrar_seguimiento_foco_calc(documento)
 
+    # ventas_rows_now se necesita en ambos caminos (fast/slow) de cualquier forma,
+    # es una consulta sqlite local barata.
+    ventas_rows_now = table_manager.ventas_service.obtener_ventas()
+
+    # Chequeo minimo de sanidad: si el titulo de "ventas" ya esta en la hoja,
+    # asumimos que prebake_ventas.py corrio antes de abrir soffice y nos
+    # enganchamos a lo ya renderizado en vez de reconstruirlo con UNO.
+    prebaked = False
+    try:
+        prebaked = hoja.getCellByPosition(6, 1).String == "VENTAS REALIZADAS"
+    except Exception:
+        prebaked = False
+
     with sheet_admin.temporary_unlock():
-        sheet_admin.set_column_width(0, 600)
-        sheet_admin.set_column_width(1, 7700)
-        sheet_admin.set_column_width(2, 1600)
-        sheet_admin.set_column_width(3, 600)
-        sheet_admin.set_column_width(4, 2300)
-        sheet_admin.set_column_width(5, 600)
+        if prebaked:
+            try:
+                input = attach_existing(
+                    hoja, 1, 1, ["PRODUCTO", "PRECIO", "C."],
+                    header_color=0x9B111E, title="INGRESE LOS DATOS",
+                    rows=[("", "", 1)],
+                )
+                cart = attach_existing(
+                    hoja, 1, 5, ["PRODUCTO", "PRECIO", "C.", "SUBTOTAL"],
+                    header_color=0x1CA9C9, title="CARRITO DE COMPRA",
+                    show_total=True, total_label_span=2,
+                    placeholder="EL CARRITO ESTÁ VACÍO", rows=[],
+                )
+                ventas = attach_existing(
+                    hoja, 6, 1, ["HORA", "PRODUCTO", "PRECIO", "C.", "SUBTOTAL"],
+                    header_color=0x50C878, title="VENTAS REALIZADAS",
+                    show_total=True, total_label_span=2,
+                    placeholder="NO HAY VENTAS REALIZADAS", rows=ventas_rows_now,
+                )
+            except Exception as exc:
+                print(f"No se pudo usar la hoja pre-horneada, reconstruyendo en vivo: {exc}")
+                prebaked = False
 
-        sheet_admin.set_column_width(6, 1600)
-        sheet_admin.set_column_width(7, 7700)
-        sheet_admin.set_column_width(8, 1600)
-        sheet_admin.set_column_width(9, 600)
-        sheet_admin.set_column_width(10, 2300)
-        sheet_admin.set_column_width(11, 600)
+        if not prebaked:
+            input = create_table(hoja, 1, 1, ["PRODUCTO", "PRECIO", "C."])
+            input.header_color = 0x9B111E
+            input.title = "INGRESE LOS DATOS"
+            input.append(["", "", 1])
 
-        sheet_admin.format_column_as_currency(2)
-        sheet_admin.format_column_as_currency(4)
-        sheet_admin.format_column_as_time(6)
-        sheet_admin.format_column_as_currency(8)
-        sheet_admin.format_column_as_currency(10)
+            cart = create_table(hoja, 1, 5, ["PRODUCTO", "PRECIO", "C.", "SUBTOTAL"])
+            cart.header_color = 0x1CA9C9
+            cart.title = "CARRITO DE COMPRA"
+            cart.show_total = True
+            cart.total_label_span = 2
+            cart.placeholder = "EL CARRITO ESTÁ VACÍO"
 
-        input = create_table(hoja, 1, 1, ["PRODUCTO", "PRECIO", "C."])
-        input.header_color = 0x9B111E
-        input.title = "INGRESE LOS DATOS"
-        input.append(["", "", 1])
+            ventas = create_table(hoja, 6, 1, ["HORA", "PRODUCTO", "PRECIO", "C.", "SUBTOTAL"])
+            ventas.header_color = 0x50C878
+            ventas.title = "VENTAS REALIZADAS"
+            ventas.show_total = True
+            ventas.total_label_span = 2
+            ventas.placeholder = "NO HAY VENTAS REALIZADAS"
+            table_manager.load_sales(ventas)
 
-        cart = create_table(hoja, 1, 5, ["PRODUCTO", "PRECIO", "C.", "SUBTOTAL"])
-        cart.header_color = 0x1CA9C9
-        cart.title = "CARRITO DE COMPRA"
-        cart.show_total = True
-        cart.total_label_span = 2
-        cart.placeholder = "EL CARRITO ESTÁ VACÍO"
         cart.limpiar_residuos_bajo_tabla(limpiar_total_izquierda=True)
-
-        ventas = create_table(hoja, 6, 1, ["HORA", "PRODUCTO", "PRECIO", "C.", "SUBTOTAL"])
-        ventas.header_color = 0x50C878
-        ventas.title = "VENTAS REALIZADAS"
-        ventas.show_total = True
-        ventas.total_label_span = 2
-        ventas.placeholder = "NO HAY VENTAS REALIZADAS"
         ventas.limpiar_residuos_bajo_tabla(limpiar_total_izquierda=True)
-        table_manager.load_sales(ventas)
 
     autocompletado_handler = AutocompletadoProductoHandler(
         context,

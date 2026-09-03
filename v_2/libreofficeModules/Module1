@@ -28,8 +28,8 @@ Sub Main
 
     If os = 1 Then
         ' /c ejecuta y cierra. El 0 al final de Shell() oculta la ventana por completo.
-        comando = "cmd.exe /c ""C:\Program Files\LibreOffice\program\python.exe"" C:\Users\jesjack\sistema_ventas\v_2\main.py"
-        Shell(comando, 0, "", False)
+        comando = "cmd.exe /c cd /d C:\Users\jesjack\sistema_ventas\v_2 && ""C:\Program Files\LibreOffice\program\python.exe"" -u main.py > output.log 2>&1"
+		Shell(comando, 1, "", False)
     Else
         ' comando = "sudo /usr/bin/python3 /home/jesjack/sistema_ventas/v_2/main.py > /home/jesjack/sistema_ventas/v_2/output.log 2>&1"
         comando = "sudo /opt/python_global/bin/python /home/jesjack/sistema_ventas/v_2/main.py"

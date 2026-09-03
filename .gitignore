@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+
+# Base de datos de ventas real: cada maquina mantiene la suya, no se versiona.
+v_2/ventas.db
+
+# Archivos de prueba/backup generados durante desarrollo del pre-horneado.
+v_2/share/main_test.ods
+v_2/main.ods.bak_pretest

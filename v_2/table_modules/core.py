@@ -367,6 +367,62 @@ class Table(list):
         return self.pop(index)
 
 
+def attach_existing(hoja, x, y, columnas, header_color=None, title="", show_total=False,
+                     total_label_span=1, placeholder=None, rows=None):
+    """Construye una Table que representa una región ya renderizada en la hoja
+    (por ejemplo por el pre-horneado con odfpy), sin realizar ninguna escritura UNO.
+
+    Reproduce exactamente el estado que dejaría create_table()+render() para el
+    mismo título/color/total/placeholder/filas, para que un .append() en vivo
+    posterior calcule la fila correcta.
+    """
+    if not isinstance(columnas, (list, tuple)):
+        raise TypeError("columnas debe ser una lista o una tupla")
+    if not columnas:
+        raise ValueError("columnas no puede estar vacio")
+
+    rows = list(rows or [])
+
+    table = Table(hoja=hoja, x=x, y=y, columnas=tuple(columnas), rango=None)
+    table._titulo = str(title) if title else ""
+    table._header_color = None if header_color is None else int(header_color)
+    table._show_total = bool(show_total)
+    table._total_label_span = int(total_label_span)
+    table._placeholder = None if placeholder is None else str(placeholder)
+
+    list.extend(table, [table._normalizar_item(item) for item in rows])
+
+    tiene_titulo = bool(table._titulo)
+    table.base_y = y
+    table.y = y + 1 if tiene_titulo else y
+
+    cantidad_items = len(rows)
+    muestra_placeholder = bool(table._placeholder is not None and cantidad_items == 0)
+    muestra_total = table._show_total
+
+    fin_columna = x + len(columnas) - 1
+    inicio = table.base_y
+    fin_fila = table.data_start_y + cantidad_items - 1 if cantidad_items > 0 else table.y
+    if muestra_placeholder:
+        fin_fila = table.data_start_y
+    if muestra_total:
+        fin_fila += 1
+
+    table.titulo_rango = (
+        hoja.getCellRangeByPosition(x, table.base_y, fin_columna, table.base_y)
+        if tiene_titulo else None
+    )
+    table.rango = hoja.getCellRangeByPosition(x, inicio, fin_columna, fin_fila)
+
+    table._rendered_rows = (2 if tiene_titulo else 1) + (1 if muestra_placeholder else cantidad_items) + (1 if muestra_total else 0)
+    table._rendered_has_title = tiene_titulo
+    table._rendered_show_total = muestra_total
+    table._rendered_placeholder = muestra_placeholder
+    table._rendered_total_label_span = table._total_label_span
+
+    return table
+
+
 def create_table(hoja, x, y, columnas):
     """Crea una tabla vacia con encabezados en una hoja de Calc.
 
