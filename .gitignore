@@ -1,8 +1,14 @@
 __pycache__/
 *.pyc
 
-# Base de datos de ventas real: cada maquina mantiene la suya, no se versiona.
+# Archivos de datos/runtime reales, con acceso compartido para todos los
+# usuarios del sistema (ver share/): cada instalacion mantiene los suyos,
+# no se versionan.
+v_2/share/ventas.db
 v_2/ventas.db
+v_2/share/logs/
+v_2/share/runtime/
+v_2/share/output.log
 
 # Archivos de prueba/backup generados durante desarrollo del pre-horneado.
 v_2/share/main_test.ods
