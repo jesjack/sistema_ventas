@@ -11,6 +11,7 @@ corrio (chequeo minimo de sanidad) y usa el camino lento de siempre.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -23,6 +24,7 @@ from odf.style import Style, TableCellProperties, TableColumnProperties, Paragra
 from odf.number import CurrencyStyle, CurrencySymbol, Number, TimeStyle, Hours, Minutes, Seconds, Text as NumberText
 from odf.text import P
 
+from services.modo_sistema import leer_modo
 from services.ventas_service import VentasService
 
 MAIN_ODS = BASE_DIR / "share" / "main.ods"
@@ -501,19 +503,8 @@ def remove_previous_pb_styles(doc):
     doc.rebuild_caches()
 
 
-def prebake():
-    if not MAIN_ODS.exists():
-        raise PrebakeError(f"No se encontro {MAIN_ODS}")
-
-    doc = load(str(MAIN_ODS))
-    table = doc.spreadsheet.getElementsByType(Table)[0]
-
-    remove_previous_pb_styles(doc)
-    verify_and_restore_column_widths(doc, table)
-
-    number_formats = build_number_formats(doc)
-    apply_column_default_formats(doc, table, number_formats)
-
+def _construir_tablas_normales(doc, number_formats):
+    """Las 3 tablas de siempre: INGRESE LOS DATOS, CARRITO, VENTAS REALIZADAS."""
     ventas_service = VentasService()
     ventas_rows = ventas_service.obtener_ventas()
 
@@ -550,8 +541,55 @@ def prebake():
     max_row_ventas = max(ventas_region.keys())
     needed_count = max(max_row_input, max_row_cart, max_row_ventas) + 1
 
+    return contribuciones, needed_count
+
+
+def _construir_tabla_ventas_dia(doc, number_formats, fecha):
+    """Una unica tabla "VENTAS DEL DIA {fecha}", en la misma posicion (columnas
+    6-10) que la tabla "VENTAS REALIZADAS" normal -- asi build_full_row/
+    rebuild_rows se reusan tal cual, sin necesitar ninguna variante propia.
+    Las columnas 1-4 (INGRESE LOS DATOS / CARRITO) quedan en blanco: este modo
+    es de solo lectura, no hace falta reservarles espacio.
+    """
+    fecha = fecha or datetime.now().strftime("%Y-%m-%d")
+    ventas_service = VentasService()
+    ventas_rows = ventas_service.obtener_ventas(fecha=fecha)
+
+    ventas_styles = build_role_styles(doc, "Ventas", "#50c878", number_formats)
+
+    ventas_x, ventas_region = build_table_region(
+        x=6, base_y=1, columnas=VENTAS_COLS, title=f"VENTAS DEL DIA {fecha}",
+        header_color="#50c878", placeholder="NO HAY VENTAS REALIZADAS",
+        show_total=True, total_label_span=2, rows=ventas_rows, styles=ventas_styles,
+    )
+
+    contribuciones = [(ventas_x, len(VENTAS_COLS), ventas_region)]
+    needed_count = max(ventas_region.keys()) + 1
+
+    return contribuciones, needed_count
+
+
+def prebake():
+    if not MAIN_ODS.exists():
+        raise PrebakeError(f"No se encontro {MAIN_ODS}")
+
+    doc = load(str(MAIN_ODS))
+    table = doc.spreadsheet.getElementsByType(Table)[0]
+
+    remove_previous_pb_styles(doc)
+    verify_and_restore_column_widths(doc, table)
+
+    number_formats = build_number_formats(doc)
+    apply_column_default_formats(doc, table, number_formats)
+
+    modo_info = leer_modo()
+    if modo_info.get("modo") == "ventas_dia":
+        contribuciones, needed_count = _construir_tabla_ventas_dia(doc, number_formats, modo_info.get("fecha"))
+    else:
+        contribuciones, needed_count = _construir_tablas_normales(doc, number_formats)
+
     # Se reconstruyen algunas filas extra en blanco mas alla de lo que
-    # realmente ocupan las 3 tablas, para barrer cualquier residuo visual de
+    # realmente ocupan las tablas, para barrer cualquier residuo visual de
     # sesiones anteriores (por ejemplo si ayer hubo mas ventas que hoy y
     # quedaron filas con estilo/color de una tabla mas grande).
     rebuild_rows(table, needed_count + CLEANUP_PAD_ROWS, contribuciones)

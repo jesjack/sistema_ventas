@@ -4,6 +4,7 @@ Option Explicit
 
 Global gTPVCommandCursor As Long
 Global gTPVButtonY As Long
+Global gTPVEventCounter As Long
 
 Const TPV_BUTTON_PREFIX = "tpv_action_"
 Const TPV_BUTTON_FORM_NAME = "TPVButtonsForm"
@@ -12,6 +13,13 @@ Const TPV_BUTTON_WIDTH = 4600
 Const TPV_BUTTON_HEIGHT = 900
 Const TPV_BUTTON_GAP = 250
 Const TPV_BUTTON_START_Y = 1200
+
+' Subir en 1 cada vez que este archivo cambie de contenido Y el cambio se
+' copie al editor de macros de share/main.ods (Herramientas > Macros > Editar
+' macros). TPV_VerificarVersionModulo compara este numero contra el que
+' declara el archivo Module1 del repo, en disco -- si no coinciden, alguien
+' edito el repo y olvido copiar el cambio al documento (o viceversa).
+Const TPV_MODULE_VERSION = 2
 
 Sub Main
     Dim os As String
@@ -46,6 +54,127 @@ End Sub
 
 Sub TPV_PrepararComunicacionMacro()
     TPV_PrepararComunicacion GetGUIType()
+    TPV_VerificarVersionModulo GetGUIType()
+End Sub
+
+Function TPV_DirectorioProyecto() As String
+    ' Deriva la raiz del proyecto a partir de la ubicacion real del documento
+    ' abierto (share/main.ods) en vez de hardcodear una ruta por maquina/SO:
+    ' main.ods y libreofficeModules/ cuelgan del mismo directorio raiz, asi
+    ' que basta con subir dos niveles (quitar "main.ods" y luego "share").
+    Dim rutaDocumento As String
+    Dim separador As Long
+
+    TPV_DirectorioProyecto = ""
+
+    On Error Resume Next
+    rutaDocumento = ConvertFromURL(ThisComponent.getURL())
+    On Error GoTo 0
+
+    If rutaDocumento = "" Then
+        Exit Function
+    End If
+
+    separador = TPV_UltimoSeparadorRuta(rutaDocumento)
+    If separador = 0 Then
+        Exit Function
+    End If
+    rutaDocumento = Left(rutaDocumento, separador - 1) ' quita "main.ods"
+
+    separador = TPV_UltimoSeparadorRuta(rutaDocumento)
+    If separador = 0 Then
+        Exit Function
+    End If
+    rutaDocumento = Left(rutaDocumento, separador - 1) ' quita "share"
+
+    TPV_DirectorioProyecto = rutaDocumento
+End Function
+
+Function TPV_RutaModule1(os As String) As String
+    Dim raiz As String
+
+    raiz = TPV_DirectorioProyecto()
+    If raiz = "" Then
+        Exit Function
+    End If
+
+    If os = 1 Then
+        TPV_RutaModule1 = raiz & "\libreofficeModules\Module1"
+    Else
+        TPV_RutaModule1 = raiz & "/libreofficeModules/Module1"
+    End If
+End Function
+
+Function TPV_VersionEnArchivo(rutaArchivo As String) As Long
+    ' -1 significa "no se pudo verificar" (archivo ausente, sin acceso, o no
+    ' se encontro la constante) -- nunca se interpreta como una version real,
+    ' para no disparar una advertencia falsa cuando simplemente no se puede
+    ' leer el archivo desde esta maquina.
+    Dim archivo As Integer
+    Dim linea As String
+    Dim posicionConst As Long
+    Dim posicionIgual As Long
+    Dim resto As String
+    Dim numeroError As Long
+
+    TPV_VersionEnArchivo = -1
+
+    If rutaArchivo = "" Then
+        Exit Function
+    End If
+
+    If Dir(rutaArchivo) = "" Then
+        Exit Function
+    End If
+
+    archivo = FreeFile
+
+    ' Nota: no combinar Err.Number y Err.Description en la misma linea aqui --
+    ' se probo y hacia que la funcion abortara sin avisar (ver historial de
+    ' esta tarea). Leer Err.Number solo, en su propia linea, evita el problema.
+    On Error Resume Next
+    Open rutaArchivo For Input As #archivo
+    numeroError = Err.Number
+    On Error GoTo 0
+
+    If numeroError <> 0 Then
+        Exit Function
+    End If
+
+    Do While Not EOF(archivo)
+        Line Input #archivo, linea
+        posicionConst = InStr(linea, "TPV_MODULE_VERSION")
+        If posicionConst > 0 And InStr(linea, "Const") > 0 Then
+            posicionIgual = InStr(linea, "=")
+            If posicionIgual > 0 Then
+                resto = Trim(Mid(linea, posicionIgual + 1))
+                If IsNumeric(resto) Then
+                    TPV_VersionEnArchivo = CLng(resto)
+                End If
+            End If
+            Exit Do
+        End If
+    Loop
+
+    Close #archivo
+End Function
+
+Sub TPV_VerificarVersionModulo(os As String)
+    Dim versionArchivo As Long
+
+    versionArchivo = TPV_VersionEnArchivo(TPV_RutaModule1(os))
+
+    If versionArchivo = -1 Then
+        Exit Sub
+    End If
+
+    If versionArchivo <> TPV_MODULE_VERSION Then
+        MsgBox "La macro cargada en este documento (version " & TPV_MODULE_VERSION & _
+            ") no coincide con la version del archivo Module1 en el repositorio (version " & versionArchivo & ")." & _
+            Chr(10) & Chr(10) & _
+            "Copia el codigo actualizado al editor de macros (Herramientas > Macros > Editar macros) y guarda el documento.", _
+            48, "Version de macro desactualizada"
+    End If
 End Sub
 
 Sub TPV_LimpiarBotonesMacro()
@@ -81,17 +210,49 @@ Function TPV_ArchivoOrdenes(os As String) As String
     End If
 End Function
 
-Function TPV_ArchivoEventos(os As String) As String
-    TPV_ArchivoEventos = TPV_DirectorioComunicacion(os) & "/button_events.txt"
+Function TPV_DirectorioEventos(os As String) As String
+    ' Carpeta de "spool" para los eventos de clic (ver TPV_EscribirEvento):
+    ' cuelga de la raiz del proyecto (misma derivacion que TPV_RutaModule1),
+    ' no de TPV_DirectorioComunicacion -- nada mas la usa ya.
+    Dim raiz As String
+
+    raiz = TPV_DirectorioProyecto()
+    If raiz = "" Then
+        Exit Function
+    End If
+
     If os = 1 Then
-        TPV_ArchivoEventos = TPV_DirectorioComunicacion(os) & "\\button_events.txt"
+        TPV_DirectorioEventos = raiz & "\share\logs\events"
+    Else
+        TPV_DirectorioEventos = raiz & "/share/logs/events"
     End If
 End Function
 
 Sub TPV_AsegurarDirectorio(ruta As String)
-    If Dir(ruta, 16) = "" Then
-        MkDir ruta
+    ' Recursiva: MkDir por si sola solo crea el ultimo nivel y falla si el
+    ' padre no existe todavia (por ejemplo share\logs\events en una
+    ' instalacion nueva donde nadie ha escrito antes en share\logs). Se
+    ' asegura primero el padre, luego el propio directorio.
+    Dim padre As String
+    Dim separador As Long
+
+    If ruta = "" Then
+        Exit Sub
     End If
+
+    If Dir(ruta, 16) <> "" Then
+        Exit Sub
+    End If
+
+    separador = TPV_UltimoSeparadorRuta(ruta)
+    If separador > 0 Then
+        padre = Left(ruta, separador - 1)
+        TPV_AsegurarDirectorio padre
+    End If
+
+    On Error Resume Next
+    MkDir ruta
+    On Error GoTo 0
 End Sub
 
 Function TPV_LimpiarTexto(valor As String) As String
@@ -268,7 +429,7 @@ Sub TPV_ButtonAction(oEvent)
         accionId = Mid(accionId, Len(TPV_BUTTON_PREFIX) + 1)
     End If
 
-    TPV_AgregarTexto TPV_ArchivoEventos(GetGUIType()), "CLICK|" & TPV_LimpiarTexto(accionId) & "|" & TPV_LimpiarTexto(etiqueta) & "|" & TPV_LimpiarTexto(TPV_UsuarioActual()) & "|" & TPV_LimpiarTexto(CStr(Now))
+    TPV_EscribirEvento GetGUIType(), "CLICK|" & TPV_LimpiarTexto(accionId) & "|" & TPV_LimpiarTexto(etiqueta) & "|" & TPV_LimpiarTexto(TPV_UsuarioActual()) & "|" & TPV_LimpiarTexto(CStr(Now))
     TPV_RestaurarFocoCalc
 End Sub
 
@@ -302,22 +463,47 @@ Sub TPV_RestaurarFocoCalc()
     On Error GoTo 0
 End Sub
 
-Sub TPV_AgregarTexto(rutaArchivo As String, texto As String)
-    Dim directorio As String
-    Dim ultimoSeparador As Long
+Sub TPV_EscribirEvento(os As String, texto As String)
+    ' Cada clic se escribe en su PROPIO archivo (nunca sobreescribe uno
+    ' compartido), primero como ".part" y luego renombrado a ".evt" -- Name
+    ' es atomico tanto en Windows como en Linux, asi que Python (que solo
+    ' mira "*.evt" en button_bridge.py) nunca puede toparse con un archivo a
+    ' medio escribir ni chocar con Basic por acceso simultaneo al mismo
+    ' archivo. Esto reemplaza el esquema anterior de un unico
+    ' button_events.txt compartido, que producia "Error de E/S del
+    ' dispositivo" en este mismo Open cuando el hilo de Python lo leia justo
+    ' cuando Basic intentaba escribirlo.
+    Dim directorioEventos As String
+    Dim separador As String
+    Dim nombreBase As String
+    Dim rutaTemporal As String
+    Dim rutaFinal As String
     Dim archivo As Integer
 
-    ultimoSeparador = TPV_UltimoSeparadorRuta(rutaArchivo)
+    directorioEventos = TPV_DirectorioEventos(os)
+    If directorioEventos = "" Then
+        Exit Sub
+    End If
+    TPV_AsegurarDirectorio directorioEventos
 
-    If ultimoSeparador > 0 Then
-        directorio = Left(rutaArchivo, ultimoSeparador - 1)
-        TPV_AsegurarDirectorio directorio
+    If os = 1 Then
+        separador = "\"
+    Else
+        separador = "/"
     End If
 
+    gTPVEventCounter = gTPVEventCounter + 1
+    nombreBase = Format(gTPVEventCounter, "0000000000") & "_" & GetSystemTicks()
+
+    rutaTemporal = directorioEventos & separador & nombreBase & ".part"
+    rutaFinal = directorioEventos & separador & nombreBase & ".evt"
+
     archivo = FreeFile
-    Open rutaArchivo For Output As #archivo
+    Open rutaTemporal For Output As #archivo
     Print #archivo, texto
     Close #archivo
+
+    Name rutaTemporal As rutaFinal
 End Sub
 
 Function TPV_UltimoSeparadorRuta(rutaArchivo As String) As Long

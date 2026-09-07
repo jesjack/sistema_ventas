@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import threading
 from pathlib import Path
 
@@ -16,15 +17,19 @@ class SheetButtonBridge:
         self.uno_context = uno_context
         self.document = document
         self.base_dir = Path(base_dir)
-        self.comm_dir = self.base_dir / "logs"
-        self.event_file = self.comm_dir / "button_events.txt"
+        # Carpeta de "spool": la macro Basic (TPV_EscribirEvento) escribe un
+        # archivo NUEVO por cada clic en vez de sobreescribir uno compartido.
+        # Antes, un unico button_events.txt causaba "Error de E/S del
+        # dispositivo" en Basic cuando este hilo lo leia justo cuando Basic
+        # intentaba escribirlo -- con un archivo por evento esa carrera no
+        # puede ocurrir (nunca hay dos procesos tocando el mismo archivo).
+        self.events_dir = self.base_dir / "share" / "logs" / "events"
         self.poll_interval = max(0.1, float(poll_interval))
         self._buttons: list[ButtonSpec] = []
         self._handlers: dict[str, object] = {}
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
-        self._last_event_snapshot = ""
         self._script_provider = document.getScriptProvider()
 
     def add_button(self, label: str, handler) -> None:
@@ -46,11 +51,31 @@ class SheetButtonBridge:
         self.start()
 
     def prepare(self, *, clear_events: bool = True) -> None:
-        self.comm_dir.mkdir(parents=True, exist_ok=True)
-        self.event_file.touch(exist_ok=True)
+        self.events_dir.mkdir(parents=True, exist_ok=True)
         if clear_events:
-            self.event_file.write_text("", encoding="utf-8")
-            self._last_event_snapshot = ""
+            self._clear_pending_events()
+        self._relax_permissions()
+
+    def _clear_pending_events(self) -> None:
+        for stale in self.events_dir.glob("*"):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
+    def _relax_permissions(self) -> None:
+        # main.py se lanza con sudo en produccion (Linux), asi que este
+        # proceso corre como root. Si el directorio queda con el umask por
+        # defecto de root, el usuario normal (que es quien corre la macro
+        # Basic dentro de soffice) no podria crear ahi el siguiente evento.
+        # No aplica en Windows.
+        if os.name == "nt":
+            return
+        for target in (self.events_dir.parent, self.events_dir):
+            try:
+                os.chmod(target, 0o777)
+            except OSError:
+                pass
 
     def publish_layout(self) -> None:
         self._invoke_basic_macro("TPV_PrepararComunicacionMacro")
@@ -78,38 +103,52 @@ class SheetButtonBridge:
 
     def _watch_events(self) -> None:
         while not self._stop_event.wait(self.poll_interval):
-            self._drain_events()
+            try:
+                self._drain_events()
+            except OSError as exc:
+                # No deberia pasar con el esquema de spool (cada archivo es
+                # inmutable una vez que aparece como .evt), pero por si algo
+                # externo al diseno interfiere (antivirus, etc.), no dejamos
+                # que esto mate el hilo -- se reintenta en el siguiente poll.
+                print(f"[button_bridge] Error leyendo eventos (se reintenta en {self.poll_interval}s): {exc}")
 
     def _drain_events(self) -> None:
-        if not self.event_file.exists():
+        if not self.events_dir.exists():
             return
 
-        snapshot = self.event_file.read_text(encoding="utf-8")
-        if snapshot == self._last_event_snapshot:
-            return
-
-        self._last_event_snapshot = snapshot
-
-        for raw_line in snapshot.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-
-            parts = line.split("|")
-            if len(parts) < 2:
-                continue
-
-            kind = parts[0].strip().upper()
-            if kind != "CLICK":
-                continue
-
-            action_id = parts[1].strip()
-            handler = self._handlers.get(action_id)
-            if handler is None:
-                print(f"[button_bridge] Click sin handler: {action_id}")
+        for event_path in sorted(self.events_dir.glob("*.evt")):
+            try:
+                line = event_path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                print(f"[button_bridge] No se pudo leer {event_path.name}, se reintenta despues: {exc}")
                 continue
 
             try:
-                handler()
-            except Exception as exc:
-                print(f"[button_bridge] Error al ejecutar {action_id}: {exc}")
+                event_path.unlink()
+            except OSError:
+                pass
+
+            self._handle_event_line(line)
+
+    def _handle_event_line(self, line: str) -> None:
+        if not line:
+            return
+
+        parts = line.split("|")
+        if len(parts) < 2:
+            return
+
+        kind = parts[0].strip().upper()
+        if kind != "CLICK":
+            return
+
+        action_id = parts[1].strip()
+        handler = self._handlers.get(action_id)
+        if handler is None:
+            print(f"[button_bridge] Click sin handler: {action_id}")
+            return
+
+        try:
+            handler()
+        except Exception as exc:
+            print(f"[button_bridge] Error al ejecutar {action_id}: {exc}")
