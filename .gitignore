@@ -9,6 +9,7 @@ v_2/ventas.db
 v_2/share/logs/
 v_2/share/runtime/
 v_2/share/output.log
+v_2/logs/debug/
 
 # Archivos de prueba/backup generados durante desarrollo del pre-horneado.
 v_2/share/main_test.ods

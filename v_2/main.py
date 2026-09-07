@@ -1,3 +1,68 @@
+import sys
+from datetime import datetime
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+LOGS_DIR = BASE_DIR / "logs"
+DEBUG_LOGS_DIR = LOGS_DIR / "debug"
+DEBUG_RUNS_TO_KEEP = 20
+
+
+class _Tee:
+    """Escribe a varios streams a la vez (ej. consola + archivo de debug),
+    sin que un fallo de uno (ej. la consola ya cerrada) tumbe la escritura a
+    los demas."""
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for stream in self._streams:
+            try:
+                stream.write(data)
+            except Exception:
+                pass
+
+    def flush(self):
+        for stream in self._streams:
+            try:
+                stream.flush()
+            except Exception:
+                pass
+
+
+def _activar_log_de_depuracion():
+    """Espeja todo stdout/stderr de este proceso (prints, tracebacks
+    incluyendo el que arma rich.traceback.install) a un archivo nuevo por
+    ejecucion en logs/debug/, ademas de la consola -- para poder diagnosticar
+    un error que la consola cerro antes de que alguien alcanzara a copiarlo.
+    Se llama a esto lo antes posible (antes de cualquier otro import), para
+    que incluso un fallo temprano (ej. el import de "uno" mas abajo) quede
+    capturado.
+
+    Se retienen solo las ultimas DEBUG_RUNS_TO_KEEP ejecuciones (el nombre de
+    archivo trae timestamp, asi que ordenar por nombre ya da el mas
+    reciente) -- suficiente para no perder evidencia si el sistema se
+    reabrio una o dos veces entre que ocurrio el error y se reporta, sin
+    crecer sin limite para siempre.
+    """
+    DEBUG_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    existentes = sorted(DEBUG_LOGS_DIR.glob("run_*.log"))
+    for viejo in existentes[: max(0, len(existentes) - (DEBUG_RUNS_TO_KEEP - 1))]:
+        try:
+            viejo.unlink()
+        except OSError:
+            pass
+
+    nombre = datetime.now().strftime("run_%Y%m%d_%H%M%S.log")
+    archivo = open(DEBUG_LOGS_DIR / nombre, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _Tee(sys.stdout, archivo)
+    sys.stderr = _Tee(sys.stderr, archivo)
+
+
+_activar_log_de_depuracion()
+
 import os
 from calc.calc_window_focus import es_libreoffice_calc_enfocado
 
@@ -14,16 +79,10 @@ print("Iniciando sistema de ventas...")
 
 import atexit
 import getpass
-import sys
 import time
-from datetime import datetime
-from pathlib import Path
 
 from services.scanner_detector import clear_buffer, get_scanned_string, is_scan
 
-BASE_DIR = Path(__file__).resolve().parent
-LOGS_DIR = BASE_DIR / "logs"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
@@ -173,10 +232,7 @@ if __name__ == "__main__":
                 _ = documento.Title
                 time.sleep(1)
         except Exception:
-            with open(LOGS_DIR / "error_log.txt", "a", encoding="utf-8") as f:
-                f.write(f"{time.time()}: El documento (modo ventas_dia) ha sido cerrado o no es accesible.\n")
-                f.write(f"Excepción: {str(sys.exc_info()[0])}\n")
-                f.write(f"Detalles: {str(sys.exc_info()[1])}\n")
+            print(f"El documento (modo ventas_dia) ha sido cerrado o no es accesible: {sys.exc_info()[0]}: {sys.exc_info()[1]}")
             try:
                 bridge.close()
             except Exception:
@@ -429,11 +485,7 @@ if __name__ == "__main__":
                 _ = documento.Title
                 time.sleep(1)  # Espera 1 segundo antes de volver a verificar
         except Exception:
-            # guardar excepcion en archivo
-            with open(LOGS_DIR / "error_log.txt", "a", encoding="utf-8") as f:
-                f.write(f"{time.time()}: El documento ha sido cerrado o no es accesible.\n")
-                f.write(f"Excepción: {str(sys.exc_info()[0])}\n")
-                f.write(f"Detalles: {str(sys.exc_info()[1])}\n")
+            print(f"El documento ha sido cerrado o no es accesible: {sys.exc_info()[0]}: {sys.exc_info()[1]}")
             if seguimiento_sesion is not None:
                 try:
                     seguimiento_sesion.cerrar(exitosa=False)
