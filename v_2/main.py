@@ -215,11 +215,6 @@ if __name__ == "__main__":
             escribir_modo("normal")
             solicitar_relanzamiento()
             print("Regresando al sistema principal...")
-            # main.ods nunca persiste datos por si mismo (solo es una interfaz
-            # sobre ventas.db, re-horneada por prebake_ventas.py en cada
-            # apertura) -- sin esto, LibreOffice pregunta si guardar cambios
-            # antes de cerrar, lo cual es confuso para el usuario.
-            documento.setModified(False)
             desktop.terminate()
 
         bridge = SheetButtonBridge(context, documento, BASE_DIR)
@@ -230,6 +225,13 @@ if __name__ == "__main__":
         try:
             while True:
                 _ = documento.Title
+                # main.ods nunca persiste datos por si mismo (es solo una
+                # interfaz sobre ventas.db, re-horneada por prebake_ventas.py
+                # en cada apertura) -- resetear esto aqui, una vez por
+                # segundo, evita el prompt de "guardar cambios?" al cerrar
+                # sin importar el motivo (X, Alt+F4, botones), sin necesitar
+                # un listener de modificacion reactivo.
+                documento.setModified(False)
                 time.sleep(1)
         except Exception:
             print(f"El documento (modo ventas_dia) ha sido cerrado o no es accesible: {sys.exc_info()[0]}: {sys.exc_info()[1]}")
@@ -441,9 +443,6 @@ if __name__ == "__main__":
             escribir_modo("ventas_dia", fecha=fecha)
             solicitar_relanzamiento()
             print(f"Cambiando a modo ver-ventas-del-dia para la fecha {fecha}...")
-            # Ver nota identica en regresar_sistema_principal: main.ods nunca
-            # persiste datos por si mismo, asi que no hace falta preguntar.
-            documento.setModified(False)
             desktop.terminate()
 
         def print_barcode():
@@ -483,6 +482,9 @@ if __name__ == "__main__":
                 # Intentamos acceder a una propiedad básica del documento
                 # Si el documento se cierra, esto lanzará una excepción (DisposedException)
                 _ = documento.Title
+                # Ver nota identica en el flujo ventas_dia: evita el prompt de
+                # "guardar cambios?" al cerrar, sin importar el motivo.
+                documento.setModified(False)
                 time.sleep(1)  # Espera 1 segundo antes de volver a verificar
         except Exception:
             print(f"El documento ha sido cerrado o no es accesible: {sys.exc_info()[0]}: {sys.exc_info()[1]}")
