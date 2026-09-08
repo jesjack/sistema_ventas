@@ -3,11 +3,56 @@ set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_FILE="$SOURCE_DIR/open_system.desktop"
+SHARE_DIR="$SOURCE_DIR/share"
 
 if [[ ! -f "$SOURCE_FILE" ]]; then
     echo "No se encontró el archivo fuente: $SOURCE_FILE" >&2
     exit 1
 fi
+
+# Ningun usuario debe abrir main.ods en modo solo-lectura de LibreOffice.
+# main.ods se regenera por completo (no se edita in-place) cada vez que se
+# abre el sistema, via prebake_ventas.py -> doc.save(), asi que el owner y
+# permisos resultantes dependen solo de quien lo ejecuta y del umask -- no
+# hay forma de "arreglarlo una vez" tocando el archivo. Por eso se ajusta
+# aqui, con dos capas, sin depender de ningun grupo especifico (para poder
+# migrar el sistema a otra PC sin tener que recrear grupos ahi):
+#   1. chmod inmediato sobre lo que ya existe en share/.
+#   2. ACL por defecto en share/ para que TODO archivo/carpeta que se cree
+#      ahi en el futuro (incluido cada main.ods regenerado) nazca ya con
+#      permiso de escritura para "otros", sin importar el umask del proceso
+#      que lo crea.
+fix_share_permissions() {
+    if [[ ! -d "$SHARE_DIR" ]]; then
+        echo "Aviso: no se encontró $SHARE_DIR, no se ajustaron permisos de escritura." >&2
+        return
+    fi
+
+    # -R toca todo lo que pueda; algunas subcarpetas (p.ej. share/logs, creada
+    # por un proceso root) no son nuestras y fallaran aqui, pero ya vienen en
+    # 0777 por su cuenta asi que no necesitan este ajuste. Por eso no se
+    # valida el codigo de salida de estos dos comandos, sino el resultado real
+    # sobre share/ (que es donde main.ods se recrea en cada apertura).
+    chmod -R o+rwX "$SHARE_DIR" 2>/dev/null
+
+    local share_mode
+    share_mode="$(stat -c '%A' "$SHARE_DIR")"
+    if [[ "${share_mode:8:1}" != "w" ]]; then
+        echo "Aviso: $SHARE_DIR no quedo con permiso de escritura para 'otros' (?eres dueno de esa carpeta?)." >&2
+    fi
+
+    if ! command -v setfacl >/dev/null 2>&1; then
+        echo "Aviso: 'setfacl' no esta instalado (paquete 'acl'); no se pudo fijar el permiso por defecto en $SHARE_DIR. El ajuste inmediato ya se aplico, pero un main.ods regenerado en el futuro podria volver a abrirse en modo solo-lectura para otros usuarios." >&2
+        return
+    fi
+
+    setfacl -R -d -m other::rwX "$SHARE_DIR" 2>/dev/null
+    if ! getfacl "$SHARE_DIR" 2>/dev/null | grep -q '^default:other::rw'; then
+        echo "Aviso: no se pudo fijar el ACL por defecto de escritura en $SHARE_DIR (?el filesystem soporta ACLs?). El ajuste inmediato ya se aplico, pero un main.ods regenerado en el futuro podria volver a abrirse en modo solo-lectura para otros usuarios." >&2
+    fi
+}
+
+fix_share_permissions
 
 copy_to_dir() {
     local target_dir="$1"
