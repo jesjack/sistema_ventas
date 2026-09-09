@@ -33,7 +33,7 @@ fix_share_permissions() {
     # 0777 por su cuenta asi que no necesitan este ajuste. Por eso no se
     # valida el codigo de salida de estos dos comandos, sino el resultado real
     # sobre share/ (que es donde main.ods se recrea en cada apertura).
-    chmod -R o+rwX "$SHARE_DIR" 2>/dev/null
+    chmod -R o+rwX "$SHARE_DIR" 2>/dev/null || true
 
     local share_mode
     share_mode="$(stat -c '%A' "$SHARE_DIR")"
@@ -46,7 +46,7 @@ fix_share_permissions() {
         return
     fi
 
-    setfacl -R -d -m other::rwX "$SHARE_DIR" 2>/dev/null
+    setfacl -R -d -m other::rwX "$SHARE_DIR" 2>/dev/null || true
     if ! getfacl "$SHARE_DIR" 2>/dev/null | grep -q '^default:other::rw'; then
         echo "Aviso: no se pudo fijar el ACL por defecto de escritura en $SHARE_DIR (?el filesystem soporta ACLs?). El ajuste inmediato ya se aplico, pero un main.ods regenerado en el futuro podria volver a abrirse en modo solo-lectura para otros usuarios." >&2
     fi
