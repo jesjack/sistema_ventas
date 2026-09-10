@@ -19,7 +19,16 @@ class TicketPrinter:
     GS = 29
     BUFFER_CHUNK = 4096
 
-    def __init__(self, printer_device="/dev/usb/lp0", website_url="https://fb.com/share/1E14r1SK7f"):
+    # Impresoras conocidas que NO son la impresora de tickets aunque aparezcan
+    # como /dev/usb/lp* o /dev/ttyACM* (la etiquetadora NIIMBOT expone una
+    # interfaz "Printer" ademas de su interfaz serie CDC-ACM, y puede quedar
+    # antes que la impresora de tickets en /dev/usb/lp0). Se identifican por
+    # fabricante/idVendor en vez de reconocer la impresora de tickets, para
+    # que la deteccion siga funcionando si esta se reemplaza por otro modelo.
+    NON_TICKET_PRINTER_VENDOR_IDS = {"3513"}  # NIIMBOT
+    NON_TICKET_PRINTER_NAME_HINTS = ("niimbot",)
+
+    def __init__(self, printer_device=None, website_url="https://fb.com/share/1E14r1SK7f"):
         self.printer_device = printer_device
         self.website_url = website_url
         self.base_dir = Path(__file__).resolve().parent.parent
@@ -179,21 +188,80 @@ class TicketPrinter:
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(f"[{timestamp}] {message}\n")
 
+    def _usb_device_identity(self, device_path):
+        """Read USB vendor/product/manufacturer info for a /dev node via sysfs.
+
+        Works for /dev/usb/lp*, /dev/lp*, /dev/ttyUSB* and /dev/ttyACM*: all
+        of them expose a "device" symlink under /sys/class/<subsystem>/<name>
+        that resolves (directly or a few parents up) into the owning USB
+        device's directory, which is where idVendor/idProduct/manufacturer
+        live. Returns None if the node isn't backed by USB or sysfs isn't
+        available (e.g. non-Linux), in which case the caller should treat it
+        as "unknown" rather than as a known non-ticket-printer device.
+        """
+        name = Path(device_path).name
+        class_dir = None
+        for subsystem in ("usbmisc", "tty", "usb", "printer"):
+            candidate = Path(f"/sys/class/{subsystem}/{name}")
+            if candidate.exists():
+                class_dir = candidate
+                break
+        if class_dir is None:
+            return None
+
+        try:
+            node = (class_dir / "device").resolve()
+        except OSError:
+            return None
+
+        for _ in range(8):
+            if (node / "idVendor").is_file() and (node / "idProduct").is_file():
+                break
+            if node.parent == node:
+                return None
+            node = node.parent
+        else:
+            return None
+
+        def _read(attr):
+            try:
+                return (node / attr).read_text().strip()
+            except OSError:
+                return ""
+
+        return {
+            "vendor_id": _read("idVendor").lower(),
+            "product_id": _read("idProduct").lower(),
+            "manufacturer": _read("manufacturer"),
+            "product": _read("product"),
+        }
+
+    def _is_known_non_ticket_printer(self, device_path):
+        info = self._usb_device_identity(device_path)
+        if not info:
+            return False
+        if info["vendor_id"] in self.NON_TICKET_PRINTER_VENDOR_IDS:
+            return True
+        haystack = f"{info['manufacturer']} {info['product']}".lower()
+        return any(hint in haystack for hint in self.NON_TICKET_PRINTER_NAME_HINTS)
+
     def find_printer_device(self):
         """Try to locate a usable printer device.
 
         Returns:
             str | None: Path to device or special Windows marker 'win32:PRINTER_NAME'.
         """
-        # If current device already exists as a file, use it
+        # If current device already exists as a file, use it (unless it's a
+        # known non-ticket-printer device, e.g. a label printer).
         try:
             # If it's a Windows marker already, return it
             if isinstance(self.printer_device, str) and self.printer_device.startswith("win32:"):
                 return self.printer_device
 
-            path = Path(self.printer_device)
-            if path.exists():
-                return str(path)
+            if self.printer_device:
+                path = Path(self.printer_device)
+                if path.exists() and not self._is_known_non_ticket_printer(path):
+                    return str(path)
         except Exception:
             pass
 
@@ -233,12 +301,26 @@ class TicketPrinter:
         # Add some common exact paths
         candidates.extend(['/dev/usb/lp0', '/dev/lp0', '/dev/parallel0'])
 
+        non_ticket_printer_fallbacks = []
         for p in candidates:
             try:
-                if Path(p).exists():
-                    return p
+                if not Path(p).exists():
+                    continue
             except Exception:
                 continue
+            if self._is_known_non_ticket_printer(p):
+                non_ticket_printer_fallbacks.append(p)
+                continue
+            return p
+
+        if non_ticket_printer_fallbacks:
+            self._log_error(
+                "Solo se encontraron dispositivos identificados como impresoras "
+                "que no son la de tickets (p. ej. una etiquetadora); usando "
+                f"'{non_ticket_printer_fallbacks[0]}' como ultimo recurso: "
+                f"{non_ticket_printer_fallbacks}"
+            )
+            return non_ticket_printer_fallbacks[0]
 
         # If no direct device found, try CUPS (lp/lpr) if available
         try:
