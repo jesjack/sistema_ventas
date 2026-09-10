@@ -15,7 +15,7 @@ param_fin = f"{fecha_formateada}%20{hora_fin}"
 # 3. Credenciales de acceso del DVR
 ip_dvr = "192.168.1.108"
 usuario = "nancy"
-contrasena = "2409"
+contrasena = "miriam.2017"
 canal = 1  # Cámara 1
 
 # 4. Construcción de la URL HTTP de Dahua con autenticación integrada para OpenCV

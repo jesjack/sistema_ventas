@@ -4,7 +4,7 @@ from requests.auth import HTTPDigestAuth
 # Configuración del DVR
 IP_DVR = "192.168.1.108"
 USUARIO = "nancy"
-CONTRASENA = "2409"
+CONTRASENA = "miriam.2017"
 AUTH = HTTPDigestAuth(USUARIO, CONTRASENA)
 
 # LA IP DE TU COMPUTADORA (según tu ifconfig)

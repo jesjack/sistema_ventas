@@ -3,7 +3,7 @@ from requests.auth import HTTPDigestAuth
 
 IP_DVR = "192.168.1.108"
 USUARIO = "nancy"
-CONTRASENA = "2409"
+CONTRASENA = "miriam.2017"
 AUTH = HTTPDigestAuth(USUARIO, CONTRASENA)
 
 def consultar_hora_actual():

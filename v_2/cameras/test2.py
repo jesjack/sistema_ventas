@@ -6,7 +6,7 @@ from requests.auth import HTTPDigestAuth
 # 1. Configuración de acceso al DVR Dahua
 IP_DVR = "192.168.1.108"
 USUARIO = "nancy"
-CONTRASENA = "2409"
+CONTRASENA = "miriam.2017"
 CANAL = 1
 FECHA_BUSQUEDA = "2026-07-30"  # Cambia esta fecha cuando gustes
 

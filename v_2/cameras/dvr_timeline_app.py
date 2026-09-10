@@ -24,7 +24,7 @@ except AttributeError:  # pragma: no cover - Pillow fallback
 
 DEFAULT_IP = "192.168.1.108"
 DEFAULT_USER = "nancy"
-DEFAULT_PASSWORD = "2409"
+DEFAULT_PASSWORD = "miriam.2017"
 DEFAULT_CHANNELS = (1, 2, 3, 4)
 CHANNEL_COLORS = {
     1: "#60A5FA",

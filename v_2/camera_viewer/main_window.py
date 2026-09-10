@@ -99,6 +99,10 @@ class MainWindow(QMainWindow):
         panel = self.camera_grid.panels.get(channel)
         if panel is not None:
             panel.set_frame(frame)
+        # Libera el freno de backpressure de la vista en vivo para este
+        # canal (ver DVRClient._live_channel_worker) -- sin efecto durante
+        # reproduccion de grabaciones, que no lo usa.
+        self.client.notify_frame_consumed(channel)
 
     def _on_channel_status(self, channel: int, text: str) -> None:
         panel = self.camera_grid.panels.get(channel)

@@ -16,7 +16,7 @@ except ImportError as exc:  # pragma: no cover - dependency issue is surfaced at
 
 DEFAULT_IP = "192.168.1.108"
 DEFAULT_USER = "nancy"
-DEFAULT_PASSWORD = "2409"
+DEFAULT_PASSWORD = "miriam.2017"
 DEFAULT_CHANNELS = (1, 2, 3, 4)
 
 

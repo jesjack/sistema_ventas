@@ -5,7 +5,7 @@ from requests.auth import HTTPDigestAuth
 # 1. Configuración de red y credenciales
 ip_dvr = "192.168.1.108"
 usuario = "nancy"
-contrasena = "2409"
+contrasena = "miriam.2017"
 auth = HTTPDigestAuth(usuario, contrasena)
 
 canal = 1

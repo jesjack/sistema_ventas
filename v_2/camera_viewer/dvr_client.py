@@ -13,6 +13,11 @@ from requests.auth import HTTPDigestAuth
 
 DEFAULT_CHANNELS = (1, 2, 3, 4)
 RTSP_PORT = 554  # puerto fijo del endpoint 'realmonitor' (igual que cameras/vivo.py)
+# subtype=1 = substream (baja resolucion) en vez de 0 = stream principal.
+# La vista en vivo aqui es una vision general de los 4 canales a la vez, no
+# revision detallada de un clip -- no hace falta maxima resolucion, y el
+# substream reduce bastante la carga de decodificacion/render por canal.
+LIVE_SUBTYPE = 1
 
 
 @dataclass(frozen=True)
@@ -41,7 +46,7 @@ class DVRClient(QObject):
         # la UI a 127.0.0.1:8080.
         self.host = "192.168.1.108"
         self.username = "nancy"
-        self.password = "2409"
+        self.password = "miriam.2017"
 
         self._playback_stop_events: dict[int, threading.Event] = {}
         self._playback_threads: list[threading.Thread] = []
@@ -49,6 +54,7 @@ class DVRClient(QObject):
 
         self._live_stop_event: threading.Event | None = None
         self._live_threads: list[threading.Thread] = []
+        self._live_ready_events: dict[int, threading.Event] = {}
 
     # -- busqueda de grabaciones ------------------------------------------
 
@@ -260,12 +266,17 @@ class DVRClient(QObject):
         stop_event = threading.Event()
         self._live_stop_event = stop_event
         self._live_threads = []
+        # Un Event de backpressure por canal (ver _live_channel_worker):
+        # arranca "set" (listo para el primer frame).
+        self._live_ready_events = {channel: threading.Event() for channel in DEFAULT_CHANNELS}
+        for ready_event in self._live_ready_events.values():
+            ready_event.set()
 
         bare_host = self.host.split(":")[0]
         for channel in DEFAULT_CHANNELS:
             thread = threading.Thread(
                 target=self._live_channel_worker,
-                args=(channel, bare_host, stop_event),
+                args=(channel, bare_host, stop_event, self._live_ready_events[channel]),
                 daemon=True,
             )
             self._live_threads.append(thread)
@@ -279,10 +290,21 @@ class DVRClient(QObject):
         self._live_stop_event = None
         self._live_threads = []
 
-    def _live_channel_worker(self, channel: int, bare_host: str, stop_event: threading.Event) -> None:
+    def notify_frame_consumed(self, channel: int) -> None:
+        """La GUI llama esto (desde el hilo principal) justo despues de
+        terminar de renderizar un frame -- libera el freno de backpressure
+        de _live_channel_worker para ese canal. No hace nada fuera de modo
+        vivo (el evento de ese canal puede no existir)."""
+        ready_event = self._live_ready_events.get(channel)
+        if ready_event is not None:
+            ready_event.set()
+
+    def _live_channel_worker(
+        self, channel: int, bare_host: str, stop_event: threading.Event, ready_event: threading.Event
+    ) -> None:
         url = (
             f"rtsp://{self.username}:{self.password}@{bare_host}:{RTSP_PORT}"
-            f"/cam/realmonitor?channel={channel}&subtype=0"
+            f"/cam/realmonitor?channel={channel}&subtype={LIVE_SUBTYPE}"
         )
 
         self.channel_status.emit(channel, "Conectando en vivo...")
@@ -298,7 +320,18 @@ class DVRClient(QObject):
                     self.channel_status.emit(channel, "Se perdio la conexion en vivo")
                     return
 
-                self.frame_ready.emit(channel, frame)
-                self.channel_status.emit(channel, "En vivo")
+                # Backpressure: frame_ready cruza al hilo de la GUI como
+                # señal Qt encolada. Sin este freno, si la GUI no da abasto
+                # a renderizar (4 canales a la vez, PC mas lenta, etc.) la
+                # cola de eventos crece sin limite -- cada frame pendiente
+                # es una imagen completa en memoria. Eso fue justo lo que
+                # congelo la PC en produccion. Aqui se permite como maximo
+                # un frame "en vuelo" por canal: si la GUI no ha terminado
+                # de procesar el anterior, este se descarta (valido en modo
+                # vivo -- nunca es aceptable acumular).
+                if ready_event.is_set():
+                    ready_event.clear()
+                    self.frame_ready.emit(channel, frame)
+                    self.channel_status.emit(channel, "En vivo")
         finally:
             capture.release()

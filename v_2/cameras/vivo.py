@@ -3,7 +3,7 @@ import cv2
 # 1. Parámetros de conexión de tu DVR Dahua
 IP_DVR = "192.168.1.108"
 USUARIO = "nancy"
-CONTRASENA = "2409"
+CONTRASENA = "miriam.2017"
 CANAL = 1  # Canal 1
 
 # subtype=0 significa Stream Principal (Máxima resolución)

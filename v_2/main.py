@@ -465,7 +465,7 @@ if __name__ == "__main__":
             except Exception as exc:
                 print(f"No se pudo imprimir el codigo de barras: {exc}")
 
-        admins = ["jesjack", "nancycastanedaaparicio"]
+        admins = ["jesjack", "nancycastanedaaparicio", "nancy"]
         usuario_actual = obtener_usuario_actual()
 
         bridge = SheetButtonBridge(context, documento, BASE_DIR)
