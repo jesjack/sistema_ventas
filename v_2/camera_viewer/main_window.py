@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, time as dtime, timedelta
 
 from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QVBoxLayout, QWidget
@@ -132,3 +133,12 @@ class MainWindow(QMainWindow):
         self.client.stop_live()
         self.timeline.stop_playhead()
         super().closeEvent(event)
+
+        # Cierre forzado del proceso: se observaron instancias que, tras
+        # cerrar la ventana, seguian vivas de fondo consumiendo CPU/RAM (el
+        # hilo de la GUI puede quedar atascado detras de una cola de frames
+        # pendiente, o QApplication tarda en notar que ya no hay ventanas
+        # visibles). Para esta app, cerrar la ventana SIEMPRE debe terminar
+        # el proceso -- los hilos de red ya se detuvieron arriba, asi que
+        # cortar aqui es seguro.
+        os._exit(0)

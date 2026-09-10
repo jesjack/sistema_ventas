@@ -48,6 +48,32 @@ def _clean_child_env() -> dict[str, str]:
     return env
 
 
+def _drop_privileges_kwargs() -> dict:
+    """Si este proceso (main.py) corre como root porque se lanzo con sudo
+    (ver libreofficeModules/Module1.bas), camera_viewer no tiene por que
+    heredar eso: solo hace peticiones de red salientes (RTSP/HTTP-CGI al
+    DVR) y renderiza una GUI, nada que requiera privilegios. Usa las mismas
+    variables que sudo expone (SUDO_UID/SUDO_GID/SUDO_USER) -- las mismas
+    que ya lee TPV_UsuarioActual() en el modulo de Basic -- para arrancar
+    el subproceso como el usuario real detras del sudo. Devuelve un dict
+    vacio (sin tocar nada) si no aplica: no es root, no es POSIX, o no hay
+    rastro de sudo en el entorno (main.py corriendo directo, sin sudo)."""
+    if os.name != "posix":
+        return {}
+    if os.geteuid() != 0:
+        return {}
+
+    sudo_user = os.environ.get("SUDO_USER")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if not sudo_user or not sudo_gid:
+        return {}
+
+    try:
+        return {"user": sudo_user, "group": int(sudo_gid)}
+    except ValueError:
+        return {}
+
+
 def find_python_executable(base_dir: Path) -> Path | None:
     """Busca el interprete del venv del proyecto (<base_dir>/.venv). None
     si no existe -- el llamador decide como avisarlo; nunca debe caer en
@@ -97,6 +123,7 @@ def launch_detached(base_dir: Path) -> subprocess.Popen:
 
     log_path = _prepare_log_file(base_dir)
     popen_kwargs: dict = {"cwd": str(base_dir), "stdin": subprocess.DEVNULL, "env": _clean_child_env()}
+    popen_kwargs.update(_drop_privileges_kwargs())
     if sys.platform == "win32":
         popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 

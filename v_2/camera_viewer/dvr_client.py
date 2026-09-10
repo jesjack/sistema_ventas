@@ -4,7 +4,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import cv2
 import requests
@@ -18,6 +18,23 @@ RTSP_PORT = 554  # puerto fijo del endpoint 'realmonitor' (igual que cameras/viv
 # revision detallada de un clip -- no hace falta maxima resolucion, y el
 # substream reduce bastante la carga de decodificacion/render por canal.
 LIVE_SUBTYPE = 1
+
+# Backoff de reconexion (vivo) y reintento de clip (grabaciones): arranca
+# en 1s, se duplica en cada fallo consecutivo hasta este tope, y se resetea
+# apenas una conexion/lectura tiene exito. Evita mandar al DVR una rafaga
+# de reconexiones cuando esta caido o sobrecargado.
+RECONNECT_BACKOFF_INITIAL = 1.0
+RECONNECT_BACKOFF_MAX = 10.0
+
+# Cuantas veces se reintenta abrir/leer el MISMO clip antes de darlo por
+# perdido -- distingue un corte de red transitorio (reintentable) de que la
+# grabacion de verdad ya termino.
+MAX_CLIP_RETRIES = 3
+CLIP_RETRY_BACKOFF = 1.5
+# Si la lectura se corta a menos de esto del final esperado del clip, se
+# considera un final real (el DVR a veces entrega el archivo un poco corto)
+# en vez de un error a reintentar.
+CLIP_END_TOLERANCE = timedelta(seconds=2)
 
 
 @dataclass(frozen=True)
@@ -193,12 +210,36 @@ class DVRClient(QObject):
             return
 
         start_time = max(clip.start, selected_time)
+        retries_left = MAX_CLIP_RETRIES
 
         while True:
-            ended_naturally = self._play_single_clip(session_id, channel, start_time, clip.end, stop_event)
-            if not ended_naturally:
-                return  # detenido por el usuario, cambio de sesion, o fallo al abrir (ya se emitio el estado)
+            if stop_event.is_set() or session_id != self._playback_session:
+                return
 
+            outcome, resume_time = self._play_single_clip(session_id, channel, start_time, clip.end, stop_event)
+
+            if outcome == "stopped":
+                return  # detenido por el usuario o cambio de sesion
+
+            if outcome == "error":
+                # Corte de red/timeout transitorio (o fallo al abrir), no el
+                # fin real del clip -- reintentar el MISMO clip antes de
+                # darlo por perdido, en vez de saltar de inmediato al
+                # siguiente segmento (eso descartaria video valido).
+                if retries_left <= 0:
+                    self.channel_status.emit(channel, "No se pudo reproducir la grabacion")
+                    return
+                retries_left -= 1
+                self.channel_status.emit(
+                    channel, f"Reintentando reproduccion ({MAX_CLIP_RETRIES - retries_left}/{MAX_CLIP_RETRIES})..."
+                )
+                if stop_event.wait(CLIP_RETRY_BACKOFF):
+                    return
+                start_time = resume_time or start_time
+                continue
+
+            # outcome == "ended": el clip SI termino de verdad.
+            retries_left = MAX_CLIP_RETRIES
             next_clip = self._find_adjacent_clip(clips, clip.end)
             if next_clip is None:
                 self.channel_status.emit(channel, "Fin de segmento")
@@ -214,11 +255,14 @@ class DVRClient(QObject):
         start_time: datetime,
         end_time: datetime,
         stop_event: threading.Event,
-    ) -> bool:
-        """Reproduce un segmento [start_time, end_time). Devuelve True si
-        termino porque el video se acabo por su cuenta (el llamador intenta
-        encadenar un clip contiguo), False si termino por stop_event,
-        cambio de sesion, o porque no se pudo abrir."""
+    ) -> tuple[str, datetime | None]:
+        """Reproduce [start_time, end_time). Devuelve (outcome, resume_time):
+        - "stopped": lo corto el usuario o un cambio de sesion (resume_time None).
+        - "error": no se pudo abrir, o la lectura se corto muy antes del
+          final esperado (corte transitorio) -- resume_time es desde donde
+          seguir si se alcanzo a leer algo, o None si no se leyo nada.
+        - "ended": el clip de verdad se acabo (resume_time None).
+        """
         start_query = start_time.strftime("%Y-%m-%d%%20%H:%M:%S")
         end_query = end_time.strftime("%Y-%m-%d%%20%H:%M:%S")
         url = (
@@ -230,18 +274,20 @@ class DVRClient(QObject):
         capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         if not capture.isOpened():
             self.channel_status.emit(channel, "No se pudo abrir la grabacion")
-            return False
+            return "error", None
 
         fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
         if fps <= 0 or not fps < float("inf"):
             fps = 25.0
         frame_interval = 1.0 / fps
         next_frame_at = time.monotonic()
+        frames_read = 0
+        last_frame_time = start_time
 
         try:
             while True:
                 if stop_event.is_set() or session_id != self._playback_session:
-                    return False
+                    return "stopped", None
 
                 now = time.monotonic()
                 if now < next_frame_at:
@@ -249,10 +295,14 @@ class DVRClient(QObject):
 
                 success, frame = capture.read()
                 if not success:
-                    return True
+                    if frames_read > 0 and last_frame_time >= end_time - CLIP_END_TOLERANCE:
+                        return "ended", None
+                    return "error", (last_frame_time if frames_read > 0 else None)
 
+                frames_read += 1
+                last_frame_time = start_time + timedelta(seconds=frames_read * frame_interval)
                 self.frame_ready.emit(channel, frame)
-                self.channel_status.emit(channel, f"Reproduciendo {start_time:%H:%M:%S}")
+                self.channel_status.emit(channel, f"Reproduciendo {last_frame_time:%H:%M:%S}")
                 next_frame_at = max(next_frame_at + frame_interval, time.monotonic())
         finally:
             capture.release()
@@ -307,31 +357,52 @@ class DVRClient(QObject):
             f"/cam/realmonitor?channel={channel}&subtype={LIVE_SUBTYPE}"
         )
 
-        self.channel_status.emit(channel, "Conectando en vivo...")
-        capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        if not capture.isOpened():
-            self.channel_status.emit(channel, "No se pudo conectar en vivo")
-            return
+        # Reconexion con backoff: un timeout de stream (visto en produccion,
+        # ~30s cuando el DVR no aguanta las 4 conexiones a la vez) o un corte
+        # de red hacia que capture.read() fallara y el hilo del canal
+        # terminara para siempre -- el panel se quedaba congelado en el
+        # ultimo frame sin ningun aviso ni forma de recuperarse. Ahora se
+        # reintenta indefinidamente mientras stop_event no este puesto.
+        backoff = RECONNECT_BACKOFF_INITIAL
 
-        try:
-            while not stop_event.is_set():
-                success, frame = capture.read()
-                if not success:
-                    self.channel_status.emit(channel, "Se perdio la conexion en vivo")
-                    return
+        while not stop_event.is_set():
+            self.channel_status.emit(channel, "Conectando en vivo...")
+            capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
 
-                # Backpressure: frame_ready cruza al hilo de la GUI como
-                # señal Qt encolada. Sin este freno, si la GUI no da abasto
-                # a renderizar (4 canales a la vez, PC mas lenta, etc.) la
-                # cola de eventos crece sin limite -- cada frame pendiente
-                # es una imagen completa en memoria. Eso fue justo lo que
-                # congelo la PC en produccion. Aqui se permite como maximo
-                # un frame "en vuelo" por canal: si la GUI no ha terminado
-                # de procesar el anterior, este se descarta (valido en modo
-                # vivo -- nunca es aceptable acumular).
-                if ready_event.is_set():
-                    ready_event.clear()
-                    self.frame_ready.emit(channel, frame)
-                    self.channel_status.emit(channel, "En vivo")
-        finally:
-            capture.release()
+            if capture.isOpened():
+                backoff = RECONNECT_BACKOFF_INITIAL  # conexion exitosa: resetea el backoff
+                try:
+                    while not stop_event.is_set():
+                        success, frame = capture.read()
+                        if not success:
+                            self.channel_status.emit(channel, "Se perdio la conexion en vivo")
+                            break
+
+                        # Backpressure: frame_ready cruza al hilo de la GUI
+                        # como señal Qt encolada. Sin este freno, si la GUI
+                        # no da abasto a renderizar (4 canales a la vez, PC
+                        # mas lenta, etc.) la cola de eventos crece sin
+                        # limite -- cada frame pendiente es una imagen
+                        # completa en memoria. Eso fue justo lo que congelo
+                        # la PC en produccion. Aqui se permite como maximo un
+                        # frame "en vuelo" por canal: si la GUI no ha
+                        # terminado de procesar el anterior, este se
+                        # descarta (valido en modo vivo -- nunca es
+                        # aceptable acumular).
+                        if ready_event.is_set():
+                            ready_event.clear()
+                            self.frame_ready.emit(channel, frame)
+                            self.channel_status.emit(channel, "En vivo")
+                finally:
+                    capture.release()
+            else:
+                capture.release()
+                self.channel_status.emit(channel, "No se pudo conectar en vivo")
+
+            if stop_event.is_set():
+                return
+
+            self.channel_status.emit(channel, f"Reconectando en {backoff:.0f}s...")
+            if stop_event.wait(backoff):
+                return
+            backoff = min(backoff * 2, RECONNECT_BACKOFF_MAX)
