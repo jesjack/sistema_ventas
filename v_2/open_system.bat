@@ -18,7 +18,10 @@ set "TPV_PRIMERA_VUELTA=0"
 :: Pre-hornea main.ods (estructura + ventas del dia) antes de abrir soffice.
 :: Si falla, no bloquea la apertura: main.py detecta que no hay pre-horneado
 :: valido y reconstruye la hoja en vivo como antes.
-python prebake_ventas.py
+:: Se usa el venv del proyecto (no un "python" suelto del PATH) para que
+:: solo haga falta administrar dos interpretes en total: el embebido de
+:: LibreOffice y este venv (tambien usado por camera_viewer).
+".venv\Scripts\python.exe" prebake_ventas.py
 
 :: Abre LibreOffice y ESPERA a que cierre por completo (sin "start"): esta
 :: espera bloqueante es la senal de "ya cerro" para el siguiente prebake, y

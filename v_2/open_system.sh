@@ -18,7 +18,10 @@ while true; do
     # Pre-hornea main.ods (estructura + ventas del dia) antes de abrir soffice.
     # Si falla, no bloquea la apertura: main.py detecta que no hay pre-horneado
     # valido y reconstruye la hoja en vivo como antes.
-    python3 prebake_ventas.py
+    # Se usa el venv del proyecto (no un "python3" suelto del PATH) para que
+    # solo haga falta administrar dos interpretes en total: el embebido de
+    # LibreOffice y este venv (tambien usado por camera_viewer).
+    .venv/bin/python3 prebake_ventas.py
 
     # Abre LibreOffice y ESPERA a que cierre por completo (sin "&" en segundo
     # plano): esta espera bloqueante es la senal de "ya cerro" para el

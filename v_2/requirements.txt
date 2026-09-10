@@ -1,0 +1,6 @@
+opencv-python
+requests
+Pillow
+numpy
+PySide6
+odfpy

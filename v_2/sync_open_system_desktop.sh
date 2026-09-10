@@ -4,6 +4,8 @@ set -euo pipefail
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_FILE="$SOURCE_DIR/open_system.desktop"
 SHARE_DIR="$SOURCE_DIR/share"
+VENV_DIR="$SOURCE_DIR/.venv"
+REQUIREMENTS_FILE="$SOURCE_DIR/requirements.txt"
 
 if [[ ! -f "$SOURCE_FILE" ]]; then
     echo "No se encontró el archivo fuente: $SOURCE_FILE" >&2
@@ -22,6 +24,36 @@ fi
 #      ahi en el futuro (incluido cada main.ods regenerado) nazca ya con
 #      permiso de escritura para "otros", sin importar el umask del proceso
 #      que lo crea.
+# Entorno virtual separado tanto del Python embebido de LibreOffice como
+# del python3 del sistema -- ahi corren camera_viewer y prebake_ventas.py
+# (ver camera_viewer/launcher.py y open_system.sh). Crearlo/actualizarlo
+# aqui significa que cada sync deja las dependencias al dia sin un paso
+# manual aparte.
+ensure_python_venv() {
+    if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
+        echo "Aviso: no se encontro $REQUIREMENTS_FILE, no se creo/actualizo el entorno virtual." >&2
+        return
+    fi
+
+    if [[ ! -x "$VENV_DIR/bin/python3" ]]; then
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo "Aviso: 'python3' no esta instalado; no se pudo crear el entorno virtual en $VENV_DIR." >&2
+            return
+        fi
+
+        echo "Creando entorno virtual en $VENV_DIR..."
+        if ! python3 -m venv "$VENV_DIR"; then
+            echo "Aviso: no se pudo crear el entorno virtual en $VENV_DIR (?esta instalado el paquete 'python3-venv' de tu distro?)." >&2
+            return
+        fi
+    fi
+
+    echo "Instalando dependencias de $(basename "$REQUIREMENTS_FILE") en $VENV_DIR..."
+    if ! "$VENV_DIR/bin/python3" -m pip install --disable-pip-version-check -r "$REQUIREMENTS_FILE"; then
+        echo "Aviso: fallo la instalacion de dependencias en $VENV_DIR." >&2
+    fi
+}
+
 fix_share_permissions() {
     if [[ ! -d "$SHARE_DIR" ]]; then
         echo "Aviso: no se encontró $SHARE_DIR, no se ajustaron permisos de escritura." >&2
@@ -53,6 +85,7 @@ fix_share_permissions() {
 }
 
 fix_share_permissions
+ensure_python_venv
 
 copy_to_dir() {
     local target_dir="$1"
