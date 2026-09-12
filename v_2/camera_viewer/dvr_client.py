@@ -3,8 +3,10 @@ from __future__ import annotations
 import re
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import cv2
 import requests
@@ -26,15 +28,41 @@ LIVE_SUBTYPE = 1
 RECONNECT_BACKOFF_INITIAL = 1.0
 RECONNECT_BACKOFF_MAX = 10.0
 
-# Cuantas veces se reintenta abrir/leer el MISMO clip antes de darlo por
-# perdido -- distingue un corte de red transitorio (reintentable) de que la
-# grabacion de verdad ya termino.
+# Cuantas veces se reintenta descargar el MISMO bloque de grabacion antes
+# de darlo por perdido.
 MAX_CLIP_RETRIES = 3
 CLIP_RETRY_BACKOFF = 1.5
-# Si la lectura se corta a menos de esto del final esperado del clip, se
-# considera un final real (el DVR a veces entrega el archivo un poco corto)
-# en vez de un error a reintentar.
-CLIP_END_TOLERANCE = timedelta(seconds=2)
+
+# El DVR (Dahua XVR51xxHS-S2, ver camera_viewer/DVR_HARDWARE.md) es un
+# equipo de gama baja: un solo SoC embebido generico y un puerto Ethernet
+# de 100 Mbps, sin nada en su ficha tecnica que sugiera que su firmware
+# esta pensado para atender varias negociaciones de conexion (RTSP+digest,
+# o HTTP de loadfile.cgi) al mismo tiempo. En produccion, abrir los 4
+# canales a la vez (en vivo o en grabaciones) lo dejaba sin responder por
+# completo -- ni siquiera a clientes ajenos a esta app (confirmado con
+# curl/nc). Por eso NINGUN intento de conexion nuevo (inicial o reintento,
+# de cualquier canal) puede empezar mientras otro este en curso: ver
+# DVRClient._open_capture_serialized. Este margen es el tiempo de cortesia
+# extra que se espera DESPUES de que un intento concluye (exito o fallo)
+# antes de permitir el siguiente -- el DVR puede tardar un instante en
+# liberar los recursos de una sesion antes de aceptar otra.
+CONNECTION_SERIALIZATION_GAP = 1.5
+
+# Grabaciones: cuantificado en cameras/dvr_stress_test.py y documentado en
+# camera_viewer/DVR_STRESS_TEST_RESULTS.md -- el DVR aguanta hasta 3
+# sesiones de loadfile.cgi a la vez indefinidamente, pero falla de forma
+# reproducible con 4 (sin importar el ancho de banda: se probo tanto a
+# maxima velocidad como pausado a ritmo real, con el mismo resultado). Por
+# eso la reproduccion de grabaciones NO lee directo del DVR: descarga un
+# bloque acotado de video a un archivo local (maximo
+# MAX_CONCURRENT_RECORDING_DOWNLOADS descargas a la vez, con margen de
+# sobra bajo el limite real de 3) y lo reproduce desde ahi a ritmo real --
+# la reproduccion en si no toca la red, asi que los 4 canales pueden verse
+# a la vez sin nunca superar el limite de conexiones del DVR.
+MAX_CONCURRENT_RECORDING_DOWNLOADS = 2
+DOWNLOAD_CHUNK_SECONDS = 45.0
+POST_DOWNLOAD_GAP = 1.0
+DOWNLOAD_DIR = Path(__file__).resolve().parent.parent / "runtime" / "camera_viewer_downloads"
 
 
 @dataclass(frozen=True)
@@ -72,6 +100,97 @@ class DVRClient(QObject):
         self._live_stop_event: threading.Event | None = None
         self._live_threads: list[threading.Thread] = []
         self._live_ready_events: dict[int, threading.Event] = {}
+
+        # Un solo candado para TODO el cliente (vivo) -- ver
+        # CONNECTION_SERIALIZATION_GAP arriba. Nunca hay mas de un intento
+        # de conexion RTSP nuevo en curso al DVR.
+        self._connection_gate = threading.Lock()
+
+        # Semaforo para las DESCARGAS de grabacion (no para su reproduccion,
+        # que es local y no cuenta) -- ver MAX_CONCURRENT_RECORDING_DOWNLOADS.
+        self._recording_download_gate = threading.Semaphore(MAX_CONCURRENT_RECORDING_DOWNLOADS)
+
+    def _open_capture_serialized(self, url: str, stop_event: threading.Event) -> cv2.VideoCapture:
+        """Abre una conexion (RTSP o HTTP, segun la url) turnandose con
+        cualquier otro canal/intento -- ver CONNECTION_SERIALIZATION_GAP.
+        cv2.VideoCapture ya es una llamada bloqueante que no vuelve hasta
+        que el intento se resuelve (exito o timeout), asi que sostener el
+        candado durante la llamada ya garantiza "no empezar el siguiente
+        hasta que el anterior haya tenido respuesta"; el wait() de despues
+        agrega el margen de cortesia adicional."""
+        with self._connection_gate:
+            capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            stop_event.wait(CONNECTION_SERIALIZATION_GAP)
+            return capture
+
+    def _download_recording_chunk(
+        self, channel: int, start: datetime, end: datetime, stop_event: threading.Event
+    ) -> Path | None:
+        """Descarga [start, end) de un canal a un archivo local temporal --
+        solo copia los bytes crudos que entrega loadfile.cgi, sin decodificar
+        nada todavia. Respeta MAX_CONCURRENT_RECORDING_DOWNLOADS (semaforo
+        compartido por todos los canales). Devuelve la ruta local, o None si
+        stop_event se activo o hubo un error de red (el llamador decide si
+        reintentar)."""
+        url = (
+            f"http://{self.host}/cgi-bin/loadfile.cgi"
+            f"?action=startLoad&channel={channel}"
+            f"&startTime={start.strftime('%Y-%m-%d%%20%H:%M:%S')}"
+            f"&endTime={end.strftime('%Y-%m-%d%%20%H:%M:%S')}"
+        )
+        auth = HTTPDigestAuth(self.username, self.password)
+
+        self._recording_download_gate.acquire()
+        try:
+            if stop_event.is_set():
+                return None
+
+            DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            local_path = DOWNLOAD_DIR / f"ch{channel}_{uuid.uuid4().hex}.dav"
+            try:
+                with requests.get(url, auth=auth, stream=True, timeout=30) as response:
+                    response.raise_for_status()
+                    with local_path.open("wb") as fh:
+                        for block in response.iter_content(chunk_size=65536):
+                            if stop_event.is_set():
+                                break
+                            if block:
+                                fh.write(block)
+            except Exception:
+                local_path.unlink(missing_ok=True)
+                return None
+
+            if stop_event.is_set() or local_path.stat().st_size == 0:
+                local_path.unlink(missing_ok=True)
+                return None
+            return local_path
+        finally:
+            # Mismo margen de cortesia que _open_capture_serialized, para no
+            # reabrir un cupo de descarga apenas se libera uno.
+            stop_event.wait(POST_DOWNLOAD_GAP)
+            self._recording_download_gate.release()
+
+    def _drain_recording_download_gate(self) -> None:
+        """Bloquea hasta confirmar que NINGUNA descarga de grabacion sigue
+        en curso (adquiere el semaforo completo y lo libera de inmediato).
+        Ultima garantia antes de la primera conexion en vivo -- ver
+        start_live(): asi nunca se abre una conexion RTSP mientras una
+        descarga de grabacion sigue viva, ni siquiera en el peor caso donde
+        un hilo de reproduccion no alcanzo a reaccionar a tiempo al
+        stop_event (p. ej. bloqueado en una lectura de red)."""
+        for _ in range(MAX_CONCURRENT_RECORDING_DOWNLOADS):
+            self._recording_download_gate.acquire()
+        for _ in range(MAX_CONCURRENT_RECORDING_DOWNLOADS):
+            self._recording_download_gate.release()
+
+    @staticmethod
+    def _purge_download_dir() -> None:
+        """Borra archivos temporales de descargas de una corrida anterior
+        (p. ej. si la app se cerro de golpe a medio descargar un bloque)."""
+        if not DOWNLOAD_DIR.exists():
+            return
+        for path in DOWNLOAD_DIR.glob("*.dav"):
+            path.unlink(missing_ok=True)
 
     # -- busqueda de grabaciones ------------------------------------------
 
@@ -149,6 +268,7 @@ class DVRClient(QObject):
         # si no, un hilo viejo puede intentar emitir una señal justo cuando
         # este objeto ya se esta destruyendo (ver stop_playback/closeEvent).
         self._stop_and_join()
+        self._purge_download_dir()
 
         self._playback_session += 1
         session_id = self._playback_session
@@ -204,113 +324,133 @@ class DVRClient(QObject):
         clips: list[Clip],
         stop_event: threading.Event,
     ) -> None:
+        """Reproduce por bloques acotados (DOWNLOAD_CHUNK_SECONDS): cada
+        bloque se descarga completo a un archivo local (_play_chunk) antes
+        de reproducirlo -- la descarga respeta el limite de concurrencia
+        del DVR (MAX_CONCURRENT_RECORDING_DOWNLOADS), la reproduccion en si
+        es local y no cuenta contra ese limite."""
         clip = self._find_clip(clips, selected_time)
         if clip is None:
             self.channel_status.emit(channel, "Sin grabacion en esa hora")
             return
 
-        start_time = max(clip.start, selected_time)
+        position = max(clip.start, selected_time)
         retries_left = MAX_CLIP_RETRIES
 
         while True:
             if stop_event.is_set() or session_id != self._playback_session:
                 return
 
-            outcome, resume_time = self._play_single_clip(session_id, channel, start_time, clip.end, stop_event)
+            chunk_end = min(position + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
+            outcome = self._play_chunk(session_id, channel, position, chunk_end, stop_event)
 
             if outcome == "stopped":
                 return  # detenido por el usuario o cambio de sesion
 
             if outcome == "error":
-                # Corte de red/timeout transitorio (o fallo al abrir), no el
-                # fin real del clip -- reintentar el MISMO clip antes de
-                # darlo por perdido, en vez de saltar de inmediato al
-                # siguiente segmento (eso descartaria video valido).
+                # Fallo al descargar el bloque (o el archivo descargado
+                # salio vacio/corrupto) -- reintentar el MISMO bloque antes
+                # de darlo por perdido.
                 if retries_left <= 0:
                     self.channel_status.emit(channel, "No se pudo reproducir la grabacion")
                     return
                 retries_left -= 1
                 self.channel_status.emit(
-                    channel, f"Reintentando reproduccion ({MAX_CLIP_RETRIES - retries_left}/{MAX_CLIP_RETRIES})..."
+                    channel, f"Reintentando descarga ({MAX_CLIP_RETRIES - retries_left}/{MAX_CLIP_RETRIES})..."
                 )
                 if stop_event.wait(CLIP_RETRY_BACKOFF):
                     return
-                start_time = resume_time or start_time
                 continue
 
-            # outcome == "ended": el clip SI termino de verdad.
+            # outcome == "ended": este bloque se reprodujo completo.
             retries_left = MAX_CLIP_RETRIES
+            position = chunk_end
+            if position < clip.end:
+                continue  # sigue el mismo clip, siguiente bloque
+
             next_clip = self._find_adjacent_clip(clips, clip.end)
             if next_clip is None:
                 self.channel_status.emit(channel, "Fin de segmento")
                 return
 
             clip = next_clip
-            start_time = clip.start
+            position = clip.start
 
-    def _play_single_clip(
+    def _play_chunk(
         self,
         session_id: int,
         channel: int,
-        start_time: datetime,
-        end_time: datetime,
+        start: datetime,
+        end: datetime,
         stop_event: threading.Event,
-    ) -> tuple[str, datetime | None]:
-        """Reproduce [start_time, end_time). Devuelve (outcome, resume_time):
-        - "stopped": lo corto el usuario o un cambio de sesion (resume_time None).
-        - "error": no se pudo abrir, o la lectura se corto muy antes del
-          final esperado (corte transitorio) -- resume_time es desde donde
-          seguir si se alcanzo a leer algo, o None si no se leyo nada.
-        - "ended": el clip de verdad se acabo (resume_time None).
-        """
-        start_query = start_time.strftime("%Y-%m-%d%%20%H:%M:%S")
-        end_query = end_time.strftime("%Y-%m-%d%%20%H:%M:%S")
-        url = (
-            f"http://{self.username}:{self.password}@{self.host}/cgi-bin/loadfile.cgi"
-            f"?action=startLoad&channel={channel}&startTime={start_query}&endTime={end_query}"
-        )
+    ) -> str:
+        """Descarga [start, end) a un archivo local (turnandose con los
+        demas canales, ver _download_recording_chunk) y lo reproduce desde
+        ahi a ritmo real. Devuelve "stopped", "error" o "ended" -- ya no hay
+        ambiguedad de "se corto por un corte de red a medias": el archivo ya
+        esta completo en disco antes de reproducirlo, asi que cualquier
+        fallo durante la reproduccion es un archivo vacio/corrupto, no un
+        corte transitorio de la conexion en vivo con el DVR."""
+        self.channel_status.emit(channel, f"Descargando {start:%H:%M:%S}...")
+        local_path = self._download_recording_chunk(channel, start, end, stop_event)
 
-        self.channel_status.emit(channel, f"Cargando {start_time:%H:%M:%S}")
-        capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        if not capture.isOpened():
-            self.channel_status.emit(channel, "No se pudo abrir la grabacion")
-            return "error", None
-
-        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
-        if fps <= 0 or not fps < float("inf"):
-            fps = 25.0
-        frame_interval = 1.0 / fps
-        next_frame_at = time.monotonic()
-        frames_read = 0
-        last_frame_time = start_time
+        if stop_event.is_set() or session_id != self._playback_session:
+            if local_path is not None:
+                local_path.unlink(missing_ok=True)
+            return "stopped"
+        if local_path is None:
+            return "error"
 
         try:
-            while True:
-                if stop_event.is_set() or session_id != self._playback_session:
-                    return "stopped", None
+            capture = cv2.VideoCapture(str(local_path), cv2.CAP_FFMPEG)
+            if not capture.isOpened():
+                capture.release()
+                return "error"
 
-                now = time.monotonic()
-                if now < next_frame_at:
-                    time.sleep(next_frame_at - now)
+            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+            if fps <= 0 or not fps < float("inf"):
+                fps = 25.0
+            frame_interval = 1.0 / fps
+            next_frame_at = time.monotonic()
+            frames_read = 0
 
-                success, frame = capture.read()
-                if not success:
-                    if frames_read > 0 and last_frame_time >= end_time - CLIP_END_TOLERANCE:
-                        return "ended", None
-                    return "error", (last_frame_time if frames_read > 0 else None)
+            try:
+                while True:
+                    if stop_event.is_set() or session_id != self._playback_session:
+                        return "stopped"
 
-                frames_read += 1
-                last_frame_time = start_time + timedelta(seconds=frames_read * frame_interval)
-                self.frame_ready.emit(channel, frame)
-                self.channel_status.emit(channel, f"Reproduciendo {last_frame_time:%H:%M:%S}")
-                next_frame_at = max(next_frame_at + frame_interval, time.monotonic())
+                    now = time.monotonic()
+                    if now < next_frame_at:
+                        time.sleep(next_frame_at - now)
+
+                    success, frame = capture.read()
+                    if not success:
+                        break
+
+                    frames_read += 1
+                    current_time = start + timedelta(seconds=frames_read * frame_interval)
+                    self.frame_ready.emit(channel, frame)
+                    self.channel_status.emit(channel, f"Reproduciendo {current_time:%H:%M:%S}")
+                    next_frame_at = max(next_frame_at + frame_interval, time.monotonic())
+            finally:
+                capture.release()
+
+            return "ended" if frames_read > 0 else "error"
         finally:
-            capture.release()
+            local_path.unlink(missing_ok=True)
 
     # -- vista en vivo (RTSP realmonitor, igual protocolo que cameras/vivo.py) --
 
     def start_live(self) -> None:
-        self._stop_and_join()  # que no quede una reproduccion de grabacion corriendo de fondo
+        # Margen amplio (timeout=35: el request de descarga de grabacion
+        # tiene su propio timeout de 30s, +5s de sobra) para asegurar de
+        # verdad que ningun hilo de reproduccion sigue vivo -- y despues,
+        # como garantia final, se confirma que ninguna descarga de
+        # grabacion sigue en curso (drena el semaforo por completo) antes
+        # de la primera conexion en vivo. Nunca debe haber una sesion de
+        # grabacion abierta al mismo tiempo que una de vivo.
+        self._stop_and_join(timeout=35.0)
+        self._drain_recording_download_gate()
         self.stop_live()
 
         stop_event = threading.Event()
@@ -367,7 +507,7 @@ class DVRClient(QObject):
 
         while not stop_event.is_set():
             self.channel_status.emit(channel, "Conectando en vivo...")
-            capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            capture = self._open_capture_serialized(url, stop_event)
 
             if capture.isOpened():
                 backoff = RECONNECT_BACKOFF_INITIAL  # conexion exitosa: resetea el backoff

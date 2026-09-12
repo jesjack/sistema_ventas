@@ -11,6 +11,9 @@ v_2/share/runtime/
 v_2/share/output.log
 v_2/logs/debug/
 v_2/logs/camera_viewer/
+v_2/logs/dvr_stress_test/
+v_2/runtime/camera_viewer.lock
+v_2/runtime/camera_viewer_downloads/
 v_2/share/.~lock.*
 
 # Archivos de prueba/backup generados durante desarrollo del pre-horneado.
