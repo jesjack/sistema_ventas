@@ -7,6 +7,7 @@ import glob
 import platform
 import shutil
 import subprocess
+import sys
 
 try:
     import qrcode
@@ -32,9 +33,7 @@ class TicketPrinter:
         self.printer_device = printer_device
         self.website_url = website_url
         self.base_dir = Path(__file__).resolve().parent.parent
-        self.logs_dir = self.base_dir / "logs"
         self.runtime_dir = self.base_dir / "runtime"
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self.buffer = bytearray()
         self.reset()
@@ -183,10 +182,7 @@ class TicketPrinter:
         return True
 
     def _log_error(self, message):
-        log_path = self.logs_dir / "error_log.txt"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"[{timestamp}] {message}\n")
+        print(f"[ticket_printer] {message}", file=sys.stderr)
 
     def _usb_device_identity(self, device_path):
         """Read USB vendor/product/manufacturer info for a /dev node via sysfs.
