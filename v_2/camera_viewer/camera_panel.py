@@ -16,6 +16,13 @@ class CameraPanel(ZoomPanGraphicsView):
 
     double_clicked = Signal()
 
+    # El label de estado va al centro del panel cuando el mensaje requiere
+    # atencion (sin video que mostrar, conectando, descargando, reintentos,
+    # errores); se queda en la esquina solo durante reproduccion activa
+    # normal, para no taparle el frame al usuario.
+    CORNER_STATUS_PREFIXES = ("Reproduciendo", "En vivo")
+    CORNER_MARGIN = 6
+
     def __init__(self, channel: int, parent=None) -> None:
         super().__init__(parent)
         self.channel = channel
@@ -27,8 +34,8 @@ class CameraPanel(ZoomPanGraphicsView):
             "background-color: rgba(15, 23, 42, 170); color: #E5E7EB;"
             " padding: 2px 6px; border-radius: 3px; font-weight: bold;"
         )
-        self._status_label.move(6, 6)
         self._status_label.adjustSize()
+        self._reposition_status_label()
 
     def _update_transform(self) -> None:
         # Zoom minimo (1.0) = la imagen completa cabe en el panel (como un
@@ -50,6 +57,7 @@ class CameraPanel(ZoomPanGraphicsView):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_transform()
+        self._reposition_status_label()
 
     def set_frame(self, frame: np.ndarray) -> None:
         height, width = frame.shape[:2]
@@ -72,7 +80,17 @@ class CameraPanel(ZoomPanGraphicsView):
     def set_status(self, text: str) -> None:
         self._status_label.setText(text)
         self._status_label.adjustSize()
+        self._reposition_status_label()
         self._status_label.raise_()
+
+    def _reposition_status_label(self) -> None:
+        if self._status_label.text().startswith(self.CORNER_STATUS_PREFIXES):
+            self._status_label.move(self.CORNER_MARGIN, self.CORNER_MARGIN)
+            return
+
+        x = (self.width() - self._status_label.width()) // 2
+        y = (self.height() - self._status_label.height()) // 2
+        self._status_label.move(max(0, x), max(0, y))
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
