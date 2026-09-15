@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time as dtime, timedelta
 
-from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QStackedWidget, QVBoxLayout, QWidget
 
 from .calendar_panel import CalendarPanel
 from .camera_grid import CameraGrid
@@ -46,8 +46,20 @@ class MainWindow(QMainWindow):
         left_layout.addStretch(1)
         top_splitter.addWidget(left_column)
 
-        self.camera_grid = CameraGrid(DEFAULT_CHANNELS)
-        top_splitter.addWidget(self.camera_grid)
+        # Un CameraGrid distinto por modo (no uno solo compartido): vivo
+        # pide el substream de baja resolucion y grabaciones reproduce el
+        # archivo a su resolucion original -- con un solo grid, cambiar de
+        # modo dejaba el zoom/encaje de cada panel calculado contra el
+        # tamaño de frame del modo anterior, produciendo un recorte
+        # incorrecto hasta que se le hacia zoom a mano de nuevo. Con grids
+        # separados cada uno tiene su propio estado de zoom/pan siempre
+        # consistente con lo que en verdad esta mostrando.
+        self.live_camera_grid = CameraGrid(DEFAULT_CHANNELS)
+        self.recordings_camera_grid = CameraGrid(DEFAULT_CHANNELS)
+        self.camera_grid_stack = QStackedWidget()
+        self.camera_grid_stack.addWidget(self.recordings_camera_grid)
+        self.camera_grid_stack.addWidget(self.live_camera_grid)
+        top_splitter.addWidget(self.camera_grid_stack)
         top_splitter.setStretchFactor(0, 0)
         top_splitter.setStretchFactor(1, 1)
         root_layout.addWidget(top_splitter, stretch=1)
@@ -65,8 +77,10 @@ class MainWindow(QMainWindow):
 
         self.client.clips_ready.connect(self._on_clips_ready)
         self.client.search_failed.connect(self._on_search_failed)
-        self.client.frame_ready.connect(self._on_frame_ready)
-        self.client.channel_status.connect(self._on_channel_status)
+        self.client.recording_frame_ready.connect(self._on_recording_frame_ready)
+        self.client.recording_channel_status.connect(self._on_recording_channel_status)
+        self.client.live_frame_ready.connect(self._on_live_frame_ready)
+        self.client.live_channel_status.connect(self._on_live_channel_status)
         self.client.recorded_days_ready.connect(self.calendar.set_recorded_days)
         self.client.recorded_days_failed.connect(self._on_recorded_days_failed)
 
@@ -112,17 +126,26 @@ class MainWindow(QMainWindow):
         self.client.play_from(selected_time, self._clips_by_channel)
         self.timeline.start_playhead(selected_time)
 
-    def _on_frame_ready(self, channel: int, frame) -> None:
-        panel = self.camera_grid.panels.get(channel)
+    def _on_recording_frame_ready(self, channel: int, frame) -> None:
+        panel = self.recordings_camera_grid.panels.get(channel)
         if panel is not None:
             panel.set_frame(frame)
-        # Libera el freno de backpressure de la vista en vivo para este
-        # canal (ver DVRClient._live_channel_worker) -- sin efecto durante
-        # reproduccion de grabaciones, que no lo usa.
+
+    def _on_recording_channel_status(self, channel: int, text: str) -> None:
+        panel = self.recordings_camera_grid.panels.get(channel)
+        if panel is not None:
+            panel.set_status(text)
+
+    def _on_live_frame_ready(self, channel: int, frame) -> None:
+        panel = self.live_camera_grid.panels.get(channel)
+        if panel is not None:
+            panel.set_frame(frame)
+        # Libera el freno de backpressure de la vista en vivo para este canal
+        # (ver DVRClient._live_channel_worker).
         self.client.notify_frame_consumed(channel)
 
-    def _on_channel_status(self, channel: int, text: str) -> None:
-        panel = self.camera_grid.panels.get(channel)
+    def _on_live_channel_status(self, channel: int, text: str) -> None:
+        panel = self.live_camera_grid.panels.get(channel)
         if panel is not None:
             panel.set_status(text)
 
@@ -130,6 +153,7 @@ class MainWindow(QMainWindow):
         if self._is_live:
             self.client.stop_live()
             self._is_live = False
+            self.camera_grid_stack.setCurrentWidget(self.recordings_camera_grid)
             self.connection_panel.set_live_mode(False)
             self.calendar.setEnabled(True)
             self.timeline.setEnabled(True)
@@ -138,6 +162,7 @@ class MainWindow(QMainWindow):
             self.timeline.stop_playhead()
             self.client.stop_playback()
             self._is_live = True
+            self.camera_grid_stack.setCurrentWidget(self.live_camera_grid)
             self.connection_panel.set_live_mode(True)
             self.calendar.setEnabled(False)
             self.timeline.setEnabled(False)

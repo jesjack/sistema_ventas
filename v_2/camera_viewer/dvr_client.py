@@ -101,8 +101,19 @@ class DVRClient(QObject):
 
     clips_ready = Signal(list)          # list[Clip], los 4 canales juntos
     search_failed = Signal(str)
-    frame_ready = Signal(int, object)   # channel, np.ndarray BGR
-    channel_status = Signal(int, str)   # channel, texto de estado
+    # Señales separadas para grabaciones y vivo (no una sola compartida):
+    # MainWindow tiene un CameraGrid distinto para cada modo, y enrutar por
+    # un flag "modo actual" en vez de por el origen de la señal es una
+    # condicion de carrera real -- un frame de vivo ya en camino por la red
+    # puede llegar justo despues de que el usuario cambie a grabaciones, y
+    # con un flag compartido terminaria pintado en el grid equivocado
+    # (se vio pasar exactamente esto probando contra el emulador). Con
+    # señales separadas el destino lo decide de donde salio el frame, no
+    # el estado de la app al momento de llegar.
+    recording_frame_ready = Signal(int, object)   # channel, np.ndarray BGR
+    recording_channel_status = Signal(int, str)   # channel, texto de estado
+    live_frame_ready = Signal(int, object)
+    live_channel_status = Signal(int, str)
     recorded_days_ready = Signal(int, int, set)  # year, month, set[date]
     recorded_days_failed = Signal(str)
 
@@ -428,7 +439,7 @@ class DVRClient(QObject):
         es local y no cuenta contra ese limite."""
         clip = self._find_clip(clips, selected_time)
         if clip is None:
-            self.channel_status.emit(channel, "Sin grabacion en esa hora")
+            self.recording_channel_status.emit(channel, "Sin grabacion en esa hora")
             return
 
         position = max(clip.start, selected_time)
@@ -449,10 +460,10 @@ class DVRClient(QObject):
                 # salio vacio/corrupto) -- reintentar el MISMO bloque antes
                 # de darlo por perdido.
                 if retries_left <= 0:
-                    self.channel_status.emit(channel, "No se pudo reproducir la grabacion")
+                    self.recording_channel_status.emit(channel, "No se pudo reproducir la grabacion")
                     return
                 retries_left -= 1
-                self.channel_status.emit(
+                self.recording_channel_status.emit(
                     channel, f"Reintentando descarga ({MAX_CLIP_RETRIES - retries_left}/{MAX_CLIP_RETRIES})..."
                 )
                 if stop_event.wait(CLIP_RETRY_BACKOFF):
@@ -467,7 +478,7 @@ class DVRClient(QObject):
 
             next_clip = self._find_adjacent_clip(clips, clip.end)
             if next_clip is None:
-                self.channel_status.emit(channel, "Fin de segmento")
+                self.recording_channel_status.emit(channel, "Fin de segmento")
                 return
 
             clip = next_clip
@@ -488,7 +499,7 @@ class DVRClient(QObject):
         esta completo en disco antes de reproducirlo, asi que cualquier
         fallo durante la reproduccion es un archivo vacio/corrupto, no un
         corte transitorio de la conexion en vivo con el DVR."""
-        self.channel_status.emit(channel, f"Descargando {start:%H:%M:%S}...")
+        self.recording_channel_status.emit(channel, f"Descargando {start:%H:%M:%S}...")
         local_path = self._download_recording_chunk(channel, start, end, stop_event)
 
         if stop_event.is_set() or session_id != self._playback_session:
@@ -526,8 +537,8 @@ class DVRClient(QObject):
 
                     frames_read += 1
                     current_time = start + timedelta(seconds=frames_read * frame_interval)
-                    self.frame_ready.emit(channel, frame)
-                    self.channel_status.emit(channel, f"Reproduciendo {current_time:%H:%M:%S}")
+                    self.recording_frame_ready.emit(channel, frame)
+                    self.recording_channel_status.emit(channel, f"Reproduciendo {current_time:%H:%M:%S}")
                     next_frame_at = max(next_frame_at + frame_interval, time.monotonic())
             finally:
                 capture.release()
@@ -603,7 +614,7 @@ class DVRClient(QObject):
         backoff = RECONNECT_BACKOFF_INITIAL
 
         while not stop_event.is_set():
-            self.channel_status.emit(channel, "Conectando en vivo...")
+            self.live_channel_status.emit(channel, "Conectando en vivo...")
             capture = self._open_capture_serialized(url, stop_event)
 
             if capture.isOpened():
@@ -612,7 +623,7 @@ class DVRClient(QObject):
                     while not stop_event.is_set():
                         success, frame = capture.read()
                         if not success:
-                            self.channel_status.emit(channel, "Se perdio la conexion en vivo")
+                            self.live_channel_status.emit(channel, "Se perdio la conexion en vivo")
                             break
 
                         # Backpressure: frame_ready cruza al hilo de la GUI
@@ -628,18 +639,18 @@ class DVRClient(QObject):
                         # aceptable acumular).
                         if ready_event.is_set():
                             ready_event.clear()
-                            self.frame_ready.emit(channel, frame)
-                            self.channel_status.emit(channel, "En vivo")
+                            self.live_frame_ready.emit(channel, frame)
+                            self.live_channel_status.emit(channel, "En vivo")
                 finally:
                     capture.release()
             else:
                 capture.release()
-                self.channel_status.emit(channel, "No se pudo conectar en vivo")
+                self.live_channel_status.emit(channel, "No se pudo conectar en vivo")
 
             if stop_event.is_set():
                 return
 
-            self.channel_status.emit(channel, f"Reconectando en {backoff:.0f}s...")
+            self.live_channel_status.emit(channel, f"Reconectando en {backoff:.0f}s...")
             if stop_event.wait(backoff):
                 return
             backoff = min(backoff * 2, RECONNECT_BACKOFF_MAX)

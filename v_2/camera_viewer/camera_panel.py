@@ -38,24 +38,45 @@ class CameraPanel(ZoomPanGraphicsView):
         self._reposition_status_label()
 
     def _update_transform(self) -> None:
-        # Zoom minimo (1.0) = la imagen completa cabe en el panel (como un
-        # visor de fotos); zoom > 1.0 amplia desde ahi. Uniforme en x/y
-        # para no distorsionar la imagen.
+        # Zoom minimo (1.0) = la imagen estirada llena el panel entero (por
+        # ancho Y alto, cada eje por separado) en vez de mantener su
+        # proporcion original y dejar franjas vacias -- a proposito: no
+        # todas las camaras entregan la misma proporcion (una de otra
+        # marca en produccion llega mas angosta que las demas), y el orden
+        # de reconexion de los 4 canales no esta garantizado, asi que
+        # cualquier panel podria tocarle la camara "rara" en cualquier
+        # momento. zoom > 1.0 amplia mas alla desde ahi, ya de forma
+        # uniforme.
         self.resetTransform()
-        scale = self._fit_scale() * self._zoom
-        self.scale(scale, scale)
+        scale_x, scale_y = self._fit_scale()
+        self.scale(scale_x * self._zoom, scale_y * self._zoom)
 
-    def _fit_scale(self) -> float:
+    def _fit_scale(self) -> tuple[float, float]:
         if self._pixmap_item is None:
-            return 1.0
+            return 1.0, 1.0
         pixmap = self._pixmap_item.pixmap()
         if pixmap.isNull() or pixmap.width() == 0 or pixmap.height() == 0:
-            return 1.0
+            return 1.0, 1.0
         viewport = self.viewport()
-        return min(viewport.width() / pixmap.width(), viewport.height() / pixmap.height())
+        return viewport.width() / pixmap.width(), viewport.height() / pixmap.height()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._update_transform()
+        self._reposition_status_label()
+
+    def showEvent(self, event) -> None:
+        # Necesario para paneles dentro de un QStackedWidget (ver
+        # MainWindow: un CameraGrid para vivo y otro para grabaciones):
+        # mientras un panel esta OCULTO (la otra pagina del stack activa)
+        # puede recibir su primer frame igual, y _fit_scale() calcula
+        # contra el tamaño del viewport en ese momento -- que para una
+        # pagina oculta puede no estar bien asentado todavia. Sin esto, el
+        # encaje calculado mientras estaba oculto se queda pegado para
+        # siempre (resizeEvent no vuelve a dispararse solo por mostrarse,
+        # si el tamaño no cambio). Recalcular aqui, justo cuando el panel
+        # de verdad se hace visible, usa el tamaño ya correcto.
+        super().showEvent(event)
         self._update_transform()
         self._reposition_status_label()
 
