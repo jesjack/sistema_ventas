@@ -4,8 +4,8 @@ import time as time_module
 from datetime import date, datetime, time as dtime, timedelta
 
 from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QMouseEvent, QPainter, QPen
-from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QGraphicsSimpleTextItem
+from PySide6.QtGui import QBrush, QColor, QFontMetrics, QMouseEvent, QPainter, QPen
+from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QGraphicsSimpleTextItem, QScrollBar
 
 from .zoom_canvas import ZoomPanGraphicsView
 
@@ -17,6 +17,27 @@ BOTTOM_PADDING = 8
 MINUTE_TICK_STEPS = (1, 5, 10, 15, 30)
 MINUTE_TICK_MIN_SPACING_PX = 6.0
 MINUTE_TICK_COLOR = QColor("#1E293B")
+
+# Categorias de etiquetas HH:MM intermedias, en el orden en que se van
+# activando conforme hay mas zoom. Cada nivel es su propio conjunto
+# COMPLETO (no un incremento sobre el anterior): al pasar de "cuartos" a
+# "diez en diez" hay que dejar de mostrar :15/:45, porque mezclados con
+# :10/:20/:40/:50 el espaciado se ve inconsistente (5,5,10,10,5,5,10 en vez
+# de 10,10,10,10,10,10).
+MINUTE_LABEL_LEVELS: tuple[frozenset[int], ...] = (
+    frozenset({30}),
+    frozenset({15, 30, 45}),
+    frozenset({10, 20, 30, 40, 50}),
+    frozenset(range(1, 60)),
+)
+MINUTE_LABEL_COLOR = QColor("#94A3B8")
+MINUTE_LABEL_TICK_COLOR = QColor("#475569")
+# Aire minimo entre el final de una etiqueta y el comienzo de la
+# siguiente, ademas de su propio ancho de texto.
+MINUTE_LABEL_MARGIN_PX = 4.0
+# Alto de la rayita corta que cuelga de cada etiqueta (hora o minuto) hacia
+# la barra de color, señalando su punto exacto en el tiempo.
+AXIS_TICK_HEIGHT = 8
 
 # Orden explicito de capas: fondo, encima las lineas de minuto, y por
 # ultimo el marcador de hora seleccionada.
@@ -43,7 +64,13 @@ class TimelineWidget(ZoomPanGraphicsView):
     la rueda del mouse (el eje vertical no se toca); cuando el contenido no
     cabe, se recorre con la scrollbar horizontal -- deliberadamente sin
     arrastre (ScrollHandDrag), para que un clic normal siempre seleccione
-    hora sin ambiguedad con un posible drag."""
+    hora sin ambiguedad con un posible drag.
+
+    La franja de horas (ticks + etiquetas) va ARRIBA de la barra de color,
+    no abajo: la scrollbar horizontal vive en el borde inferior del
+    viewport, y flota encima del contenido en vez de reservar su propio
+    espacio (ver _setup_overlay_scrollbar) -- si las horas estuvieran
+    abajo, la scrollbar las taparia a la mitad al aparecer."""
 
     time_selected = Signal(datetime)
 
@@ -52,6 +79,8 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._day: date | None = None
         self._marker_item: QGraphicsLineItem | None = None
         self._minute_tick_items: list[QGraphicsLineItem] = []
+        self._minute_label_items: list[QGraphicsLineItem | QGraphicsSimpleTextItem] = []
+        self._minute_label_width: float | None = None
         self._playhead_started_at: float | None = None
         self._playhead_started_time: datetime | None = None
 
@@ -66,7 +95,39 @@ class TimelineWidget(ZoomPanGraphicsView):
 
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFixedHeight(BODY_HEIGHT + AXIS_HEIGHT + BOTTOM_PADDING)
+
+        self._setup_overlay_scrollbar()
         self._redraw()
+
+    def _setup_overlay_scrollbar(self) -> None:
+        """La scrollbar horizontal REAL de QAbstractScrollArea siempre
+        reserva su propio espacio en el viewport cuando esta visible --
+        aunque se reparente a otro widget, Qt sigue encogiendo el viewport
+        en base a ELLA, no a quien sea su padre visual (verificado
+        renderizando: seguia encogiendose igual). La unica forma de que
+        nunca robe espacio es apagarla del todo (AlwaysOff, invisible
+        siempre) y poner en su lugar una QScrollBar propia, flotando sobre
+        el viewport, que solo espeja su rango/valor -- puramente cosmetica
+        e interactiva, el layout nunca la toma en cuenta."""
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        real_bar = self.horizontalScrollBar()
+
+        self._overlay_scrollbar = QScrollBar(Qt.Orientation.Horizontal, self.viewport())
+        self._overlay_scrollbar.setRange(real_bar.minimum(), real_bar.maximum())
+        self._overlay_scrollbar.setPageStep(real_bar.pageStep())
+        self._overlay_scrollbar.setValue(real_bar.value())
+        self._overlay_scrollbar.setVisible(real_bar.maximum() > real_bar.minimum())
+
+        real_bar.rangeChanged.connect(self._sync_overlay_scrollbar_range)
+        real_bar.valueChanged.connect(self._overlay_scrollbar.setValue)
+        self._overlay_scrollbar.valueChanged.connect(real_bar.setValue)
+
+        self._position_overlay_scrollbar()
+
+    def _sync_overlay_scrollbar_range(self, minimum: int, maximum: int) -> None:
+        self._overlay_scrollbar.setRange(minimum, maximum)
+        self._overlay_scrollbar.setPageStep(self.horizontalScrollBar().pageStep())
+        self._overlay_scrollbar.setVisible(maximum > minimum)
 
     def _update_transform(self) -> None:
         # Zoom minimo (1.0) = el dia completo cabe en el ancho visible;
@@ -74,14 +135,22 @@ class TimelineWidget(ZoomPanGraphicsView):
         self.resetTransform()
         self.scale(self._fit_scale_x() * self._zoom, 1.0)
         self._refresh_minute_ticks()
+        self._refresh_minute_labels()
 
     def _fit_scale_x(self) -> float:
         viewport_width = max(self.viewport().width(), 1)
         return viewport_width / SECONDS_PER_DAY
 
+    def _position_overlay_scrollbar(self) -> None:
+        viewport = self.viewport()
+        height = self._overlay_scrollbar.sizeHint().height()
+        self._overlay_scrollbar.setGeometry(0, viewport.height() - height, viewport.width(), height)
+        self._overlay_scrollbar.raise_()
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_transform()
+        self._position_overlay_scrollbar()
 
     def set_day(self, day: date) -> None:
         self._day = day
@@ -94,6 +163,7 @@ class TimelineWidget(ZoomPanGraphicsView):
         scene.clear()
         self._marker_item = None
         self._minute_tick_items = []
+        self._minute_label_items = []
 
         scene.setSceneRect(0, 0, SECONDS_PER_DAY, BODY_HEIGHT + AXIS_HEIGHT)
 
@@ -104,26 +174,30 @@ class TimelineWidget(ZoomPanGraphicsView):
             text.setPos(12, 12)
             return
 
-        body = QGraphicsRectItem(0, 0, SECONDS_PER_DAY, BODY_HEIGHT)
+        body = QGraphicsRectItem(0, AXIS_HEIGHT, SECONDS_PER_DAY, BODY_HEIGHT)
         body.setBrush(QBrush(QColor("#111827")))
         body.setPen(_cosmetic_pen(QColor("#1F2937")))
         body.setZValue(Z_BACKGROUND)
         scene.addItem(body)
 
-        axis_y = BODY_HEIGHT + 4
+        # Etiqueta arriba, tick colgando hacia abajo hasta tocar la barra de
+        # color -- ver el docstring de la clase sobre por que la franja de
+        # horas va arriba y no abajo.
+        tick_top = AXIS_HEIGHT - AXIS_TICK_HEIGHT
         for hour in range(25):
             x = hour * 3600
-            tick = QGraphicsLineItem(x, axis_y, x, axis_y + 8)
+            tick = QGraphicsLineItem(x, tick_top, x, AXIS_HEIGHT)
             tick.setPen(_cosmetic_pen(QColor("#475569")))
             scene.addItem(tick)
             if hour < 24:
                 label = QGraphicsSimpleTextItem(f"{hour:02d}:00")
                 label.setBrush(QBrush(QColor("#94A3B8")))
                 label.setFlag(label.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                label.setPos(x, axis_y + 8)
+                label.setPos(x, 0)
                 scene.addItem(label)
 
         self._refresh_minute_ticks()
+        self._refresh_minute_labels()
 
     def _refresh_minute_ticks(self) -> None:
         """Lineas finas cada minuto, para orientarse mejor al hacer zoom --
@@ -146,7 +220,7 @@ class TimelineWidget(ZoomPanGraphicsView):
             if minute % 60 == 0:
                 continue  # ya existe la linea de hora
             x = minute * 60
-            tick = QGraphicsLineItem(x, 0, x, BODY_HEIGHT)
+            tick = QGraphicsLineItem(x, AXIS_HEIGHT, x, AXIS_HEIGHT + BODY_HEIGHT)
             tick.setPen(pen)
             tick.setZValue(Z_MINUTE_TICK)
             scene.addItem(tick)
@@ -158,6 +232,79 @@ class TimelineWidget(ZoomPanGraphicsView):
             if pixels_per_minute * step >= MINUTE_TICK_MIN_SPACING_PX:
                 return step
         return None
+
+    def _refresh_minute_labels(self) -> None:
+        """Etiquetas HH:MM intermedias (media hora, cuartos, diez en diez,
+        cada minuto), activandose progresivamente conforme el zoom deja
+        espacio -- ver MINUTE_LABEL_LEVELS. Cada nivel es su propio
+        conjunto completo (no se acumulan los anteriores), para que el
+        espaciado entre marcas sea siempre uniforme."""
+        scene = self.scene()
+        for item in self._minute_label_items:
+            scene.removeItem(item)
+        self._minute_label_items = []
+
+        if self._day is None:
+            return
+
+        level_index = self._active_minute_label_level()
+        if level_index < 0:
+            return
+
+        minutes = sorted(MINUTE_LABEL_LEVELS[level_index])
+        tick_top = AXIS_HEIGHT - AXIS_TICK_HEIGHT
+        tick_pen = _cosmetic_pen(MINUTE_LABEL_TICK_COLOR)
+        for hour in range(24):
+            for minute in minutes:
+                x = hour * 3600 + minute * 60
+
+                # Misma rayita corta que ya tienen las horas (ver _redraw),
+                # para que cada etiqueta nueva tambien señale su punto
+                # exacto en vez de quedar flotando sin marca.
+                tick = QGraphicsLineItem(x, tick_top, x, AXIS_HEIGHT)
+                tick.setPen(tick_pen)
+                scene.addItem(tick)
+                self._minute_label_items.append(tick)
+
+                label = QGraphicsSimpleTextItem(f"{hour:02d}:{minute:02d}")
+                label.setBrush(QBrush(MINUTE_LABEL_COLOR))
+                label.setFlag(label.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                label.setPos(x, 0)
+                label.setZValue(Z_MINUTE_TICK)
+                scene.addItem(label)
+                self._minute_label_items.append(label)
+
+    def _active_minute_label_level(self) -> int:
+        """Indice del nivel de MINUTE_LABEL_LEVELS mas fino que todavia cabe
+        sin superponerse, o -1 si ni el primero (media hora) cabe. "Cabe"
+        se mide contra el hueco mas chico entre dos marcas consecutivas de
+        ESE nivel (mas la del ":00", que ya se dibuja aparte en _redraw).
+        Los niveles requieren cada vez menos espacio (30, 15, 10, 1 minuto
+        de hueco minimo), asi que en cuanto uno no cabe, ninguno mas fino
+        tampoco cabria."""
+        pixels_per_minute = self._fit_scale_x() * self._zoom * 60
+        required_px = self._minute_label_width_px() + MINUTE_LABEL_MARGIN_PX
+
+        active = -1
+        for level_index, level in enumerate(MINUTE_LABEL_LEVELS):
+            gap_minutes = self._min_gap_minutes({0} | level)
+            if pixels_per_minute * gap_minutes < required_px:
+                break
+            active = level_index
+        return active
+
+    @staticmethod
+    def _min_gap_minutes(minutes: set[int]) -> int:
+        ordered = sorted(minutes)
+        gaps = [b - a for a, b in zip(ordered, ordered[1:])]
+        gaps.append(60 - ordered[-1] + ordered[0])  # de la ultima marca de la hora a la ":00" siguiente
+        return min(gaps)
+
+    def _minute_label_width_px(self) -> float:
+        if self._minute_label_width is None:
+            metrics = QFontMetrics(QGraphicsSimpleTextItem().font())
+            self._minute_label_width = metrics.horizontalAdvance("00:00")
+        return self._minute_label_width
 
     def _seconds_since_midnight(self, moment: datetime) -> int:
         midnight = datetime.combine(moment.date(), dtime.min)
@@ -180,7 +327,7 @@ class TimelineWidget(ZoomPanGraphicsView):
         if self._marker_item is not None:
             scene.removeItem(self._marker_item)
 
-        line = QGraphicsLineItem(seconds, 0, seconds, BODY_HEIGHT)
+        line = QGraphicsLineItem(seconds, AXIS_HEIGHT, seconds, AXIS_HEIGHT + BODY_HEIGHT)
         pen = _cosmetic_pen(QColor("#F8FAFC"))
         pen.setWidth(2)
         line.setPen(pen)
