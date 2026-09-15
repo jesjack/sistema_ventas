@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import random
 import threading
-import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
@@ -13,6 +12,15 @@ from .digest_auth import NonceStore, parse_authorization, validate_digest_respon
 from .frames import encode_jpeg, render_frame
 
 STREAM_FPS = 25.0
+
+# El DVR real limita cada llamada a findNextFile a esto, sin importar el
+# "count" pedido (verificado contra uno real: pidiendo count=200 devolvio
+# 100) -- pero la sesion recuerda hasta donde se quedo, asi que llamadas
+# sucesivas siguen entregando paginas hasta agotar resultados. Sin este
+# tope el emulador nunca hubiera expuesto el bug real de paginacion visto
+# en camera_viewer/dvr_client.py (el codigo cliente comparaba contra el
+# "count" pedido en vez de contra "pagina vacia").
+REAL_DVR_MAX_RESULTS_PER_CALL = 100
 
 # object_id (de mediaFileFind.cgi) -> clips pendientes de devolver via
 # findNextFile. Compartido entre requests/threads, protegido por el lock.
@@ -95,7 +103,8 @@ class DVRCgiHandler(BaseHTTPRequestHandler):
             session_exists = object_id in _SESSIONS
 
         if not session_exists:
-            self._send_text(200, "Error=101\r\n")
+            # Texto literal del DVR real ante un object invalido/vencido.
+            self._send_text(200, "Error\r\nBad Request!\r\n")
             return
 
         if action == "findFile":
@@ -105,11 +114,12 @@ class DVRCgiHandler(BaseHTTPRequestHandler):
             matches = schedule.find_overlapping_clips(channel, start_dt, end_dt)
             with _SESSIONS_LOCK:
                 _SESSIONS[object_id] = [(channel, clip_start, clip_end) for clip_start, clip_end in matches]
-            self._send_text(200, "found=OK\r\n")
+            self._send_text(200, "OK\r\n")
             return
 
         if action == "findNextFile":
-            count = int(query.get("count", ["50"])[0])
+            requested = int(query.get("count", ["50"])[0])
+            count = min(requested, REAL_DVR_MAX_RESULTS_PER_CALL)
             with _SESSIONS_LOCK:
                 pending = _SESSIONS.get(object_id, [])
                 batch, _SESSIONS[object_id] = pending[:count], pending[count:]
@@ -126,16 +136,36 @@ class DVRCgiHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _render_find_next_file(batch: list[tuple[int, datetime, datetime]]) -> str:
+        # Mismos campos que un DVR real (capturado en vivo para comparar):
+        # Channel, Cluster, CutLength, Disk, EndTime, FilePath, Flags[0],
+        # Length, Partition, StartTime, Type, VideoStream. dvr_client.py
+        # solo usa StartTime/EndTime, pero una captura del emulador debe
+        # verse igual a una real, no distinguirse por los campos que le
+        # faltan o le sobran (el "FileSize" de antes no existe en el real).
         lines = [f"found={len(batch)}"]
         for index, (channel, clip_start, clip_end) in enumerate(batch):
             duration_seconds = int((clip_end - clip_start).total_seconds())
+            # ~950MB/hora de video, igual que se veia en los archivos reales.
+            length_bytes = int(duration_seconds * (950_000_000 / 3600))
+            channel_0indexed = channel - 1
+            cluster = random.randint(1000, 99999)
+            file_path = (
+                f"/mnt/dvr/{clip_start:%Y-%m-%d}/{channel_0indexed:03d}/dav/{clip_start:%H}/0/1/{cluster}/"
+                f"{clip_start:%H.%M.%S}-{clip_end:%H.%M.%S}[R][0@0][0].dav"
+            )
             lines += [
-                f"items[{index}].Channel={channel}",
-                f"items[{index}].StartTime={clip_start:%Y-%m-%d %H:%M:%S}",
+                f"items[{index}].Channel={channel_0indexed}",
+                f"items[{index}].Cluster={cluster}",
+                f"items[{index}].CutLength={length_bytes}",
+                f"items[{index}].Disk=1",
                 f"items[{index}].EndTime={clip_end:%Y-%m-%d %H:%M:%S}",
-                f"items[{index}].Length={duration_seconds}",
-                f"items[{index}].FileSize={duration_seconds * 2 * 1024 * 1024}",
+                f"items[{index}].FilePath={file_path}",
+                f"items[{index}].Flags[0]=Timing",
+                f"items[{index}].Length={length_bytes}",
+                f"items[{index}].Partition=1",
+                f"items[{index}].StartTime={clip_start:%Y-%m-%d %H:%M:%S}",
                 f"items[{index}].Type=dav",
+                f"items[{index}].VideoStream=Main",
             ]
         return "\r\n".join(lines) + "\r\n"
 
@@ -160,22 +190,42 @@ class DVRCgiHandler(BaseHTTPRequestHandler):
         # Real: el DVR manda un contenedor .dav/H264. Aqui: MJPEG-sobre-HTTP
         # generado al vuelo -- cv2.VideoCapture(..., cv2.CAP_FFMPEG) demuxea
         # ambos igual, asi que del lado de la app no hay diferencia.
+        #
+        # Nota importante sobre el ritmo: esto es lo que _download_recording_chunk
+        # de dvr_client.py descarga a un archivo local ANTES de reproducirlo
+        # -- _play_chunk vuelve a marcar el ritmo real el desde ese archivo
+        # (lee el fps del propio .dav y hace su propio time.sleep). Antes,
+        # esta funcion TAMBIEN pausaba entre frame y frame para simular
+        # 25fps en tiempo real -- eso duplicaba la espera (cada bloque de
+        # 45s tardaba 45s reales solo en DESCARGAR, antes de poder
+        # reproducirlo ni un frame), dando la sensacion de que la app se
+        # quedaba atorada. Un DVR real manda los bytes del archivo tan
+        # rapido como la red lo permita, no a ritmo de reproduccion -- asi
+        # que aqui se generan y mandan los frames de corrido, sin pausas.
+        # Sin Content-Length (no se sabe de antemano cuantos frames van a
+        # salir) y con protocol_version="HTTP/1.1" (keep-alive por
+        # defecto), el cliente no tiene NINGUNA forma de saber donde
+        # termina esta respuesta salvo que el servidor cierre la conexion
+        # -- sin esto, dvr_client.py._download_recording_chunk se queda
+        # esperando mas datos para siempre despues del ultimo frame (se
+        # verifico: el archivo ya habia dejado de crecer, pero la descarga
+        # seguia "colgada"). close_connection=True es lo que le dice al
+        # BaseHTTPRequestHandler que cierre el socket al terminar esta
+        # respuesta en vez de dejarlo abierto para una siguiente.
+        self.close_connection = True
+
         boundary = "dvrframe"
         self.send_response(200)
         self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={boundary}")
         self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
         self.end_headers()
 
         frame_period = 1.0 / STREAM_FPS
         sim_time = start_dt
-        next_at = time.monotonic()
         caption = f"clip {start_dt:%H:%M:%S} - {end_dt:%H:%M:%S}"
 
         while sim_time < end_dt:
-            now = time.monotonic()
-            if now < next_at:
-                time.sleep(next_at - now)
-
             payload = encode_jpeg(render_frame(channel, sim_time, caption))
             if payload is None:
                 break
@@ -187,7 +237,6 @@ class DVRCgiHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"\r\n")
 
             sim_time += timedelta(seconds=frame_period)
-            next_at += frame_period
 
     # -- hora / NTP (algo.py, sinc_time.py, check_time.py) -----------------
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -15,7 +16,11 @@ from PySide6.QtCore import QObject, Signal
 from requests.auth import HTTPDigestAuth
 
 DEFAULT_CHANNELS = (1, 2, 3, 4)
-RTSP_PORT = 554  # puerto fijo del endpoint 'realmonitor' (igual que cameras/vivo.py)
+# Puerto del endpoint 'realmonitor' (igual que cameras/vivo.py) -- 554 es
+# privilegiado (pide root) y es el que usa el DVR real, pero se puede pisar
+# con DVR_RTSP_PORT para que el emulador local corra su servidor RTSP en
+# uno normal (ver DVRClient.__init__ y run_camera_viewer_emulated.*).
+RTSP_PORT = 554
 # subtype=1 = substream (baja resolucion) en vez de 0 = stream principal.
 # La vista en vivo aqui es una vision general de los 4 canales a la vez, no
 # revision detallada de un clip -- no hace falta maxima resolucion, y el
@@ -103,12 +108,17 @@ class DVRClient(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        # Mismos valores por defecto que el resto de cameras/*.py (DVR real).
-        # Para probar contra el emulador local, cambia el campo "IP DVR" en
-        # la UI a 127.0.0.1:8080.
-        self.host = "192.168.1.108"
-        self.username = "nancy"
-        self.password = "miriam.2017"
+        # Mismos valores por defecto que el resto de cameras/*.py (DVR
+        # real). Se pueden pisar con las variables de entorno DVR_HOST /
+        # DVR_USER / DVR_PASSWORD / DVR_RTSP_PORT -- asi los scripts
+        # run_camera_viewer_emulated.* pueden apuntar la app al emulador
+        # local sin tocar la UI, y sin que el resto del tiempo (DVR real)
+        # dependa de nada especial en el entorno. Si no estan definidas, se
+        # comporta igual que antes.
+        self.host = os.environ.get("DVR_HOST", "192.168.1.108")
+        self.username = os.environ.get("DVR_USER", "nancy")
+        self.password = os.environ.get("DVR_PASSWORD", "miriam.2017")
+        self.rtsp_port = int(os.environ.get("DVR_RTSP_PORT", RTSP_PORT))
 
         self._playback_stop_events: dict[int, threading.Event] = {}
         self._playback_threads: list[threading.Thread] = []
@@ -580,7 +590,7 @@ class DVRClient(QObject):
         self, channel: int, bare_host: str, stop_event: threading.Event, ready_event: threading.Event
     ) -> None:
         url = (
-            f"rtsp://{self.username}:{self.password}@{bare_host}:{RTSP_PORT}"
+            f"rtsp://{self.username}:{self.password}@{bare_host}:{self.rtsp_port}"
             f"/cam/realmonitor?channel={channel}&subtype={LIVE_SUBTYPE}"
         )
 
