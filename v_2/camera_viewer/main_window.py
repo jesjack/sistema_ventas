@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         for clip in clips:
             self._clips_by_channel.setdefault(clip.channel, []).append(clip)
 
+        self.timeline.set_clips(self._clips_by_channel)
         self.status_label.setText(f"Se encontraron {len(clips)} clips entre los 4 canales.")
 
     def _on_search_failed(self, message: str) -> None:

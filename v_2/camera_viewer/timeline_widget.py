@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFontMetrics, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QGraphicsSimpleTextItem, QScrollBar
 
+from .dvr_client import Clip
 from .zoom_canvas import ZoomPanGraphicsView
 
 SECONDS_PER_DAY = 24 * 60 * 60
@@ -39,9 +40,15 @@ MINUTE_LABEL_MARGIN_PX = 4.0
 # la barra de color, señalando su punto exacto en el tiempo.
 AXIS_TICK_HEIGHT = 8
 
-# Orden explicito de capas: fondo, encima las lineas de minuto, y por
-# ultimo el marcador de hora seleccionada.
+# Tramos sin grabacion en NINGUN canal -- rojo apagado, encima del fondo
+# pero debajo de los ticks de minuto (que deben seguir viendose sobre el
+# tramo rojo igual que sobre el resto de la barra).
+GAP_COLOR = QColor(220, 38, 38, 110)
+
+# Orden explicito de capas: fondo, encima los tramos sin grabacion, encima
+# las lineas de minuto, y por ultimo el marcador de hora seleccionada.
 Z_BACKGROUND = 0
+Z_GAP = 0.5
 Z_MINUTE_TICK = 1
 Z_MARKER = 10
 
@@ -81,6 +88,8 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._minute_tick_items: list[QGraphicsLineItem] = []
         self._minute_label_items: list[QGraphicsLineItem | QGraphicsSimpleTextItem] = []
         self._minute_label_width: float | None = None
+        self._clips_by_channel: dict[int, list[Clip]] = {}
+        self._gap_items: list[QGraphicsRectItem] = []
         self._playhead_started_at: float | None = None
         self._playhead_started_time: datetime | None = None
 
@@ -154,9 +163,18 @@ class TimelineWidget(ZoomPanGraphicsView):
 
     def set_day(self, day: date) -> None:
         self._day = day
+        # Se limpia hasta que lleguen los clips del dia nuevo (main_window
+        # los pide en cuanto se selecciona el dia) -- sin esto se verian
+        # por un instante los huecos del dia anterior, que no tienen nada
+        # que ver con este.
+        self._clips_by_channel = {}
         self.stop_playhead()
         self.reset_zoom()
         self._redraw()
+
+    def set_clips(self, clips_by_channel: dict[int, list[Clip]]) -> None:
+        self._clips_by_channel = clips_by_channel
+        self._refresh_gaps()
 
     def _redraw(self) -> None:
         scene = self.scene()
@@ -164,6 +182,7 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._marker_item = None
         self._minute_tick_items = []
         self._minute_label_items = []
+        self._gap_items = []
 
         scene.setSceneRect(0, 0, SECONDS_PER_DAY, BODY_HEIGHT + AXIS_HEIGHT)
 
@@ -198,6 +217,84 @@ class TimelineWidget(ZoomPanGraphicsView):
 
         self._refresh_minute_ticks()
         self._refresh_minute_labels()
+        self._refresh_gaps()
+
+    def _refresh_gaps(self) -> None:
+        """Tramos del dia sin grabacion en NINGUN canal -- el complemento
+        de la union de los rangos de las 4 camaras. Se recalcula entero
+        cada vez (clips nuevos o dia distinto) en vez de tratar de
+        actualizar incrementalmente; con a lo mas unas pocas docenas de
+        clips por dia el costo es insignificante."""
+        scene = self.scene()
+        for item in self._gap_items:
+            scene.removeItem(item)
+        self._gap_items = []
+
+        if self._day is None:
+            return
+
+        pen = _cosmetic_pen(GAP_COLOR)
+        for start_seconds, end_seconds in self._gap_seconds():
+            rect = QGraphicsRectItem(start_seconds, AXIS_HEIGHT, end_seconds - start_seconds, BODY_HEIGHT)
+            rect.setBrush(QBrush(GAP_COLOR))
+            rect.setPen(pen)
+            rect.setZValue(Z_GAP)
+            scene.addItem(rect)
+            self._gap_items.append(rect)
+
+    def _gap_seconds(self) -> list[tuple[int, int]]:
+        """Complemento, dentro de [0, SECONDS_PER_DAY), de la union de
+        clips de todos los canales -- ver _covered_seconds()."""
+        gaps: list[tuple[int, int]] = []
+        cursor = 0
+        for start, end in self._covered_seconds():
+            if start > cursor:
+                gaps.append((cursor, start))
+            cursor = max(cursor, end)
+        if cursor < SECONDS_PER_DAY:
+            gaps.append((cursor, SECONDS_PER_DAY))
+        return gaps
+
+    def _covered_seconds(self) -> list[tuple[int, int]]:
+        """Rangos (en segundos desde medianoche) con grabacion en AL MENOS
+        un canal, fusionados y ordenados. Cada clip se recorta a los
+        limites del dia mostrado -- un clip de otro dia (no deberia pasar,
+        pero por las dudas) no debe ensuciar el resultado."""
+        if self._day is None:
+            return []
+
+        day_start = datetime.combine(self._day, dtime.min)
+        day_end = day_start + timedelta(days=1)
+
+        intervals: list[tuple[int, int]] = []
+        for clips in self._clips_by_channel.values():
+            for clip in clips:
+                start = max(clip.start, day_start)
+                end = min(clip.end, day_end)
+                if end <= start:
+                    continue
+                # Offset directo contra day_start, NO _seconds_since_midnight:
+                # un clip puede terminar exactamente a medianoche del dia
+                # SIGUIENTE (el ultimo bloque de un dia grabado completo, ver
+                # schedule.py del emulador) -- ese helper usa moment.date(),
+                # que en ese caso exacto da el dia siguiente y devuelve 0 en
+                # vez de SECONDS_PER_DAY, partiendo mal el ultimo tramo.
+                start_seconds = int((start - day_start).total_seconds())
+                end_seconds = int((end - day_start).total_seconds())
+                intervals.append((start_seconds, end_seconds))
+
+        if not intervals:
+            return []
+
+        intervals.sort()
+        merged = [intervals[0]]
+        for start, end in intervals[1:]:
+            last_start, last_end = merged[-1]
+            if start <= last_end:
+                merged[-1] = (last_start, max(last_end, end))
+            else:
+                merged.append((start, end))
+        return merged
 
     def _refresh_minute_ticks(self) -> None:
         """Lineas finas cada minuto, para orientarse mejor al hacer zoom --
