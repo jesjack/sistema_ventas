@@ -4,8 +4,9 @@ import re
 import threading
 import time
 import uuid
+from calendar import monthrange
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import cv2
@@ -64,6 +65,20 @@ DOWNLOAD_CHUNK_SECONDS = 45.0
 POST_DOWNLOAD_GAP = 1.0
 DOWNLOAD_DIR = Path(__file__).resolve().parent.parent / "runtime" / "camera_viewer_downloads"
 
+# El DVR limita cada llamada individual a findNextFile a 100 resultados,
+# SIN IMPORTAR el "count" que se le pida (se probo pidiendo count=200 y
+# devolvio 100) -- pero la sesion (el mismo "object" de findFile) si
+# recuerda hasta donde se quedo: la SIGUIENTE llamada a findNextFile trae
+# la pagina que sigue con normalidad, y solo cuando ya no queda nada
+# devuelve found=0. Verificado directamente contra el DVR real: sobre el
+# mismo object, una primera llamada trajo 100 resultados y una segunda
+# trajo 28 mas (incluyendo el dia que la primera llamada no alcanzaba).
+# El bug real no era un tope de sesion -- era comparar la respuesta contra
+# el "count" pedido (200) en vez de contra "vacio": como 100 < 200, el
+# bucle se detenia creyendo que ya no habia mas, cuando en realidad
+# faltaba pedir una pagina extra.
+MAX_RECORDED_DAYS_PAGES = 50
+
 
 @dataclass(frozen=True)
 class Clip:
@@ -83,6 +98,8 @@ class DVRClient(QObject):
     search_failed = Signal(str)
     frame_ready = Signal(int, object)   # channel, np.ndarray BGR
     channel_status = Signal(int, str)   # channel, texto de estado
+    recorded_days_ready = Signal(int, int, set)  # year, month, set[date]
+    recorded_days_failed = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -259,6 +276,76 @@ class DVRClient(QObject):
                 continue
             items.setdefault(int(match.group(1)), {})[match.group(2)] = match.group(3).strip()
         return items
+
+    # -- dias con grabacion (para pintarlos en el calendario) ---------------
+
+    def find_recorded_days(self, year: int, month: int) -> None:
+        threading.Thread(target=self._find_recorded_days_worker, args=(year, month), daemon=True).start()
+
+    def _find_recorded_days_worker(self, year: int, month: int) -> None:
+        _, last_day = monthrange(year, month)
+        start_dt = datetime(year, month, 1)
+        end_dt = datetime(year, month, last_day, 23, 59, 59)
+
+        try:
+            recorded_days: set[date] = set()
+            for channel in DEFAULT_CHANNELS:
+                recorded_days |= self._fetch_recorded_dates(channel, start_dt, end_dt)
+        except Exception as exc:
+            self.recorded_days_failed.emit(str(exc))
+            return
+
+        self.recorded_days_ready.emit(year, month, recorded_days)
+
+    def _fetch_recorded_dates(self, channel: int, start_dt: datetime, end_dt: datetime) -> set[date]:
+        """Como _fetch_clips, pero solo junta las fechas (sin horarios) de
+        inicio de cada clip, pidiendo pagina tras pagina de la MISMA sesion
+        hasta que una llamada a findNextFile venga vacia -- ver la nota en
+        MAX_RECORDED_DAYS_PAGES sobre por que no basta con revisar si la
+        pagina trajo menos de lo pedido."""
+        auth = HTTPDigestAuth(self.username, self.password)
+        base = f"http://{self.host}/cgi-bin/mediaFileFind.cgi"
+
+        response = requests.get(f"{base}?action=factory.create", auth=auth, timeout=15)
+        match = re.search(r"result=(\d+)", response.text)
+        if not match:
+            raise RuntimeError("No se pudo iniciar la sesion de busqueda en el DVR.")
+        object_id = match.group(1).strip()
+
+        dates: set[date] = set()
+        try:
+            start_query = start_dt.strftime("%Y-%m-%d%%20%H:%M:%S")
+            end_query = end_dt.strftime("%Y-%m-%d%%20%H:%M:%S")
+            requests.get(
+                f"{base}?action=findFile&object={object_id}&condition.Channel={channel}"
+                f"&condition.StartTime={start_query}&condition.EndTime={end_query}",
+                auth=auth,
+                timeout=15,
+            )
+
+            for _ in range(MAX_RECORDED_DAYS_PAGES):
+                results = requests.get(
+                    f"{base}?action=findNextFile&object={object_id}&count=200", auth=auth, timeout=15
+                )
+                items = self._parse_items(results.text)
+                if not items:
+                    # Unica señal confiable de que ya no queda nada: el DVR
+                    # limita cada llamada a 100 resultados sin importar el
+                    # "count" pedido, asi que "menos de lo pedido" NO
+                    # significa "es la ultima pagina" -- hay que seguir
+                    # pidiendo hasta que de verdad venga vacia.
+                    break
+                for item in items.values():
+                    start = item.get("StartTime")
+                    if start:
+                        dates.add(datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S").date())
+        finally:
+            try:
+                requests.get(f"{base}?action=destroy&object={object_id}", auth=auth, timeout=10)
+            except Exception:
+                pass
+
+        return dates
 
     # -- reproduccion -------------------------------------------------------
 

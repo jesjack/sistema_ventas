@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyleFactory
 
 from .main_window import MainWindow
 
@@ -46,10 +46,19 @@ QLineEdit {
     background-color: #111827; border: 1px solid #1F2937;
     padding: 4px 6px; border-radius: 3px;
 }
+QPushButton {
+    background-color: #111827; border: 1px solid #1F2937;
+    padding: 4px 6px; border-radius: 3px;
+}
+QPushButton:hover { background-color: #1F2937; }
+QPushButton:pressed { background-color: #0B1120; }
 QCalendarWidget QToolButton { color: #E5E7EB; background-color: #111827; }
 QCalendarWidget QAbstractItemView {
     background-color: #0B1120; color: #E5E7EB;
-    selection-background-color: #2563EB; selection-color: white;
+    /* La fila de nombres de dia (dom/lun/.../sab) se pinta con el rol de
+    paleta AlternateBase, no con el fondo normal -- sin esto queda blanca
+    aunque el resto de la grilla ya este oscura. */
+    alternate-background-color: #111827;
 }
 QCalendarWidget QWidget#qt_calendar_navigationbar { background-color: #111827; }
 """
@@ -62,6 +71,12 @@ def main() -> None:
         sys.exit(0)
 
     app = QApplication(sys.argv)
+    # Fuerza Fusion en vez del tema nativo del sistema (p. ej. la
+    # integracion GTK/GNOME): ese motor nativo pinta partes de widgets
+    # compuestos como QCalendarWidget a su manera (bordes, celda por celda)
+    # ignorando el CSS fino de mas abajo -- Fusion es el unico estilo de Qt
+    # que garantiza respetar el stylesheet tal cual esta escrito.
+    app.setStyle(QStyleFactory.create("Fusion"))
     app.setStyleSheet(DARK_STYLESHEET)
 
     window = MainWindow()

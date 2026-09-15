@@ -60,12 +60,21 @@ class MainWindow(QMainWindow):
 
     def _wire_signals(self) -> None:
         self.calendar.day_selected.connect(self._on_day_selected)
+        self.calendar.month_changed.connect(self._on_calendar_month_changed)
         self.timeline.time_selected.connect(self._on_time_selected)
 
         self.client.clips_ready.connect(self._on_clips_ready)
         self.client.search_failed.connect(self._on_search_failed)
         self.client.frame_ready.connect(self._on_frame_ready)
         self.client.channel_status.connect(self._on_channel_status)
+        self.client.recorded_days_ready.connect(self.calendar.set_recorded_days)
+        self.client.recorded_days_failed.connect(self._on_recorded_days_failed)
+
+        # El calendario ya calculo su mes inicial durante su propio
+        # __init__, antes de que esta conexion existiera -- esa primera
+        # emision de month_changed se perdio, asi que hay que pedir los
+        # dias con grabacion del mes ya mostrado una vez a mano aqui.
+        self._on_calendar_month_changed(*self.calendar.current_page())
 
         self.connection_panel.host_input.textChanged.connect(lambda text: setattr(self.client, "host", text))
         self.connection_panel.user_input.textChanged.connect(lambda text: setattr(self.client, "username", text))
@@ -90,6 +99,12 @@ class MainWindow(QMainWindow):
 
     def _on_search_failed(self, message: str) -> None:
         self.status_label.setText(f"Error al buscar grabaciones: {message}")
+
+    def _on_calendar_month_changed(self, year: int, month: int) -> None:
+        self.client.find_recorded_days(year, month)
+
+    def _on_recorded_days_failed(self, message: str) -> None:
+        self.status_label.setText(f"Error al consultar dias con grabacion: {message}")
 
     def _on_time_selected(self, selected_time: datetime) -> None:
         self.status_label.setText(f"Reproduciendo desde {selected_time:%Y-%m-%d %H:%M:%S}...")

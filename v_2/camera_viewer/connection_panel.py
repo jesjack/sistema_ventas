@@ -27,11 +27,16 @@ class ConnectionPanel(QWidget):
 
         self.live_toggle_button = QPushButton("Ver en vivo")
         self.live_toggle_button.clicked.connect(self.live_toggle_clicked)
+        # Como fila del form (con etiqueta vacia) en vez de widget aparte
+        # debajo: asi ocupa exactamente la columna de los campos, igual de
+        # ancho que ellos -- si se agrega suelto al layout de afuera, abarca
+        # todo el contenedor (incluida la columna de las etiquetas) y queda
+        # visiblemente mas ancho que los inputs.
+        form.addRow("", self.live_toggle_button)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(form)
-        layout.addWidget(self.live_toggle_button)
 
     def set_live_mode(self, is_live: bool) -> None:
         self.live_toggle_button.setText("Ver grabaciones" if is_live else "Ver en vivo")
