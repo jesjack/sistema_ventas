@@ -38,6 +38,13 @@ class SheetButtonBridge:
         self._buttons.append(button)
         self._handlers[button.action_id] = handler
 
+    def reset_buttons(self) -> None:
+        # Para poder rearmar la lista completa (ej. tras cerrar el panel de
+        # administracion) y llamar publish_layout() de nuevo, sin ir
+        # acumulando los botones de la corrida anterior en self._buttons.
+        self._buttons = []
+        self._handlers = {}
+
     def _handler_to_action_id(self, handler) -> str:
         handler_name = getattr(handler, "__name__", "")
         action_id = str(handler_name).strip().lower()

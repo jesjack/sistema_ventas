@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent
 LOGS_DIR = BASE_DIR / "logs"
 DEBUG_LOGS_DIR = LOGS_DIR / "debug"
 DEBUG_RUNS_TO_KEEP = 20
+ADMIN_RAIZ = "jesjack"
 
 
 class _Tee:
@@ -66,26 +67,9 @@ _activar_log_de_depuracion()
 import os
 from calc.calc_window_focus import es_libreoffice_calc_enfocado
 
-
-def dvr_app():
-    # camera_viewer (PySide6) corre en su propio interprete de Python (ver
-    # camera_viewer/launcher.py), nunca en el embebido de LibreOffice: en
-    # Linux ese Python viene integrado a la distro y es fragil instalarle
-    # paquetes (PySide6, opencv, numpy...). El boton solo lanza el
-    # subproceso y sigue de largo -- no espera a que la ventana se cierre,
-    # asi que no bloquea el resto de los botones de Calc mientras esta abierta.
-    from camera_viewer.launcher import launch_detached
-
-    try:
-        proceso = launch_detached(BASE_DIR)
-        print(f"[dvr_app] camera_viewer lanzado (pid={proceso.pid}); su log queda en logs/camera_viewer/")
-    except FileNotFoundError as exc:
-        print(f"[dvr_app] {exc}")
-
 print("Iniciando sistema de ventas...")
 
 import atexit
-import getpass
 import time
 
 from services.scanner_detector import clear_buffer, get_scanned_string, is_scan
@@ -113,46 +97,15 @@ from dialogs.precio_venta import solicitar_precio_venta
 from hardware.barcode_printer import imprimir_codigo_barras
 from hardware.ticket_printer import TicketPrinter
 from services.button_bridge import SheetButtonBridge
+from services.identidad import obtener_usuario_actual
 from services.modo_sistema import leer_modo, escribir_modo, solicitar_relanzamiento
 from services.seguimiento_sesion import SeguimientoSesionSistema
 from services.ventas_service import VentasService
+from services.botones_service import BotonesService
+from services.accion_registry import cargar_acciones
 from ui.catalogo_autocompletado import abrir_editor_catalogo_autocompletado
 from ui.autocompletado_producto import AutocompletadoProductoHandler
 install(show_locals=True) # Muestra las variables locales al fallar
-
-
-def obtener_usuario_actual():
-    for clave in ("SUDO_USER", "PKEXEC_UID"):
-        valor = os.environ.get(clave)
-        if not valor:
-            continue
-
-        if clave == "PKEXEC_UID":
-            try:
-                import pwd
-
-                valor = pwd.getpwuid(int(valor)).pw_name
-            except Exception:
-                continue
-
-        valor = str(valor).strip()
-        if valor and valor.lower() != "root":
-            return valor.lower()
-
-    for obtenedor in (getpass.getuser, os.getlogin):
-        try:
-            valor = obtenedor()
-            if valor:
-                return str(valor).strip().lower()
-        except Exception:
-            pass
-
-    for clave in ("USER", "USERNAME"):
-        valor = os.environ.get(clave)
-        if valor:
-            return str(valor).strip().lower()
-
-    return "desconocido"
 
 
 def obtener_documento_calc(desktop):
@@ -258,9 +211,16 @@ if __name__ == "__main__":
 
     else:
         table_manager = TableManager(uno_context=context)
+
+        # Se resuelve aqui afuera (no adentro de SeguimientoSesionSistema)
+        # para que la visibilidad de botones nunca dependa de que el hilo de
+        # latido de sesion arranque bien -- si eso falla mas abajo, igual
+        # queremos poder armar los botones de este usuario.
+        usuario_id, usuario_es_nuevo = table_manager.ventas_service.asegurar_usuario_sistema()
+
         seguimiento_sesion = None
         try:
-            seguimiento_sesion = SeguimientoSesionSistema(table_manager.ventas_service)
+            seguimiento_sesion = SeguimientoSesionSistema(table_manager.ventas_service, usuario_id)
         except Exception as exc:
             print(f"No se pudo iniciar el seguimiento de usuario: {exc}")
         else:
@@ -337,15 +297,9 @@ if __name__ == "__main__":
         )
         controlador.addKeyHandler(autocompletado_handler)
 
-        selling = False  # Variable para controlar la venta en curso
-        def sell():
-            global selling
-            selling = True
-            pasing = None
-            with sheet_admin.temporary_unlock():
-                pasing = table_manager.sell_items(cart, ventas)
-            selling = False
-            return pasing
+        # Mutada por acciones/cobrar_carrito.py (via ctx["selling"], que es
+        # este mismo global -- ctx es literalmente globals() de este modulo).
+        selling = False
 
         def on_scan():
             barcode = get_scanned_string(clear=True)
@@ -410,7 +364,7 @@ if __name__ == "__main__":
                     if not table_manager.add_item_to_cart(input, cart):
                         cobrar = True
                 if cobrar:
-                    if sell() == "code":
+                    if ACCIONES["cobrar_carrito"].ejecutar(globals()) == "code":
                         codigo = solicitar_codigo(context)
                         if codigo is not None:
                             print(f"Codigo ingresado: {codigo}")
@@ -431,54 +385,61 @@ if __name__ == "__main__":
             finally:
                 clear_buffer()
 
-        def clear_cart():
-            print("Limpiando carrito...")
-            with sheet_admin.temporary_unlock():
-                cart.clear()
-
-        def autocomplete():
-            abrir_editor_catalogo_autocompletado(
-                context,
-                ventas_service=table_manager.ventas_service,
-            )
-
-        def view_sales():
-            fecha = solicitar_fecha_ventas(context)
-            if fecha is None:
-                return
-
-            escribir_modo("ventas_dia", fecha=fecha)
-            solicitar_relanzamiento()
-            print(f"Cambiando a modo ver-ventas-del-dia para la fecha {fecha}...")
-            desktop.terminate()
-
-        def print_barcode():
-            datos = solicitar_datos_codigo_barras(context)
-            if datos is None:
-                return
-
-            codigo, copias = datos
-            try:
-                imprimir_codigo_barras(codigo, numero_copias=copias, density=1, en_segundo_plano=True)
-                mostrar_aviso_impresion(context)
-                print(f"Codigo de barras enviado a impresion: {codigo} ({copias} copias)")
-            except Exception as exc:
-                print(f"No se pudo imprimir el codigo de barras: {exc}")
-
-        admins = ["jesjack", "nancycastanedaaparicio", "nancy"]
         usuario_actual = obtener_usuario_actual()
+        botones_service = BotonesService()
+
+        if usuario_es_nuevo:
+            botones_service.otorgar_plantilla_a_usuario_nuevo(usuario_id)
+
+        # ACCIONES queda como global del modulo (estamos dentro de
+        # if __name__ == "__main__", no de una funcion) para que un archivo en
+        # acciones/ pueda invocar a otro por su nombre via globals()["ACCIONES"],
+        # sin duplicar codigo entre botones.
+        ACCIONES = cargar_acciones(BASE_DIR)
 
         bridge = SheetButtonBridge(context, documento, BASE_DIR)
-        bridge.add_button("COBRAR CARRITO", sell)
-        bridge.add_button("LIMPIAR CARRITO", clear_cart)
 
-        if usuario_actual in admins:
-            bridge.add_button("VER VENTAS", view_sales)
-            bridge.add_button("AUTOCOMPLETADO", autocomplete)
-            bridge.add_button("IMPRIMIR CODIGO DE BARRAS", print_barcode)
-            bridge.add_button("VER CAMARAS", dvr_app)
+        def construir_botones():
+            # Se puede volver a llamar (ej. al cerrar el panel de admin) para
+            # reflejar cambios de botones/visibilidad sin reiniciar el
+            # sistema: reset_buttons() limpia el estado en memoria y
+            # publish_layout() manda a Basic a borrar y recrear los controles
+            # en la hoja con la lista actualizada.
+            bridge.reset_buttons()
 
-        bridge.activate(clear_events=True)
+            # Se registra primero para que quede arriba del todo
+            # (SheetButtonBridge apila los botones en el mismo orden en que
+            # se registran).
+            if usuario_actual == ADMIN_RAIZ:
+                bridge.add_button("ADMINISTRAR ADMINS", abrir_panel_admin)
+
+            for boton_id, etiqueta, archivo_accion, _orden in botones_service.listar_botones_visibles_para(usuario_id):
+                modulo = ACCIONES.get(archivo_accion)
+                if modulo is None:
+                    print(f"[botones] '{etiqueta}' referencia '{archivo_accion}', que no existe en acciones/. Se omite.")
+                    continue
+
+                # SheetButtonBridge identifica cada boton por handler.__name__,
+                # y todas las lambdas comparten el mismo __name__
+                # ("<lambda>") -- sin esto, todos los botones dinamicos
+                # colisionan en un solo action_id y se pisan entre si en la hoja.
+                def manejador(modulo=modulo):
+                    return modulo.ejecutar(globals())
+                manejador.__name__ = f"boton_dinamico_{boton_id}"
+
+                bridge.add_button(etiqueta, manejador)
+
+            bridge.publish_layout()
+
+        def abrir_panel_admin():
+            from ui.panel_admin import abrir_panel_administracion
+
+            abrir_panel_administracion(context, botones_service, usuario_actual)
+            construir_botones()
+
+        bridge.prepare(clear_events=True)
+        construir_botones()
+        bridge.start()
         atexit.register(bridge.close)
 
         keyboard.add_hotkey("enter", on_enter)

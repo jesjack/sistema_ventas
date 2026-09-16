@@ -5,15 +5,18 @@ import time
 
 
 class SeguimientoSesionSistema:
-    def __init__(self, ventas_service, intervalo_segundos=60):
+    def __init__(self, ventas_service, usuario_id, intervalo_segundos=60):
+        # usuario_id ya viene resuelto por el llamador (via
+        # ventas_service.asegurar_usuario_sistema): la visibilidad de
+        # botones necesita ese id incluso si este seguimiento de sesion
+        # falla al construirse, asi que no se deriva aqui adentro.
         self.ventas_service = ventas_service
+        self.usuario_id = usuario_id
         self.intervalo_segundos = max(5, int(intervalo_segundos))
         self._detener = threading.Event()
         self._lock = threading.Lock()
         self._cerrado = False
 
-        datos_usuario = self.ventas_service.obtener_datos_usuario_sistema()
-        self.usuario_id = self.ventas_service.asegurar_usuario_sistema(datos_usuario)
         self.sesion_id = self.ventas_service.iniciar_sesion_sistema(self.usuario_id)
         self._hilo = threading.Thread(
             target=self._bucle_latido,

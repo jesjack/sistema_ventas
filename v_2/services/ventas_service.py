@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import getpass
 from datetime import datetime
 import platform
 import socket
@@ -9,6 +8,8 @@ import re
 import os
 import sqlite3
 from typing import Iterable
+
+from services.identidad import obtener_usuario_actual, USUARIO_PLANTILLA
 
 
 PREPOSICIONES_CATALOGO = {
@@ -41,7 +42,7 @@ class VentasService:
         return con
 
     def obtener_datos_usuario_sistema(self):
-        usuario = self._obtener_nombre_usuario_sistema()
+        usuario = obtener_usuario_actual()
         sistema_operativo = platform.system() or os.name
         version_sistema = platform.version() or platform.release() or ""
         nombre_equipo = socket.gethostname() or ""
@@ -59,17 +60,6 @@ class VentasService:
             "nombre_equipo": nombre_equipo,
             "dominio": dominio,
         }
-
-    def _obtener_nombre_usuario_sistema(self):
-        for obtenedor in (getpass.getuser, os.getlogin):
-            try:
-                nombre = obtenedor()
-                if nombre:
-                    return str(nombre)
-            except Exception:
-                pass
-
-        return str(os.environ.get("USERNAME") or os.environ.get("USER") or "desconocido")
 
     def _ensure_schema(self):
         with self._connect() as con:
@@ -162,6 +152,14 @@ class VentasService:
                 {"sistema_operativo", "version_sistema", "nombre_equipo", "dominio", "creado_en", "ultimo_acceso"},
             ):
                 self._migrar_usuarios_sistema(cur)
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO usuarios_sistema
+                    (nombre_usuario, sistema_operativo, version_sistema, nombre_equipo, dominio)
+                VALUES (?, 'sistema', '', '', '')
+                """,
+                (USUARIO_PLANTILLA,),
+            )
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sesiones_sistema (
@@ -368,35 +366,22 @@ class VentasService:
         return codigo_id
 
     def asegurar_usuario_sistema(self, datos_usuario=None):
+        # Devuelve (usuario_id, es_nuevo). "es_nuevo" es True si esta exacta
+        # combinacion nombre_usuario+sistema_operativo+equipo+dominio no
+        # existia todavia -- lo usa BotonesService para saber cuando copiarle
+        # a alguien la plantilla de botones (usuario __default__) una sola
+        # vez, en su primer login.
         datos = datos_usuario or self.obtener_datos_usuario_sistema()
         ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        nombre_usuario = str(datos.get("nombre_usuario", "desconocido"))
+        sistema_operativo = str(datos.get("sistema_operativo", "desconocido"))
+        version_sistema = str(datos.get("version_sistema", ""))
+        nombre_equipo = str(datos.get("nombre_equipo", ""))
+        dominio = str(datos.get("dominio", ""))
+
         with self._connect() as con:
             cur = con.cursor()
-            cur.execute(
-                """
-                INSERT INTO usuarios_sistema (
-                    nombre_usuario,
-                    sistema_operativo,
-                    version_sistema,
-                    nombre_equipo,
-                    dominio,
-                    ultimo_acceso
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(nombre_usuario, sistema_operativo, nombre_equipo, dominio)
-                DO UPDATE SET
-                    version_sistema = excluded.version_sistema,
-                    ultimo_acceso = excluded.ultimo_acceso
-                """,
-                (
-                    str(datos.get("nombre_usuario", "desconocido")),
-                    str(datos.get("sistema_operativo", "desconocido")),
-                    str(datos.get("version_sistema", "")),
-                    str(datos.get("nombre_equipo", "")),
-                    str(datos.get("dominio", "")),
-                    ahora,
-                ),
-            )
             cur.execute(
                 """
                 SELECT id
@@ -406,20 +391,31 @@ class VentasService:
                   AND COALESCE(nombre_equipo, '') = ?
                   AND COALESCE(dominio, '') = ?
                 """,
-                (
-                    str(datos.get("nombre_usuario", "desconocido")),
-                    str(datos.get("sistema_operativo", "desconocido")),
-                    str(datos.get("nombre_equipo", "")),
-                    str(datos.get("dominio", "")),
-                ),
+                (nombre_usuario, sistema_operativo, nombre_equipo, dominio),
             )
             fila = cur.fetchone()
+            es_nuevo = fila is None
+
+            if es_nuevo:
+                cur.execute(
+                    """
+                    INSERT INTO usuarios_sistema
+                        (nombre_usuario, sistema_operativo, version_sistema, nombre_equipo, dominio, ultimo_acceso)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (nombre_usuario, sistema_operativo, version_sistema, nombre_equipo, dominio, ahora),
+                )
+                usuario_id = cur.lastrowid
+            else:
+                usuario_id = int(fila[0])
+                cur.execute(
+                    "UPDATE usuarios_sistema SET version_sistema = ?, ultimo_acceso = ? WHERE id = ?",
+                    (version_sistema, ahora, usuario_id),
+                )
+
             con.commit()
 
-        if fila is None:
-            raise RuntimeError("No se pudo asegurar el usuario del sistema.")
-
-        return int(fila[0])
+        return usuario_id, es_nuevo
 
     def iniciar_sesion_sistema(self, usuario_id, fecha=None, hora=None, detalle=None, pid=None):
         ahora = datetime.now()
