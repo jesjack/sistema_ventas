@@ -39,7 +39,7 @@ RECONNECT_BACKOFF_MAX = 10.0
 MAX_CLIP_RETRIES = 3
 CLIP_RETRY_BACKOFF = 1.5
 
-# El DVR (Dahua XVR51xxHS-S2, ver camera_viewer/DVR_HARDWARE.md) es un
+# El DVR (Dahua XVR51xxHS-S2, ver camera_viewer/informes/DVR_HARDWARE.md) es un
 # equipo de gama baja: un solo SoC embebido generico y un puerto Ethernet
 # de 100 Mbps, sin nada en su ficha tecnica que sugiera que su firmware
 # esta pensado para atender varias negociaciones de conexion (RTSP+digest,
@@ -55,7 +55,7 @@ CLIP_RETRY_BACKOFF = 1.5
 CONNECTION_SERIALIZATION_GAP = 1.5
 
 # Grabaciones: cuantificado en cameras/dvr_stress_test.py y documentado en
-# camera_viewer/DVR_STRESS_TEST_RESULTS.md -- el DVR aguanta hasta 3
+# camera_viewer/informes/DVR_STRESS_TEST_RESULTS.md -- el DVR aguanta hasta 3
 # sesiones de loadfile.cgi a la vez indefinidamente, pero falla de forma
 # reproducible con 4 (sin importar el ancho de banda: se probo tanto a
 # maxima velocidad como pausado a ritmo real, con el mismo resultado). Por

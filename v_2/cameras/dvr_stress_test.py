@@ -1,6 +1,6 @@
 """Herramienta de diagnostico standalone para encontrar el limite real de
 concurrencia/persistencia que aguanta el DVR Dahua XVR51xxHS-S2 antes de
-dejar de responder (ver camera_viewer/DVR_HARDWARE.md para el contexto
+dejar de responder (ver camera_viewer/informes/DVR_HARDWARE.md para el contexto
 completo del problema que motivo esto).
 
 Deliberadamente NO depende de camera_viewer/dvr_client.py: la idea es medir
