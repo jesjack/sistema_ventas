@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPixmap
+from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QGraphicsPixmapItem, QLabel
 
 from .zoom_canvas import ZoomPanGraphicsView
@@ -23,11 +23,45 @@ class CameraPanel(ZoomPanGraphicsView):
     CORNER_STATUS_PREFIXES = ("Reproduciendo", "En vivo")
     CORNER_MARGIN = 6
 
+    # Cuanto esperar sin recibir un nuevo evento de zoom antes de reactivar
+    # el filtrado suave (ver wheelEvent) -- bastante corto para que se sienta
+    # inmediato al soltar la rueda, pero suficiente para no reactivarlo entre
+    # ticks sueltos de un scroll rapido.
+    ZOOM_SMOOTH_IDLE_MS = 150
+
     def __init__(self, channel: int, parent=None) -> None:
         super().__init__(parent)
         self.channel = channel
         self.setDragMode(self.DragMode.ScrollHandDrag)
         self._pixmap_item: QGraphicsPixmapItem | None = None
+
+        # A diferencia del timeline (que comparte esta misma base, ver
+        # zoom_canvas.ZoomPanGraphicsView), la escena de un panel de camara
+        # nunca dibuja nada vectorial -- solo un unico QGraphicsPixmapItem
+        # con el frame de video. Antialiasing suaviza bordes de formas
+        # dibujadas con QPainter, asi que aqui no aporta nada visible; se
+        # desactiva para no pagar su costo de render en cada frame/zoom.
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        # ScrollBarAsNeeded (heredado de la base) crea un ciclo real con
+        # _update_transform(): esta calcula la escala a partir del tamaño
+        # ACTUAL del viewport, asi que mostrar/ocultar una scrollbar cambia
+        # el viewport -> dispara resizeEvent -> recalcula la escala -> puede
+        # volver a cambiar si la scrollbar hace falta o no -> vuelve a
+        # disparar resizeEvent. Confirmado como causa real del freeze bajo
+        # zoom agresivo: un volcado de pila durante un congelamiento real
+        # (investigacion 2026-09-17) atrapo al hilo de la GUI exactamente
+        # dentro de resizeEvent -> _update_transform mientras el usuario NO
+        # estaba redimensionando la ventana. El paneo ya funciona por
+        # arrastre (ScrollHandDrag, ver arriba), igual que el timeline (que
+        # tampoco usa la scrollbar real, ver timeline_widget), asi que
+        # quitarla no le resta nada al usuario.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._zoom_smooth_idle_timer = QTimer(self)
+        self._zoom_smooth_idle_timer.setSingleShot(True)
+        self._zoom_smooth_idle_timer.timeout.connect(self._restore_smooth_pixmap_transform)
 
         self._status_label = QLabel("Sin reproduccion", self)
         self._status_label.setStyleSheet(
@@ -112,6 +146,23 @@ class CameraPanel(ZoomPanGraphicsView):
         x = (self.width() - self._status_label.width()) // 2
         y = (self.height() - self._status_label.height()) // 2
         self._status_label.move(max(0, x), max(0, y))
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        # SmoothPixmapTransform (interpolacion bilineal del frame al
+        # escalarlo) es lo que de verdad se nota visualmente en un panel de
+        # camara, pero tambien lo que mas cuesta repintar -- medido: ~8x mas
+        # lento que sin el (ver investigacion de 2026-09-17). Mientras el
+        # usuario esta moviendo la rueda activamente se prioriza fluidez
+        # (se apaga); en cuanto se detiene un rato corto (ZOOM_SMOOTH_IDLE_MS)
+        # se reactiva para que el frame en reposo se vea nitido.
+        if event.angleDelta().y() != 0:
+            self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+            self._zoom_smooth_idle_timer.start(self.ZOOM_SMOOTH_IDLE_MS)
+        super().wheelEvent(event)
+
+    def _restore_smooth_pixmap_transform(self) -> None:
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        self.viewport().update()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
