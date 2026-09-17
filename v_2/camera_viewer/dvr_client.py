@@ -68,6 +68,22 @@ CONNECTION_SERIALIZATION_GAP = 1.5
 MAX_CONCURRENT_RECORDING_DOWNLOADS = 2
 DOWNLOAD_CHUNK_SECONDS = 45.0
 POST_DOWNLOAD_GAP = 1.0
+
+# Backpressure de la REPRODUCCION de grabaciones (no de la descarga, que ya
+# tiene la suya arriba): a diferencia de vivo, aqui no se puede descartar
+# ningun frame para aliviar presion -- el usuario esta viendo contenido
+# grabado especifico, saltarse frames se notaria como huecos/tirones en el
+# video. Por eso el freno es "esperar", no "descartar" (ver
+# _live_channel_worker para el contraste). Permite hasta este numero de
+# frames ya EMITIDOS (encolados hacia Qt o ya en manos de la GUI) sin
+# confirmar consumidos todavia; el propio hilo, mientras espera un permiso
+# libre, sostiene un frame extra ya decodificado -- en total, como maximo
+# hay 3 frames de este canal vivos en memoria a la vez (1 en la GUI + 1 en
+# la cola de Qt + 1 esperando turno en el hilo), en vez de crecer sin limite
+# si la GUI se atrasa (causa confirmada del congelamiento del sistema, ver
+# investigacion de 2026-09-17).
+RECORDING_MAX_INFLIGHT_FRAMES = 2
+RECORDING_BACKPRESSURE_POLL = 0.2
 DOWNLOAD_DIR = Path(__file__).resolve().parent.parent / "runtime" / "camera_viewer_downloads"
 
 # El DVR limita cada llamada individual a findNextFile a 100 resultados,
@@ -132,6 +148,7 @@ class DVRClient(QObject):
         self.rtsp_port = int(os.environ.get("DVR_RTSP_PORT", RTSP_PORT))
 
         self._playback_stop_events: dict[int, threading.Event] = {}
+        self._playback_semaphores: dict[int, threading.Semaphore] = {}
         self._playback_threads: list[threading.Thread] = []
         self._playback_session = 0
 
@@ -381,14 +398,18 @@ class DVRClient(QObject):
         self._playback_session += 1
         session_id = self._playback_session
         self._playback_stop_events = {channel: threading.Event() for channel in DEFAULT_CHANNELS}
+        self._playback_semaphores = {
+            channel: threading.Semaphore(RECORDING_MAX_INFLIGHT_FRAMES) for channel in DEFAULT_CHANNELS
+        }
         self._playback_threads = []
 
         for channel in DEFAULT_CHANNELS:
             channel_clips = clips_by_channel.get(channel, [])
             stop_event = self._playback_stop_events[channel]
+            semaphore = self._playback_semaphores[channel]
             thread = threading.Thread(
                 target=self._play_channel_worker,
-                args=(session_id, channel, selected_time, channel_clips, stop_event),
+                args=(session_id, channel, selected_time, channel_clips, stop_event, semaphore),
                 daemon=True,
             )
             self._playback_threads.append(thread)
@@ -403,6 +424,7 @@ class DVRClient(QObject):
         for thread in self._playback_threads:
             thread.join(timeout=timeout)
         self._playback_stop_events = {}
+        self._playback_semaphores = {}
         self._playback_threads = []
 
     @staticmethod
@@ -431,6 +453,7 @@ class DVRClient(QObject):
         selected_time: datetime,
         clips: list[Clip],
         stop_event: threading.Event,
+        semaphore: threading.Semaphore,
     ) -> None:
         """Reproduce por bloques acotados (DOWNLOAD_CHUNK_SECONDS): cada
         bloque se descarga completo a un archivo local (_play_chunk) antes
@@ -450,7 +473,7 @@ class DVRClient(QObject):
                 return
 
             chunk_end = min(position + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
-            outcome = self._play_chunk(session_id, channel, position, chunk_end, stop_event)
+            outcome = self._play_chunk(session_id, channel, position, chunk_end, stop_event, semaphore)
 
             if outcome == "stopped":
                 return  # detenido por el usuario o cambio de sesion
@@ -491,6 +514,7 @@ class DVRClient(QObject):
         start: datetime,
         end: datetime,
         stop_event: threading.Event,
+        semaphore: threading.Semaphore,
     ) -> str:
         """Descarga [start, end) a un archivo local (turnandose con los
         demas canales, ver _download_recording_chunk) y lo reproduce desde
@@ -537,6 +561,19 @@ class DVRClient(QObject):
 
                     frames_read += 1
                     current_time = start + timedelta(seconds=frames_read * frame_interval)
+
+                    # Backpressure (ver RECORDING_MAX_INFLIGHT_FRAMES): a
+                    # diferencia de vivo, aqui NUNCA se descarta un frame ya
+                    # decodificado -- se espera a que la GUI confirme haber
+                    # consumido uno anterior (notify_recording_frame_consumed)
+                    # antes de emitir este. El poll corto es solo para poder
+                    # reaccionar a stop_event/cambio de sesion sin quedar
+                    # bloqueado para siempre si el usuario cancela mientras
+                    # se espera turno.
+                    while not semaphore.acquire(timeout=RECORDING_BACKPRESSURE_POLL):
+                        if stop_event.is_set() or session_id != self._playback_session:
+                            return "stopped"
+
                     self.recording_frame_ready.emit(channel, frame)
                     self.recording_channel_status.emit(channel, f"Reproduciendo {current_time:%H:%M:%S}")
                     next_frame_at = max(next_frame_at + frame_interval, time.monotonic())
@@ -596,6 +633,19 @@ class DVRClient(QObject):
         ready_event = self._live_ready_events.get(channel)
         if ready_event is not None:
             ready_event.set()
+
+    def notify_recording_frame_consumed(self, channel: int) -> None:
+        """Equivalente a notify_frame_consumed pero para el freno de
+        _play_chunk (ver RECORDING_MAX_INFLIGHT_FRAMES) -- libera un permiso
+        del semaforo de ese canal. Si llega tarde (p. ej. un frame que
+        quedo encolado en Qt de una sesion de reproduccion ya reemplazada)
+        libera un permiso de la sesion NUEVA en su lugar; se tolera porque
+        el semaforo no es Bounded (no lanza por exceso) y el peor caso es
+        una sesion nueva con un permiso de mas de forma pasajera, nunca un
+        crecimiento sin limite."""
+        semaphore = self._playback_semaphores.get(channel)
+        if semaphore is not None:
+            semaphore.release()
 
     def _live_channel_worker(
         self, channel: int, bare_host: str, stop_event: threading.Event, ready_event: threading.Event

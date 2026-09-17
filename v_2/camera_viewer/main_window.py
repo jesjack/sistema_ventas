@@ -130,6 +130,9 @@ class MainWindow(QMainWindow):
         panel = self.recordings_camera_grid.panels.get(channel)
         if panel is not None:
             panel.set_frame(frame)
+        # Libera el freno de backpressure de la reproduccion de grabaciones
+        # para este canal (ver DVRClient._play_chunk).
+        self.client.notify_recording_frame_consumed(channel)
 
     def _on_recording_channel_status(self, channel: int, text: str) -> None:
         panel = self.recordings_camera_grid.panels.get(channel)
