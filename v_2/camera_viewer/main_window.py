@@ -3,13 +3,22 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time as dtime, timedelta
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QStackedWidget, QVBoxLayout, QWidget
 
 from .calendar_panel import CalendarPanel
 from .camera_grid import CameraGrid
 from .connection_panel import ConnectionPanel
-from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient
+from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient, LIVE_TO_RECORDINGS_SETTLE
 from .timeline_widget import TimelineWidget
+
+
+RECORDINGS_HINT = "Selecciona una hora en la línea de tiempo"
+
+# Cada cuanto, en vista en vivo, se vuelven a pedir los clips de hoy (para que
+# los minutos recientes dejen de verse como "sin grabacion") y se re-sincroniza
+# el cursor con la hora real.
+LIVE_TOOLS_REFRESH_MS = 60_000
 
 
 class MainWindow(QMainWindow):
@@ -21,6 +30,15 @@ class MainWindow(QMainWindow):
         self.client = DVRClient(self)
         self._clips_by_channel: dict[int, list[Clip]] = {channel: [] for channel in DEFAULT_CHANNELS}
         self._is_live = False
+        # Mientras es False se descartan los frames/estados de grabaciones que
+        # lleguen (las señales entre hilos se encolan): un frame viejo que
+        # llegara justo despues de limpiar los paneles los dejaria
+        # "congelados" otra vez. Se activa al arrancar una reproduccion.
+        self._accept_recording_output = False
+
+        self._live_tools_timer = QTimer(self)
+        self._live_tools_timer.setInterval(LIVE_TOOLS_REFRESH_MS)
+        self._live_tools_timer.timeout.connect(self._refresh_live_tools)
 
         self._build_ui()
         self._wire_signals()
@@ -62,9 +80,7 @@ class MainWindow(QMainWindow):
         # separados cada uno tiene su propio estado de zoom/pan siempre
         # consistente con lo que en verdad esta mostrando.
         self.live_camera_grid = CameraGrid(DEFAULT_CHANNELS, initial_status="Conectando en vivo...")
-        self.recordings_camera_grid = CameraGrid(
-            DEFAULT_CHANNELS, initial_status="Selecciona una hora en la linea de tiempo"
-        )
+        self.recordings_camera_grid = CameraGrid(DEFAULT_CHANNELS, initial_status=RECORDINGS_HINT)
         self.camera_grid_stack = QStackedWidget()
         self.camera_grid_stack.addWidget(self.recordings_camera_grid)
         self.camera_grid_stack.addWidget(self.live_camera_grid)
@@ -105,13 +121,35 @@ class MainWindow(QMainWindow):
         self.connection_panel.live_toggle_clicked.connect(self._on_live_toggle)
 
     def _on_day_selected(self, day: date) -> None:
+        # Un clic del usuario en el calendario (o el arranque de la app). En
+        # vista en vivo equivale a pedir grabaciones de ese dia: se sale de
+        # vivo y, como en cualquier cambio de dia, los paneles vuelven al
+        # aviso de elegir una hora -- no se reproduce nada solo.
+        if self._is_live:
+            self._exit_live()
+        self._reset_recordings_view()
+        self._load_day(day)
+
+    def _load_day(self, day: date) -> None:
         self.timeline.set_day(day)
         self._clips_by_channel = {channel: [] for channel in DEFAULT_CHANNELS}
+        self._request_clips(day)
 
+    def _request_clips(self, day: date) -> None:
         start_dt = datetime.combine(day, dtime.min)
         end_dt = start_dt + timedelta(hours=23, minutes=59, seconds=59)
-        self.status_label.setText(f"Buscando grabaciones del {day}...")
+        if not self._is_live:
+            self.status_label.setText(f"Buscando grabaciones del {day}...")
         self.client.search(start_dt, end_dt)
+
+    def _reset_recordings_view(self) -> None:
+        """Detiene cualquier reproduccion y deja los paneles de grabaciones
+        como nuevos, con el aviso de elegir una hora."""
+        self.client.stop_playback()
+        self.timeline.stop_playhead()
+        self.timeline.clear_marker()
+        self._accept_recording_output = False
+        self.recordings_camera_grid.reset(RECORDINGS_HINT)
 
     def _on_clips_ready(self, clips: list[Clip]) -> None:
         self._clips_by_channel = {channel: [] for channel in DEFAULT_CHANNELS}
@@ -119,7 +157,8 @@ class MainWindow(QMainWindow):
             self._clips_by_channel.setdefault(clip.channel, []).append(clip)
 
         self.timeline.set_clips(self._clips_by_channel)
-        self.status_label.setText(f"Se encontraron {len(clips)} clips entre los 4 canales.")
+        if not self._is_live:
+            self.status_label.setText(f"Se encontraron {len(clips)} clips entre los 4 canales.")
 
     def _on_search_failed(self, message: str) -> None:
         self.status_label.setText(f"Error al buscar grabaciones: {message}")
@@ -131,11 +170,22 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Error al consultar dias con grabacion: {message}")
 
     def _on_time_selected(self, selected_time: datetime) -> None:
+        # En vista en vivo, un clic en la línea de tiempo equivale a "ver
+        # grabaciones desde ahí": se sale de vivo y se reproduce desde la hora
+        # elegida, tras una breve espera para que el DVR libere los RTSP.
+        start_delay = 0.0
+        if self._is_live:
+            self._exit_live()
+            start_delay = LIVE_TO_RECORDINGS_SETTLE
+
+        self._accept_recording_output = True
         self.status_label.setText(f"Reproduciendo desde {selected_time:%Y-%m-%d %H:%M:%S}...")
-        self.client.play_from(selected_time, self._clips_by_channel)
+        self.client.play_from(selected_time, self._clips_by_channel, start_delay=start_delay)
         self.timeline.start_playhead(selected_time)
 
     def _on_recording_frame_ready(self, channel: int, frame) -> None:
+        if not self._accept_recording_output:
+            return
         panel = self.recordings_camera_grid.panels.get(channel)
         if panel is not None:
             panel.set_frame(frame)
@@ -144,6 +194,8 @@ class MainWindow(QMainWindow):
         self.client.notify_recording_frame_consumed(channel)
 
     def _on_recording_channel_status(self, channel: int, text: str) -> None:
+        if not self._accept_recording_output:
+            return
         panel = self.recordings_camera_grid.panels.get(channel)
         if panel is not None:
             panel.set_status(text)
@@ -163,23 +215,61 @@ class MainWindow(QMainWindow):
 
     def _on_live_toggle(self) -> None:
         if self._is_live:
-            self.client.stop_live()
-            self._is_live = False
-            self.camera_grid_stack.setCurrentWidget(self.recordings_camera_grid)
-            self.connection_panel.set_live_mode(False)
-            self.calendar.setEnabled(True)
-            self.timeline.setEnabled(True)
-            self.status_label.setText("Modo grabaciones.")
+            self._exit_live()
         else:
-            self.timeline.stop_playhead()
-            self.client.stop_playback()
-            self._is_live = True
-            self.camera_grid_stack.setCurrentWidget(self.live_camera_grid)
-            self.connection_panel.set_live_mode(True)
-            self.calendar.setEnabled(False)
-            self.timeline.setEnabled(False)
-            self.client.start_live()
-            self.status_label.setText("Viendo en vivo.")
+            self._enter_live()
+
+    def _enter_live(self) -> None:
+        # Los paneles de grabaciones se limpian aqui (no al volver): así al
+        # regresar no queda ningun frame viejo "congelado".
+        self._reset_recordings_view()
+        self._is_live = True
+        self.camera_grid_stack.setCurrentWidget(self.live_camera_grid)
+        self.connection_panel.set_live_mode(True)
+        # Calendario y linea de tiempo NO se deshabilitan: acompañan a la
+        # vista en vivo (hoy seleccionado, cursor avanzando con la hora
+        # real) y un clic en cualquiera de los dos sale de vivo.
+        self._sync_tools_to_live_clock()
+        self._live_tools_timer.start()
+        self.client.start_live()
+        self.status_label.setText("Viendo en vivo.")
+
+    def _exit_live(self) -> None:
+        self._live_tools_timer.stop()
+        self.client.stop_live()
+        self._is_live = False
+        self.timeline.stop_playhead()
+        self.timeline.clear_marker()
+        self.camera_grid_stack.setCurrentWidget(self.recordings_camera_grid)
+        self.connection_panel.set_live_mode(False)
+        self.status_label.setText("Modo grabaciones.")
+
+    def _sync_tools_to_live_clock(self) -> None:
+        """Calendario en hoy y cursor de la línea de tiempo en la hora real
+        (los frames en vivo son "lo último disponible"), avanzando segundo a
+        segundo. Si la línea de tiempo ya muestra hoy solo se refrescan sus
+        clips, sin borrarla ni reiniciar su zoom."""
+        now = datetime.now()
+        today = now.date()
+        page_before = self.calendar.current_page()
+        self.calendar.select_date(today)
+        if self.timeline.day != today:
+            self._load_day(today)
+            # Si cambio de mes el calendario ya pidio sus dias con
+            # grabacion por su cuenta (month_changed); si no (p. ej. el
+            # cambio de dia a medianoche) hay que pedirlos aqui.
+            if self.calendar.current_page() == page_before:
+                self.client.find_recorded_days(today.year, today.month)
+        else:
+            self._request_clips(today)
+        self.timeline.start_playhead(now)
+
+    def _refresh_live_tools(self) -> None:
+        if not self._is_live:
+            self._live_tools_timer.stop()
+            return
+        # Tambien cubre el cambio de dia (medianoche) estando en vivo.
+        self._sync_tools_to_live_clock()
 
     def closeEvent(self, event) -> None:
         self.client.stop_playback()

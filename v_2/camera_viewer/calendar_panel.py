@@ -294,3 +294,13 @@ class CalendarPanel(QWidget):
 
     def selected_date(self) -> date:
         return self._calendar.selectedDate().toPython()
+
+    def select_date(self, day: date) -> None:
+        """Selecciona un dia por codigo (no por clic del usuario): a
+        diferencia de un clic, NO emite day_selected -- MainWindow lo usa
+        para sincronizar el calendario con la vista en vivo, y eso no debe
+        interpretarse como "el usuario eligio otro dia". Tambien refresca el
+        tope de fechas: setMaximumDate se fijo al construir y una app que
+        sigue abierta pasada la medianoche no dejaria elegir el dia nuevo."""
+        self._calendar.setMaximumDate(date.today())
+        self._calendar.setSelectedDate(QDate(day.year, day.month, day.day))

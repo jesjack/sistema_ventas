@@ -161,6 +161,16 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._update_transform()
         self._position_overlay_scrollbar()
 
+    @property
+    def day(self) -> date | None:
+        return self._day
+
+    def clear_marker(self) -> None:
+        """Quita la linea blanca (marcador/cursor) sin tocar nada mas."""
+        if self._marker_item is not None:
+            self.scene().removeItem(self._marker_item)
+            self._marker_item = None
+
     def set_day(self, day: date) -> None:
         self._day = day
         # Se limpia hasta que lleguen los clips del dia nuevo (main_window

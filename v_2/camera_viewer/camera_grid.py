@@ -41,6 +41,15 @@ class CameraGrid(QWidget):
 
         self._layout_as_grid()
 
+    def reset(self, status: str) -> None:
+        """Deja todos los paneles como recien creados: sin frame (ni el
+        zoom que traian) y con `status` como aviso -- sin esto, un panel
+        conserva el ultimo frame de una reproduccion que ya no existe y se
+        ve "congelado"."""
+        for panel in self.panels.values():
+            panel.clear_frame()
+            panel.set_status(status)
+
     def toggle_expand(self, channel: int) -> None:
         if self._expanded_channel == channel:
             self._expanded_channel = None

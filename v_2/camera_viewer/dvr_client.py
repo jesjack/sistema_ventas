@@ -90,6 +90,10 @@ RECORDING_BACKPRESSURE_POLL = 0.2
 # sesion de reproduccion.
 PLAYBACK_SPEED_LABEL = "x1"
 
+# Espera antes de la primera descarga al pasar de vivo a grabaciones (ver
+# play_from): mismo margen de cortesia que entre conexiones RTSP.
+LIVE_TO_RECORDINGS_SETTLE = CONNECTION_SERIALIZATION_GAP
+
 # El DVR limita cada llamada individual a findNextFile a 100 resultados,
 # SIN IMPORTAR el "count" que se le pida (se probo pidiendo count=200 y
 # devolvio 100) -- pero la sesion (el mismo "object" de findFile) si
@@ -325,7 +329,16 @@ class DVRClient(QObject):
 
     # -- reproduccion -------------------------------------------------------
 
-    def play_from(self, selected_time: datetime, clips_by_channel: dict[int, list[Clip]]) -> None:
+    def play_from(
+        self,
+        selected_time: datetime,
+        clips_by_channel: dict[int, list[Clip]],
+        start_delay: float = 0.0,
+    ) -> None:
+        """start_delay: espera (cancelable) antes de pedir la primera
+        descarga -- se usa al venir de la vista en vivo: los 4 RTSP recien
+        cerrados pueden tardar un instante en liberarse del lado del DVR, y
+        pedirle descargas de inmediato se parece a abrir sesiones de mas."""
         # Espera a que los hilos de la reproduccion anterior de verdad
         # terminen (join, no un sleep fijo) antes de arrancar los nuevos --
         # si no, un hilo viejo puede intentar emitir una señal justo cuando
@@ -347,7 +360,7 @@ class DVRClient(QObject):
             semaphore = self._playback_semaphores[channel]
             thread = threading.Thread(
                 target=self._play_channel_worker,
-                args=(session_id, channel, selected_time, channel_clips, stop_event, semaphore),
+                args=(session_id, channel, selected_time, channel_clips, stop_event, semaphore, start_delay),
                 daemon=True,
             )
             self._playback_threads.append(thread)
@@ -402,6 +415,7 @@ class DVRClient(QObject):
         clips: list[Clip],
         stop_event: threading.Event,
         semaphore: threading.Semaphore,
+        start_delay: float = 0.0,
     ) -> None:
         """Reproduce por bloques acotados (DOWNLOAD_CHUNK_SECONDS): cada
         bloque se descarga a un archivo local (a traves del servicio de
@@ -425,6 +439,10 @@ class DVRClient(QObject):
 
         position = max(clip.start, selected_time)
         retries_left = MAX_CLIP_RETRIES
+        if start_delay > 0:
+            self.recording_channel_status.emit(channel, f"Descargando {position:%H:%M:%S}...")
+            if stop_event.wait(start_delay):
+                return
         pending_future = None  # descarga ya en curso para el bloque que sigue, si aplica
         pending_start: datetime | None = None
 
