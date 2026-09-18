@@ -118,3 +118,26 @@ corte inmediato ante el primer fallo. Descargas de 15 s, canales rotando:
   control (pausa 1.0 s, o sea NO por quitar la pausa) y otra 1.92 s en la fase sin
   pausa; en total 1 de 108 comprobaciones pasó de 3 s. Posible relación con el
   arranque/lectura del disco del DVR al servir una descarga; no confirmado.
+
+## Adenda 2 (2026-09-18): ¿cuántas sesiones de consultas ligeras aguanta el DVR?
+
+Consultas `magicBox.cgi?action=getSystemInfo` (con autenticación nueva en cada
+petición) y objetos de búsqueda `mediaFileFind` abiertos a la vez, en
+escalera, con corte ante la primera anomalía. Cada nivel duró 8 s.
+
+| Situación | Resultado |
+|---|---|
+| Solo consultas ligeras, 1 a **12** simultáneas | Sin fallos. El DVR atiende ~19-22 peticiones/s en total; más simultaneidad solo alarga la latencia (mediana 76 ms con 1, 456 ms con 12) |
+| Hasta **6** objetos de búsqueda abiertos a la vez, sin descargas | Sin fallos |
+| **2 descargas de clips corriendo** + 1 o 2 consultas ligeras | Sin fallos; las descargas no se afectan (37 trabajos, 0 fallos, primer byte 0.31 s). Las consultas van ~3-4 veces más lentas (11/s → 3/s con 1 hilo) |
+| 2 descargas + **3** consultas ligeras a la vez | **ReadTimeout (6 s) en 3 de 44 peticiones** |
+| 2 descargas + **3** objetos de búsqueda abiertos | **ReadTimeout** |
+
+- El límite de 3 sesiones NO aplica a las consultas ligeras por sí solas
+  (12 sin problema), pero **sí interactúan con las descargas**: con 2
+  descargas activas caben 2 consultas ligeras más (4 en total) y con 3 (5 en
+  total) aparecen tiempos de espera agotados, sin que el DVR se caiga (siguió
+  respondiendo en 0.07 s al terminar).
+- Cada nivel se corrió una sola vez; el hallazgo en 5 sesiones totales salió en
+  dos pruebas distintas (consultas y objetos de búsqueda), pero conviene repetirlo
+  antes de tomarlo como límite firme.
