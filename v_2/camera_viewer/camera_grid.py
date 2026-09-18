@@ -12,7 +12,12 @@ class CameraGrid(QWidget):
     que ocupe todo el espacio (spaneando las 2x2 celdas del layout) y
     oculta los otros 3; doble clic de nuevo regresa la grilla normal."""
 
-    def __init__(self, channels: tuple[int, ...] = DEFAULT_CHANNELS, parent=None) -> None:
+    def __init__(
+        self,
+        channels: tuple[int, ...] = DEFAULT_CHANNELS,
+        initial_status: str = "Sin reproduccion",
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._layout = QGridLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -30,7 +35,7 @@ class CameraGrid(QWidget):
         self._expanded_channel: int | None = None
 
         for index, channel in enumerate(channels):
-            panel = CameraPanel(channel, self)
+            panel = CameraPanel(channel, initial_status, self)
             panel.double_clicked.connect(lambda ch=channel: self.toggle_expand(ch))
             self.panels[channel] = panel
 

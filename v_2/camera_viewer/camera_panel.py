@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import numpy as np
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPixmap, QWheelEvent
@@ -18,10 +20,24 @@ class CameraPanel(ZoomPanGraphicsView):
 
     # El label de estado va al centro del panel cuando el mensaje requiere
     # atencion (sin video que mostrar, conectando, descargando, reintentos,
-    # errores); se queda en la esquina solo durante reproduccion activa
-    # normal, para no taparle el frame al usuario.
-    CORNER_STATUS_PREFIXES = ("Reproduciendo", "En vivo")
+    # errores, o la invitacion a elegir una hora); se queda en la esquina
+    # solo durante reproduccion normal, para no taparle el frame al
+    # usuario: la velocidad de reproduccion ("x1", "x2"...) o "En vivo".
+    SPEED_STATUS_PATTERN = re.compile(r"x\d+(\.\d+)?")
+    LIVE_STATUS_PREFIX = "En vivo"
     CORNER_MARGIN = 6
+
+    LABEL_STYLE = (
+        "background-color: rgba(15, 23, 42, 170); color: #E5E7EB;"
+        " padding: 2px 6px; border-radius: 3px; font-weight: bold;"
+    )
+    # "En vivo" en rojo con letras blancas, como el indicador clasico de
+    # transmision en directo -- se distingue de un vistazo de la
+    # reproduccion de grabaciones.
+    LIVE_LABEL_STYLE = (
+        "background-color: #DC2626; color: #FFFFFF;"
+        " padding: 2px 6px; border-radius: 3px; font-weight: bold;"
+    )
 
     # Cuanto esperar sin recibir un nuevo evento de zoom antes de reactivar
     # el filtrado suave (ver wheelEvent) -- bastante corto para que se sienta
@@ -29,7 +45,7 @@ class CameraPanel(ZoomPanGraphicsView):
     # ticks sueltos de un scroll rapido.
     ZOOM_SMOOTH_IDLE_MS = 150
 
-    def __init__(self, channel: int, parent=None) -> None:
+    def __init__(self, channel: int, initial_status: str = "Sin reproduccion", parent=None) -> None:
         super().__init__(parent)
         self.channel = channel
         self.setDragMode(self.DragMode.ScrollHandDrag)
@@ -63,11 +79,9 @@ class CameraPanel(ZoomPanGraphicsView):
         self._zoom_smooth_idle_timer.setSingleShot(True)
         self._zoom_smooth_idle_timer.timeout.connect(self._restore_smooth_pixmap_transform)
 
-        self._status_label = QLabel("Sin reproduccion", self)
-        self._status_label.setStyleSheet(
-            "background-color: rgba(15, 23, 42, 170); color: #E5E7EB;"
-            " padding: 2px 6px; border-radius: 3px; font-weight: bold;"
-        )
+        self._status_label = QLabel(initial_status, self)
+        self._status_label.setStyleSheet(self.LABEL_STYLE)
+        self._status_is_live = False
         self._status_label.adjustSize()
         self._reposition_status_label()
 
@@ -133,13 +147,27 @@ class CameraPanel(ZoomPanGraphicsView):
         self.reset_zoom()
 
     def set_status(self, text: str) -> None:
+        # El modo en vivo lo llama por cada frame (~30/s por canal): sin
+        # este corte, cada llamada repintaba el estilo y recalculaba el
+        # tamaño de un label que no cambio.
+        if text == self._status_label.text():
+            return
+
+        is_live = text.startswith(self.LIVE_STATUS_PREFIX)
+        if is_live != self._status_is_live:
+            self._status_is_live = is_live
+            self._status_label.setStyleSheet(self.LIVE_LABEL_STYLE if is_live else self.LABEL_STYLE)
+
         self._status_label.setText(text)
         self._status_label.adjustSize()
         self._reposition_status_label()
         self._status_label.raise_()
 
+    def _is_corner_status(self, text: str) -> bool:
+        return text.startswith(self.LIVE_STATUS_PREFIX) or bool(self.SPEED_STATUS_PATTERN.fullmatch(text))
+
     def _reposition_status_label(self) -> None:
-        if self._status_label.text().startswith(self.CORNER_STATUS_PREFIXES):
+        if self._is_corner_status(self._status_label.text()):
             self._status_label.move(self.CORNER_MARGIN, self.CORNER_MARGIN)
             return
 

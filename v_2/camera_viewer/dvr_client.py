@@ -84,6 +84,12 @@ DOWNLOAD_CHUNK_SECONDS = 45.0
 RECORDING_MAX_INFLIGHT_FRAMES = 2
 RECORDING_BACKPRESSURE_POLL = 0.2
 
+# Etiqueta de velocidad de reproduccion que se muestra en la esquina de cada
+# panel mientras se reproduce una grabacion (ver CameraPanel). Por ahora solo
+# existe x1; cuando haya controles de velocidad esto pasa a ser un valor por
+# sesion de reproduccion.
+PLAYBACK_SPEED_LABEL = "x1"
+
 # El DVR limita cada llamada individual a findNextFile a 100 resultados,
 # SIN IMPORTAR el "count" que se le pida (se probo pidiendo count=200 y
 # devolvio 100) -- pero la sesion (el mismo "object" de findFile) si
@@ -551,6 +557,11 @@ class DVRClient(QObject):
 
             if on_playback_start is not None:
                 on_playback_start()
+            # La velocidad no cambia frame a frame -- se avisa una sola vez
+            # por bloque (antes se re-emitia la hora en CADA frame, ~30/s por
+            # canal, para una etiqueta que repetia la hora que el DVR ya
+            # imprime en el video).
+            self.recording_channel_status.emit(channel, PLAYBACK_SPEED_LABEL)
 
             fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
             if fps <= 0 or not fps < float("inf"):
@@ -573,7 +584,6 @@ class DVRClient(QObject):
                         break
 
                     frames_read += 1
-                    current_time = start + timedelta(seconds=frames_read * frame_interval)
 
                     # Backpressure (ver RECORDING_MAX_INFLIGHT_FRAMES): a
                     # diferencia de vivo, aqui NUNCA se descarta un frame ya
@@ -588,7 +598,6 @@ class DVRClient(QObject):
                             return "stopped"
 
                     self.recording_frame_ready.emit(channel, frame)
-                    self.recording_channel_status.emit(channel, f"Reproduciendo {current_time:%H:%M:%S}")
                     next_frame_at = max(next_frame_at + frame_interval, time.monotonic())
             finally:
                 capture.release()

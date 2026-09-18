@@ -25,6 +25,13 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._wire_signals()
 
+        # El calendario ya arranca con hoy seleccionado (pastilla azul) pero
+        # eso no dispara day_selected -- se pide a mano lo mismo que haria un
+        # clic en ese dia, para que la linea de tiempo y sus clips ya esten
+        # listos al abrir la app. Solo se selecciona y se cargan los clips:
+        # no arranca reproduccion sola, el usuario elige la hora.
+        self._on_day_selected(self.calendar.selected_date())
+
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -54,8 +61,10 @@ class MainWindow(QMainWindow):
         # incorrecto hasta que se le hacia zoom a mano de nuevo. Con grids
         # separados cada uno tiene su propio estado de zoom/pan siempre
         # consistente con lo que en verdad esta mostrando.
-        self.live_camera_grid = CameraGrid(DEFAULT_CHANNELS)
-        self.recordings_camera_grid = CameraGrid(DEFAULT_CHANNELS)
+        self.live_camera_grid = CameraGrid(DEFAULT_CHANNELS, initial_status="Conectando en vivo...")
+        self.recordings_camera_grid = CameraGrid(
+            DEFAULT_CHANNELS, initial_status="Selecciona una hora en la linea de tiempo"
+        )
         self.camera_grid_stack = QStackedWidget()
         self.camera_grid_stack.addWidget(self.recordings_camera_grid)
         self.camera_grid_stack.addWidget(self.live_camera_grid)
