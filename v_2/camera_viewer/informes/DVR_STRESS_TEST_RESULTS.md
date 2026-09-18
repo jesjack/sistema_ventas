@@ -92,3 +92,29 @@ Validado con una prueba real contra el DVR de producción (búsqueda de
 clips reales, reproducción por bloques con transición de canal y de clip,
 cambio a vivo a mitad de sesión): cero errores, cero reintentos, DVR sano
 antes y después, sin archivos temporales residuales.
+
+## Adenda (2026-09-18): ¿es necesaria la pausa de cortesía entre descargas?
+
+La pausa de 1 s entre sesiones (`POST_DOWNLOAD_GAP`) ya estaba puesta en todas
+las pruebas de arriba, así que nunca se había medido si hace falta. Se probó
+contra el DVR real, por fases, con una comprobación de salud cada segundo y
+corte inmediato ante el primer fallo. Descargas de 15 s, canales rotando:
+
+| Fase | Trabajos | Fallos | Primer byte (media / máx) |
+|---|---|---|---|
+| 1 hilo, pausa 1.0 s (control) | 10 | 0 | 0.16 s / 0.20 s |
+| 1 hilo, pausa 0.25 s | 15 | 0 | 0.15 s / 0.25 s |
+| 1 hilo, **pausa 0** (seguidas) | 30 | 0 | 0.16 s / 0.32 s |
+| 1 hilo, cortando a los 0.3 s y **reabriendo al instante** | 20 | 0 | 0.17 s / 0.35 s |
+| 2 hilos, pausa 0, con un candado que evita que ambos cierren/abran a la vez (pico contado ≤ 3) | 30 | 0 | 0.21 s / 0.52 s |
+
+- Sin pausa, el DVR no tardó más en dar el primer byte ni falló: no hay señal de que
+  necesite tiempo para liberar una sesión cerrada, ni de que un corte brusco deje
+  sesiones "fantasma".
+- **Sin probar** (a propósito): 2 hilos que cierran y abren exactamente al mismo
+  tiempo con pausa 0, donde el pico contado podría llegar a 4 (la zona que
+  reproduce el fallo) si existiera algún retardo de liberación.
+- Anomalía sin explicar: una consulta de salud tardó 4.29 s durante la fase de
+  control (pausa 1.0 s, o sea NO por quitar la pausa) y otra 1.92 s en la fase sin
+  pausa; en total 1 de 108 comprobaciones pasó de 3 s. Posible relación con el
+  arranque/lectura del disco del DVR al servir una descarga; no confirmado.
