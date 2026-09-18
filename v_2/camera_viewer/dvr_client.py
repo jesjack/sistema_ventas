@@ -116,6 +116,22 @@ class Clip:
     end: datetime
 
 
+class _Prefetch:
+    """Pre-descarga en curso del bloque que sigue al que se esta
+    reproduciendo (posiblemente ya en el clip siguiente, incluso del dia
+    siguiente). `helper` es el hilo que la prepara cuando primero hay que
+    pedir los clips del dia siguiente al DVR."""
+
+    def __init__(self) -> None:
+        self.future = None
+        self.start: datetime | None = None
+        self.helper: threading.Thread | None = None
+
+    def clear(self) -> None:
+        self.future = None
+        self.start = None
+
+
 class DVRClient(QObject):
     """Encapsula el protocolo HTTP-CGI del DVR (mediaFileFind.cgi para
     buscar clips, loadfile.cgi para reproducirlos) -- el mismo que ya se
@@ -138,6 +154,10 @@ class DVRClient(QObject):
     recording_channel_status = Signal(int, str)   # channel, texto de estado
     live_frame_ready = Signal(int, object)
     live_channel_status = Signal(int, str)
+    # La reproduccion cruzo la medianoche hacia el dia siguiente (lo emite
+    # cada canal al pasar; MainWindow ignora los repetidos) -- para que el
+    # calendario y la linea de tiempo sigan a la reproduccion.
+    playback_day_changed = Signal(object)  # date
     recorded_days_ready = Signal(int, int, set)  # year, month, set[date]
     recorded_days_failed = Signal(str)
 
@@ -168,6 +188,11 @@ class DVRClient(QObject):
         # CONNECTION_SERIALIZATION_GAP arriba. Nunca hay mas de un intento
         # de conexion RTSP nuevo en curso al DVR.
         self._connection_gate = threading.Lock()
+
+        # Las consultas de clips del dia siguiente (ver _prefetch_next_day)
+        # las hacen los 4 canales casi a la vez -- se turnan en vez de
+        # abrirle al DVR 4 sesiones de mediaFileFind simultaneas.
+        self._next_day_fetch_gate = threading.Lock()
 
         # Las descargas NO se manejan aqui adentro -- ver download_client.py
         # y download_service.py: pasan por un servicio separado (un solo
@@ -407,6 +432,57 @@ class DVRClient(QObject):
                 return clip
         return None
 
+    @staticmethod
+    def _next_chunk_target(clips: list[Clip], clip: Clip, chunk_end: datetime) -> tuple[datetime, datetime] | None:
+        """Rango [inicio, fin) del bloque que sigue a uno que termina en
+        chunk_end: el siguiente del mismo clip, o -- si este era el ultimo --
+        el primero del clip adyacente (si ya se conoce)."""
+        if chunk_end < clip.end:
+            return chunk_end, min(chunk_end + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
+        adjacent = DVRClient._find_adjacent_clip(clips, clip.end)
+        if adjacent is None:
+            return None
+        return adjacent.start, min(adjacent.start + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), adjacent.end)
+
+    def _submit_prefetch(
+        self, channel: int, target: tuple[datetime, datetime], stop_event: threading.Event, prefetch: _Prefetch
+    ) -> None:
+        prefetch.start = target[0]
+        prefetch.future = download_client.submit(
+            self.host, self.username, self.password, channel, target[0], target[1],
+            DownloadPriority.PREFETCH, stop_event,
+        )
+
+    def _prefetch_next_day(
+        self,
+        channel: int,
+        clips: list[Clip],
+        clip: Clip,
+        stop_event: threading.Event,
+        prefetch: _Prefetch,
+    ) -> None:
+        """Corre en un hilo aparte mientras se reproduce el ULTIMO clip de un
+        dia (que termina a medianoche): los clips que conoce el hilo de
+        reproduccion son solo los del dia elegido, asi que sin esto al llegar
+        a las 00:00 no habia "clip siguiente" y salia "Fin de segmento". Pide
+        los clips del dia que sigue y, con ellos, pre-descarga su primer
+        bloque igual que en cualquier otra frontera de clip."""
+        day_start = clip.end
+        day_end = day_start + timedelta(hours=23, minutes=59, seconds=59)
+        with self._next_day_fetch_gate:
+            if stop_event.is_set():
+                return
+            try:
+                fetched = self._fetch_clips(channel, day_start, day_end)
+            except Exception:
+                return  # sin clips del dia siguiente: se cae al "Fin de segmento" de siempre
+        if stop_event.is_set():
+            return
+        clips.extend(fetched)
+        target = self._next_chunk_target(clips, clip, clip.end)
+        if target is not None:
+            self._submit_prefetch(channel, target, stop_event, prefetch)
+
     def _play_channel_worker(
         self,
         session_id: int,
@@ -437,14 +513,19 @@ class DVRClient(QObject):
             self.recording_channel_status.emit(channel, "Sin grabacion en esa hora")
             return
 
+        # Copia propia: _prefetch_next_day le agrega los clips del dia
+        # siguiente, y la lista original es la misma que usa MainWindow para
+        # dibujar la linea de tiempo del dia elegido.
+        clips = list(clips)
+
         position = max(clip.start, selected_time)
         retries_left = MAX_CLIP_RETRIES
         if start_delay > 0:
             self.recording_channel_status.emit(channel, f"Descargando {position:%H:%M:%S}...")
             if stop_event.wait(start_delay):
                 return
-        pending_future = None  # descarga ya en curso para el bloque que sigue, si aplica
-        pending_start: datetime | None = None
+        prefetch = _Prefetch()
+        next_day_requested = False
 
         while True:
             if stop_event.is_set() or session_id != self._playback_session:
@@ -452,38 +533,47 @@ class DVRClient(QObject):
 
             chunk_end = min(position + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
 
-            if pending_future is not None and pending_start == position:
-                future = pending_future
+            if prefetch.future is not None and prefetch.start == position:
+                future = prefetch.future
             else:
                 self.recording_channel_status.emit(channel, f"Descargando {position:%H:%M:%S}...")
                 future = download_client.submit(
                     self.host, self.username, self.password, channel, position, chunk_end,
                     DownloadPriority.INTERACTIVE, stop_event,
                 )
-            pending_future = None
-            pending_start = None
+            prefetch.clear()
 
-            # Adelanta el SIGUIENTE bloque (si lo hay dentro de este mismo
-            # clip) mientras el actual se reproduce -- ver docstring. Se
-            # pide recien cuando el bloque actual YA se descargo y empieza a
+            # Adelanta el bloque que SIGUE mientras el actual se reproduce
+            # -- dentro del mismo clip, o el primero del clip adyacente si
+            # este es el ultimo (sin esto, cada cruce de un clip a otro,
+            # p. ej. de una hora a la siguiente, pausaba 2-3 s los canales
+            # esperando una descarga; medido 2026-09-18). Se pide recien
+            # cuando el bloque actual YA se descargo y empieza a
             # reproducirse (on_playback_start), no junto con el pedido del
             # actual: si se mandaran casi al mismo tiempo (desde hilos
             # distintos, orden de llegada no determinista) la pre-descarga
             # podia llegar primero a una cola vacia y ocupar un hilo
             # descargador, dejando el bloque que el usuario SI esta
             # esperando detras de ella (medido: hasta ~10s de espera).
-            next_start = chunk_end
-            next_end = min(next_start + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
-            has_next = next_start < clip.end
-
             def on_playback_start() -> None:
-                nonlocal pending_future, pending_start
-                if has_next:
-                    pending_future = download_client.submit(
-                        self.host, self.username, self.password, channel, next_start, next_end,
-                        DownloadPriority.PREFETCH, stop_event,
+                nonlocal next_day_requested
+                target = self._next_chunk_target(clips, clip, chunk_end)
+                if target is not None:
+                    self._submit_prefetch(channel, target, stop_event, prefetch)
+                elif (
+                    chunk_end >= clip.end
+                    and clip.end.time() == datetime.min.time()
+                    and not next_day_requested
+                ):
+                    # Ultimo clip del dia y no se conoce nada despues: puede
+                    # que la grabacion siga en el dia siguiente.
+                    next_day_requested = True
+                    prefetch.helper = threading.Thread(
+                        target=self._prefetch_next_day,
+                        args=(channel, clips, clip, stop_event, prefetch),
+                        daemon=True,
                     )
-                    pending_start = next_start
+                    prefetch.helper.start()
 
             outcome = self._play_chunk(
                 session_id, channel, position, chunk_end, stop_event, semaphore, future, on_playback_start
@@ -498,8 +588,7 @@ class DVRClient(QObject):
                 # ya en curso (el plan de bloques ya no aplica igual tras
                 # un reintento) y reintenta el MISMO bloque antes de darlo
                 # por perdido.
-                pending_future = None
-                pending_start = None
+                prefetch.clear()
                 if retries_left <= 0:
                     self.recording_channel_status.emit(channel, "No se pudo reproducir la grabacion")
                     return
@@ -517,15 +606,21 @@ class DVRClient(QObject):
             if position < clip.end:
                 continue  # sigue el mismo clip, siguiente bloque (ya pre-descargandose)
 
-            # Fin del clip -- la pre-descarga (si la hubo) era para dentro
-            # del mismo clip y ya no aplica a un clip adyacente distinto.
-            pending_future = None
-            pending_start = None
-
             next_clip = self._find_adjacent_clip(clips, clip.end)
+            if next_clip is None and prefetch.helper is not None:
+                # Todavia se estaban pidiendo los clips del dia siguiente
+                # (normalmente ya termino: tuvo todo el ultimo clip).
+                while prefetch.helper.is_alive():
+                    if stop_event.is_set() or session_id != self._playback_session:
+                        return
+                    prefetch.helper.join(0.2)
+                next_clip = self._find_adjacent_clip(clips, clip.end)
             if next_clip is None:
                 self.recording_channel_status.emit(channel, "Fin de segmento")
                 return
+
+            if next_clip.start.date() != clip.start.date():
+                self.playback_day_changed.emit(next_clip.start.date())
 
             clip = next_clip
             position = clip.start

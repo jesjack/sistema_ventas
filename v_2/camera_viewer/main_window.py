@@ -108,6 +108,7 @@ class MainWindow(QMainWindow):
         self.client.live_channel_status.connect(self._on_live_channel_status)
         self.client.recorded_days_ready.connect(self.calendar.set_recorded_days)
         self.client.recorded_days_failed.connect(self._on_recorded_days_failed)
+        self.client.playback_day_changed.connect(self._on_playback_day_changed)
 
         # El calendario ya calculo su mes inicial durante su propio
         # __init__, antes de que esta conexion existiera -- esa primera
@@ -182,6 +183,17 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Reproduciendo desde {selected_time:%Y-%m-%d %H:%M:%S}...")
         self.client.play_from(selected_time, self._clips_by_channel, start_delay=start_delay)
         self.timeline.start_playhead(selected_time)
+
+    def _on_playback_day_changed(self, day: date) -> None:
+        """La reproduccion cruzo la medianoche: calendario y linea de tiempo
+        pasan al dia nuevo y el cursor sigue desde las 00:00:00, sin tocar los
+        paneles (la reproduccion no se interrumpe). Lo emite cada canal al
+        cruzar, asi que los repetidos se ignoran."""
+        if self._is_live or self.timeline.day == day:
+            return
+        self.calendar.select_date(day)
+        self._load_day(day)
+        self.timeline.start_playhead(datetime.combine(day, dtime.min))
 
     def _on_recording_frame_ready(self, channel: int, frame) -> None:
         if not self._accept_recording_output:
