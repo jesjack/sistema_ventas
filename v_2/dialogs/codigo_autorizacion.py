@@ -5,7 +5,7 @@ def _crear_dialogo_codigo(uno_context, error_texto=""):
     dialog_model.PositionY = 80
     dialog_model.Width = 210
     dialog_model.Height = 94
-    dialog_model.Title = "Ingreso de codigo"
+    dialog_model.Title = "Ingreso de código"
 
     instruccion_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
     instruccion_model.Name = "lblInstruccion"
@@ -13,7 +13,7 @@ def _crear_dialogo_codigo(uno_context, error_texto=""):
     instruccion_model.PositionY = 8
     instruccion_model.Width = 194
     instruccion_model.Height = 12
-    instruccion_model.Label = "Ingrese el codigo solicitado."
+    instruccion_model.Label = "Ingrese el código solicitado."
     dialog_model.insertByName("lblInstruccion", instruccion_model)
 
     codigo_label_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
@@ -22,7 +22,7 @@ def _crear_dialogo_codigo(uno_context, error_texto=""):
     codigo_label_model.PositionY = 28
     codigo_label_model.Width = 76
     codigo_label_model.Height = 12
-    codigo_label_model.Label = "Codigo:"
+    codigo_label_model.Label = "Código:"
     dialog_model.insertByName("lblCodigo", codigo_label_model)
 
     edit_model = dialog_model.createInstance("com.sun.star.awt.UnoControlEditModel")
@@ -87,7 +87,7 @@ def solicitar_codigo(uno_context):
             dialog.dispose()
 
         if not codigo:
-            error_texto = "El codigo no puede estar vacio."
+            error_texto = "El código no puede estar vacío."
             continue
 
         return codigo

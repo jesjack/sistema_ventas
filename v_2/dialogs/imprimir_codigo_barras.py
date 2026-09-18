@@ -17,7 +17,7 @@ def _crear_dialogo(uno_context, error_texto=""):
     dialog_model.PositionY = 80
     dialog_model.Width = 250
     dialog_model.Height = 124
-    dialog_model.Title = "Imprimir codigo de barras"
+    dialog_model.Title = "Imprimir código de barras"
 
     instruccion_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
     instruccion_model.Name = "lblInstruccion"
@@ -25,7 +25,7 @@ def _crear_dialogo(uno_context, error_texto=""):
     instruccion_model.PositionY = 8
     instruccion_model.Width = 234
     instruccion_model.Height = 12
-    instruccion_model.Label = "Ingrese el texto del codigo y la cantidad de copias."
+    instruccion_model.Label = "Ingrese el texto del código y la cantidad de copias."
     dialog_model.insertByName("lblInstruccion", instruccion_model)
 
     texto_label_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
@@ -34,7 +34,7 @@ def _crear_dialogo(uno_context, error_texto=""):
     texto_label_model.PositionY = 26
     texto_label_model.Width = 92
     texto_label_model.Height = 12
-    texto_label_model.Label = "Codigo (max 6):"
+    texto_label_model.Label = "Código (máx. 6):"
     dialog_model.insertByName("lblTexto", texto_label_model)
 
     texto_model = dialog_model.createInstance("com.sun.star.awt.UnoControlEditModel")
@@ -121,17 +121,17 @@ def solicitar_datos_codigo_barras(uno_context):
 
         codigo = str(texto).strip()
         if not codigo:
-            error_texto = "El codigo no puede estar vacio."
+            error_texto = "El código no puede estar vacío."
             continue
 
         if len(codigo) > 6:
-            error_texto = "El codigo debe tener como maximo 6 caracteres."
+            error_texto = "El código debe tener como máximo 6 caracteres."
             continue
 
         try:
             copias = _parse_copias(copias_texto)
         except (TypeError, ValueError):
-            error_texto = "La cantidad de copias debe ser un numero entero entre 1 y 5."
+            error_texto = "La cantidad de copias debe ser un número entero entre 1 y 5."
             continue
 
         if copias < 1 or copias > 5:

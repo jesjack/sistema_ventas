@@ -5,7 +5,7 @@ def _crear_dialogo_aviso(uno_context, mensaje):
     dialog_model.PositionY = 80
     dialog_model.Width = 250
     dialog_model.Height = 92
-    dialog_model.Title = "Impresion en curso"
+    dialog_model.Title = "Impresión en curso"
 
     texto_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
     texto_model.Name = "lblMensaje"

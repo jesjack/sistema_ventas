@@ -69,7 +69,7 @@ class EditorCatalogoAutocompletado:
         model.PositionY = 70
         model.Width = 260
         model.Height = 190
-        model.Title = "Catalogo de autocompletado"
+        model.Title = "Catálogo de autocompletado"
 
         lbl = model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
         lbl.Name = "lblTitulo"
@@ -196,7 +196,7 @@ class EditorCatalogoAutocompletado:
         self._list_control.getModel().StringItemList = nombres
 
         if not self._rows:
-            self._set_status("Catalogo vacio. Agrega tu primer producto.")
+            self._set_status("Catálogo vacío. Agrega tu primer producto.")
             return
 
         indice = 0
@@ -252,7 +252,7 @@ class EditorCatalogoAutocompletado:
                 self._recargar_lista(seleccionar_id=prod_id)
                 self._set_status("Producto actualizado.")
             else:
-                self._set_status("No se encontro el producto seleccionado.")
+                self._set_status("No se encontró el producto seleccionado.")
         except sqlite3.IntegrityError:
             self._set_status("Ya existe otro producto con ese nombre.")
         except Exception as exc:
@@ -272,7 +272,7 @@ class EditorCatalogoAutocompletado:
                 self._edit_control.getModel().Text = ""
                 self._set_status(f"Producto eliminado: {nombre}")
             else:
-                self._set_status("No se encontro el producto seleccionado.")
+                self._set_status("No se encontró el producto seleccionado.")
         except Exception as exc:
             self._set_status(f"Error al eliminar: {exc}")
 

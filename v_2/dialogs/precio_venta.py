@@ -27,7 +27,7 @@ def _crear_dialogo(uno_context, producto, codigo_barras, error_texto=""):
     dialog_model.PositionY = 80
     dialog_model.Width = 230
     dialog_model.Height = 124
-    dialog_model.Title = "Registrar codigo de barras"
+    dialog_model.Title = "Registrar código de barras"
 
     instruccion_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
     instruccion_model.Name = "lblInstruccion"
@@ -53,7 +53,7 @@ def _crear_dialogo(uno_context, producto, codigo_barras, error_texto=""):
     codigo_model.PositionY = 40
     codigo_model.Width = 214
     codigo_model.Height = 12
-    codigo_model.Label = f"Codigo: {codigo_barras}"
+    codigo_model.Label = f"Código: {codigo_barras}"
     dialog_model.insertByName("lblCodigo", codigo_model)
 
     precio_label_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
@@ -129,7 +129,7 @@ def solicitar_precio_venta(uno_context, producto, codigo_barras):
         try:
             precio = _parse_monto(texto)
         except ValueError:
-            error_texto = "El precio ingresado no es valido. Usa solo numeros y, si hace falta, coma o punto decimal."
+            error_texto = "El precio ingresado no es válido. Usa solo números y, si hace falta, coma o punto decimal."
             continue
 
         if precio is None or precio < 0:

@@ -148,9 +148,9 @@ def _solicitar_datos_boton(uno_context, titulo, etiqueta_inicial="", archivo_ini
         edit_model.Text = str(valor_inicial)
         dialog_model.insertByName(f"txt{nombre}", edit_model)
 
-    _agregar_campo("Etiqueta", 8, "Etiqueta (texto del boton):", etiqueta_inicial)
+    _agregar_campo("Etiqueta", 8, "Etiqueta (texto del botón):", etiqueta_inicial)
     _agregar_campo("Archivo", 46, "Archivo en acciones/ (sin .py):", archivo_inicial)
-    _agregar_campo("Orden", 84, "Orden (numero, menor = primero):", orden_inicial)
+    _agregar_campo("Orden", 84, "Orden (número, menor = primero):", orden_inicial)
 
     _agregar_boton_ok_cancel(dialog_model, 116, etiqueta_ok="Guardar")
 
@@ -308,7 +308,7 @@ def _pantalla_botones(uno_context, botones_service, ventas_service):
             return
 
         if valor == "crear":
-            datos = _solicitar_datos_boton(uno_context, "Nuevo boton")
+            datos = _solicitar_datos_boton(uno_context, "Nuevo botón")
             if datos is None:
                 continue
             etiqueta, archivo, orden = datos
@@ -319,13 +319,13 @@ def _pantalla_botones(uno_context, botones_service, ventas_service):
             continue
 
         if seleccion < 0 or seleccion >= len(botones):
-            _mostrar_mensaje(uno_context, "Seleccione un boton de la lista primero.")
+            _mostrar_mensaje(uno_context, "Seleccione un botón de la lista primero.")
             continue
 
         boton_id, _nombre_interno, etiqueta, archivo, orden, activo = botones[seleccion]
 
         if valor == "editar":
-            datos = _solicitar_datos_boton(uno_context, "Editar boton", etiqueta, archivo, orden)
+            datos = _solicitar_datos_boton(uno_context, "Editar botón", etiqueta, archivo, orden)
             if datos is None:
                 continue
             nueva_etiqueta, nuevo_archivo, nuevo_orden = datos

@@ -28,7 +28,7 @@ def _crear_dialogo(uno_context, error_texto=""):
     instruccion_model.PositionY = 8
     instruccion_model.Width = 214
     instruccion_model.Height = 12
-    instruccion_model.Label = "Ingrese la fecha en formato DD-MM-YYYY."
+    instruccion_model.Label = "Ingrese la fecha en formato DD-MM-AAAA."
     dialog_model.insertByName("lblInstruccion", instruccion_model)
 
     fecha_label_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
@@ -105,4 +105,4 @@ def solicitar_fecha_ventas(uno_context):
         try:
             return _normalizar_fecha(texto)
         except ValueError:
-            error_texto = "La fecha no es valida. Use el formato dd-mm-aaaa."
+            error_texto = "La fecha no es válida. Use el formato dd-mm-aaaa."

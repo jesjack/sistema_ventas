@@ -118,7 +118,7 @@ def solicitar_monto_cliente(total, uno_context):
         try:
             recibido = _parse_monto(texto)
         except ValueError:
-            error_texto = "El monto ingresado no es valido. Usa solo numeros y, si hace falta, coma o punto decimal."
+            error_texto = "El monto ingresado no es válido. Usa solo números y, si hace falta, coma o punto decimal."
             continue
 
         if recibido < total:

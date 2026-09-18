@@ -115,7 +115,7 @@ class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
         lbl.PositionY = 8
         lbl.Width = 244
         lbl.Height = 12
-        lbl.Label = "Seleccione un producto del catalogo."
+        lbl.Label = "Seleccione un producto del catálogo."
         dialog_model.insertByName("lblInstruccion", lbl)
 
         list_model = dialog_model.createInstance("com.sun.star.awt.UnoControlListBoxModel")
