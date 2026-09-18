@@ -116,8 +116,8 @@ def launch_detached(base_dir: Path) -> subprocess.Popen:
     python_executable = find_python_executable(base_dir)
     if python_executable is None:
         raise FileNotFoundError(
-            f"No se encontro el entorno Python de camera_viewer en {base_dir / '.venv'}. "
-            "Crealo con 'python -m venv .venv' y 'pip install -r requirements.txt' "
+            f"No se encontró el entorno Python de camera_viewer en {base_dir / '.venv'}. "
+            "Créalo con 'python -m venv .venv' y 'pip install -r requirements.txt' "
             "dentro de esa carpeta antes de usar VER CAMARAS."
         )
 

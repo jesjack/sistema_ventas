@@ -197,7 +197,7 @@ class TimelineWidget(ZoomPanGraphicsView):
         scene.setSceneRect(0, 0, SECONDS_PER_DAY, BODY_HEIGHT + AXIS_HEIGHT)
 
         if self._day is None:
-            text = scene.addSimpleText("Selecciona un dia en el calendario para ver sus grabaciones.")
+            text = scene.addSimpleText("Selecciona un día en el calendario para ver sus grabaciones.")
             text.setBrush(QBrush(QColor("#94A3B8")))
             text.setFlag(text.GraphicsItemFlag.ItemIgnoresTransformations, True)
             text.setPos(12, 12)

@@ -15,7 +15,7 @@ class CameraGrid(QWidget):
     def __init__(
         self,
         channels: tuple[int, ...] = DEFAULT_CHANNELS,
-        initial_status: str = "Sin reproduccion",
+        initial_status: str = "Sin reproducción",
         parent=None,
     ) -> None:
         super().__init__(parent)

@@ -45,7 +45,7 @@ def main() -> None:
     # concurrentes, el DVR sin poder servirlas todas). Ver singleton_lock.py.
     lock_file = acquire_singleton_lock(LOCK_PATH)
     if lock_file is None:
-        print("camera_viewer ya esta corriendo; no se abre una instancia nueva.")
+        print("camera_viewer ya está corriendo; no se abre una instancia nueva.")
         sys.exit(0)
 
     app = QApplication(sys.argv)

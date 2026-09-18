@@ -45,7 +45,7 @@ class CameraPanel(ZoomPanGraphicsView):
     # ticks sueltos de un scroll rapido.
     ZOOM_SMOOTH_IDLE_MS = 150
 
-    def __init__(self, channel: int, initial_status: str = "Sin reproduccion", parent=None) -> None:
+    def __init__(self, channel: int, initial_status: str = "Sin reproducción", parent=None) -> None:
         super().__init__(parent)
         self.channel = channel
         self.setDragMode(self.DragMode.ScrollHandDrag)

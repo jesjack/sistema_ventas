@@ -237,7 +237,7 @@ class DVRClient(QObject):
         response = requests.get(f"{base}?action=factory.create", auth=auth, timeout=15)
         match = re.search(r"result=(\d+)", response.text)
         if not match:
-            raise RuntimeError("No se pudo iniciar la sesion de busqueda en el DVR.")
+            raise RuntimeError("No se pudo iniciar la sesión de búsqueda en el DVR.")
         object_id = match.group(1).strip()
 
         clips: list[Clip] = []
@@ -314,7 +314,7 @@ class DVRClient(QObject):
         response = requests.get(f"{base}?action=factory.create", auth=auth, timeout=15)
         match = re.search(r"result=(\d+)", response.text)
         if not match:
-            raise RuntimeError("No se pudo iniciar la sesion de busqueda en el DVR.")
+            raise RuntimeError("No se pudo iniciar la sesión de búsqueda en el DVR.")
         object_id = match.group(1).strip()
 
         dates: set[date] = set()
@@ -510,7 +510,7 @@ class DVRClient(QObject):
         el siguiente ya deberia estar listo (o casi) en disco."""
         clip = self._find_clip(clips, selected_time)
         if clip is None:
-            self.recording_channel_status.emit(channel, "Sin grabacion en esa hora")
+            self.recording_channel_status.emit(channel, "Sin grabación en esa hora")
             return
 
         # Copia propia: _prefetch_next_day le agrega los clips del dia
@@ -590,7 +590,7 @@ class DVRClient(QObject):
                 # por perdido.
                 prefetch.clear()
                 if retries_left <= 0:
-                    self.recording_channel_status.emit(channel, "No se pudo reproducir la grabacion")
+                    self.recording_channel_status.emit(channel, "No se pudo reproducir la grabación")
                     return
                 retries_left -= 1
                 self.recording_channel_status.emit(
@@ -809,7 +809,7 @@ class DVRClient(QObject):
                     while not stop_event.is_set():
                         success, frame = capture.read()
                         if not success:
-                            self.live_channel_status.emit(channel, "Se perdio la conexion en vivo")
+                            self.live_channel_status.emit(channel, "Se perdió la conexión en vivo")
                             break
 
                         # Backpressure: frame_ready cruza al hilo de la GUI

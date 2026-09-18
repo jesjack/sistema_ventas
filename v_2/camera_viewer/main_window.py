@@ -24,7 +24,7 @@ LIVE_TOOLS_REFRESH_MS = 60_000
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Visor de camaras")
+        self.setWindowTitle("Visor de cámaras")
         self.resize(1400, 900)
 
         self.client = DVRClient(self)
@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
         self.timeline = TimelineWidget()
         root_layout.addWidget(self.timeline)
 
-        self.status_label = QLabel("Selecciona un dia en el calendario.")
+        self.status_label = QLabel("Selecciona un día en el calendario.")
         root_layout.addWidget(self.status_label)
 
     def _wire_signals(self) -> None:
@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         self.client.find_recorded_days(year, month)
 
     def _on_recorded_days_failed(self, message: str) -> None:
-        self.status_label.setText(f"Error al consultar dias con grabacion: {message}")
+        self.status_label.setText(f"Error al consultar días con grabación: {message}")
 
     def _on_time_selected(self, selected_time: datetime) -> None:
         # En vista en vivo, un clic en la línea de tiempo equivale a "ver
