@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time as dtime, timedelta
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QStackedWidget, QVBoxLayout, QWidget
 
 from .calendar_panel import CalendarPanel
@@ -35,6 +36,12 @@ class MainWindow(QMainWindow):
         # llegara justo despues de limpiar los paneles los dejaria
         # "congelados" otra vez. Se activa al arrancar una reproduccion.
         self._accept_recording_output = False
+
+        # F11 alterna pantalla completa (entrar Y salir con la misma tecla).
+        # La app siempre abre en ventana normal: no se recuerda el estado.
+        self._maximized_before_fullscreen = False
+        self._fullscreen_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F11), self)
+        self._fullscreen_shortcut.activated.connect(self._toggle_fullscreen)
 
         self._live_tools_timer = QTimer(self)
         self._live_tools_timer.setInterval(LIVE_TOOLS_REFRESH_MS)
@@ -120,6 +127,18 @@ class MainWindow(QMainWindow):
         self.connection_panel.user_input.textChanged.connect(lambda text: setattr(self.client, "username", text))
         self.connection_panel.password_input.textChanged.connect(lambda text: setattr(self.client, "password", text))
         self.connection_panel.live_toggle_clicked.connect(self._on_live_toggle)
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            # Vuelve a como estaba antes: maximizada o normal (showNormal()
+            # a secas dejaria en "normal" una ventana que estaba maximizada).
+            if self._maximized_before_fullscreen:
+                self.showMaximized()
+            else:
+                self.showNormal()
+        else:
+            self._maximized_before_fullscreen = self.isMaximized()
+            self.showFullScreen()
 
     def _on_day_selected(self, day: date) -> None:
         # Un clic del usuario en el calendario (o el arranque de la app). En
