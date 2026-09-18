@@ -558,7 +558,7 @@ def _construir_tabla_ventas_dia(doc, number_formats, fecha):
     ventas_styles = build_role_styles(doc, "Ventas", "#50c878", number_formats)
 
     ventas_x, ventas_region = build_table_region(
-        x=6, base_y=1, columnas=VENTAS_COLS, title=f"VENTAS DEL DIA {fecha}",
+        x=6, base_y=1, columnas=VENTAS_COLS, title=f"VENTAS DEL DÍA {fecha}",
         header_color="#50c878", placeholder="NO HAY VENTAS REALIZADAS",
         show_total=True, total_label_span=2, rows=ventas_rows, styles=ventas_styles,
     )

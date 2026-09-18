@@ -430,7 +430,7 @@ class TicketPrinter:
         self.append_byte(10)
         self.append_byte(10)
 
-        self.add_print("Calle Pinosuarez No. 412")
+        self.add_print("Calle Pino Suárez No. 412")
         self.add_print("Zona Centro C.P. 34000")
         self.add_print("RFC: CAAN8209242C0")
         self.add_print("")
