@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import os
 import threading
-from multiprocessing.connection import Listener
+from multiprocessing import AuthenticationError
+from multiprocessing.connection import Listener, answer_challenge, deliver_challenge
 from pathlib import Path
 
 from .download_manager import RecordingDownloadManager
@@ -50,6 +51,13 @@ SERVICE_LOCK_PATH = Path(__file__).resolve().parent.parent / "runtime" / "downlo
 # que RECORDING_BACKPRESSURE_POLL en dvr_client.py.
 POLL_INTERVAL = 0.2
 
+# Listener() usa backlog=1 por defecto: con una rafaga de pedidos (4 canales
+# x [bloque actual + pre-descarga], y cada uno abriendo mas de una conexion)
+# el kernel descarta los SYN que no caben y el cliente los reintenta a
+# 1s/3s/7s/... -- se midio que 16 conexiones simultaneas ni siquiera
+# terminaban en 60s (2026-09-18, "algunas grabaciones nunca se descargan").
+LISTEN_BACKLOG = 128
+
 
 def get_or_create_authkey() -> bytes:
     AUTHKEY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -69,20 +77,28 @@ def get_or_create_authkey() -> bytes:
 def serve_forever(manager: RecordingDownloadManager | None = None) -> None:
     """Punto de entrada del servicio -- bloquea para siempre aceptando
     conexiones. Quien lo llama ya deberia ser dueño de SERVICE_LOCK_PATH
-    (ver download_client.py._ensure_service_running); este modulo no
+    (ver download_client.py._ensure_service_reachable); este modulo no
     vuelve a chequear el candado, solo sirve."""
     manager = manager or RecordingDownloadManager()
     authkey = get_or_create_authkey()
-    listener = Listener(SERVICE_ADDRESS, authkey=authkey)
+    # Sin authkey aqui a proposito: Listener.accept() haria el saludo de
+    # autenticacion EN LINEA, dentro de este mismo hilo -- un solo cliente
+    # lento o muerto a medio saludo dejaria sin atender a todos los demas.
+    # El saludo (identico al que haria accept()) se hace en el hilo propio
+    # de cada conexion, ver _handle_connection.
+    listener = Listener(SERVICE_ADDRESS, backlog=LISTEN_BACKLOG)
     while True:
         conn = listener.accept()
-        threading.Thread(target=_handle_connection, args=(manager, conn), daemon=True).start()
+        threading.Thread(target=_handle_connection, args=(manager, conn, authkey), daemon=True).start()
 
 
-def _handle_connection(manager: RecordingDownloadManager, conn) -> None:
+def _handle_connection(manager: RecordingDownloadManager, conn, authkey: bytes) -> None:
     try:
+        deliver_challenge(conn, authkey)
+        answer_challenge(conn, authkey)
         request = conn.recv()
-    except (EOFError, OSError):
+    except (AuthenticationError, EOFError, OSError):
+        conn.close()
         return
 
     try:

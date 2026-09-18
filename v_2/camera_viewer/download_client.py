@@ -16,6 +16,7 @@ import threading
 import time
 from concurrent.futures import Future
 from datetime import datetime
+from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client
 from pathlib import Path
 
@@ -38,8 +39,22 @@ def _try_connect():
     try:
         authkey = download_service.get_or_create_authkey()
         return Client(download_service.SERVICE_ADDRESS, authkey=authkey)
-    except (ConnectionRefusedError, FileNotFoundError, OSError):
+    except (ConnectionRefusedError, FileNotFoundError, OSError, AuthenticationError, EOFError):
         return None
+
+
+def _connect_or_bootstrap():
+    """Camino rapido: conectar directo, sin candados ni sondeos previos --
+    antes cada pedido abria una conexion de sondeo bajo un candado global
+    ANTES de la real, duplicando las conexiones y serializando a todos los
+    hilos (con backlog=1 en el servidor eso se traducia en esperas de
+    varios segundos, o "nunca", ver download_service.LISTEN_BACKLOG). Solo
+    si la conexion falla se recurre a _ensure_service_reachable()."""
+    conn = _try_connect()
+    if conn is not None:
+        return conn
+    _ensure_service_reachable()
+    return _try_connect()
 
 
 def _ensure_service_reachable() -> None:
@@ -125,8 +140,10 @@ def _run_request(
     stop_event: threading.Event,
     future: Future,
 ) -> None:
-    _ensure_service_reachable()
-    conn = _try_connect()
+    if stop_event.is_set():
+        future.set_result(None)
+        return
+    conn = _connect_or_bootstrap()
     if conn is None:
         future.set_result(None)
         return
@@ -170,8 +187,7 @@ def drain() -> None:
     """Bloquea hasta que el servicio confirme que no hay ninguna descarga
     en curso -- ver DVRClient.start_live. Si no hay servicio corriendo (ni
     nada que drenar), no hay nada que hacer."""
-    _ensure_service_reachable()
-    conn = _try_connect()
+    conn = _connect_or_bootstrap()
     if conn is None:
         return
     try:

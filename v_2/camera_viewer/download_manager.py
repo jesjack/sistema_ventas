@@ -49,9 +49,13 @@ class DownloadPriority:
     medio descargar (los bloques son chicos y rapidos de bajar, no vale la
     pena la complejidad de un download reanudable todavia)."""
 
-    INTERACTIVE = 0  # el usuario esta viendo esto ahora mismo (reproduccion, incluida su pre-descarga)
-    EXPORT = 1  # el usuario pidio conservar un clip y esta esperando
-    BACKGROUND = 2  # guardado/compresion oportunista; nunca debe robarle turno a lo de arriba
+    INTERACTIVE = 0  # alguien esta ESPERANDO este bloque ahora mismo (p. ej. el primer bloque tras elegir una hora)
+    PREFETCH = 1  # pre-descarga del siguiente bloque de un canal que ya esta reproduciendo -- nunca debe
+    #               ganarle el turno a un INTERACTIVE: sin esta distincion, 4 canales pre-descargando a la vez
+    #               (misma prioridad, cola FIFO, solo 2 hilos) dejaban el primer bloque de otro canal hasta
+    #               ~10s en cola detras de pre-descargas que nadie estaba esperando todavia
+    EXPORT = 2  # el usuario pidio conservar un clip y esta esperando
+    BACKGROUND = 3  # guardado/compresion oportunista; nunca debe robarle turno a lo de arriba
 
 
 @dataclass(order=True)

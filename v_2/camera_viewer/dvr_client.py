@@ -430,17 +430,30 @@ class DVRClient(QObject):
             pending_start = None
 
             # Adelanta el SIGUIENTE bloque (si lo hay dentro de este mismo
-            # clip) mientras el actual se reproduce -- ver docstring.
+            # clip) mientras el actual se reproduce -- ver docstring. Se
+            # pide recien cuando el bloque actual YA se descargo y empieza a
+            # reproducirse (on_playback_start), no junto con el pedido del
+            # actual: si se mandaran casi al mismo tiempo (desde hilos
+            # distintos, orden de llegada no determinista) la pre-descarga
+            # podia llegar primero a una cola vacia y ocupar un hilo
+            # descargador, dejando el bloque que el usuario SI esta
+            # esperando detras de ella (medido: hasta ~10s de espera).
             next_start = chunk_end
-            if next_start < clip.end:
-                next_end = min(next_start + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
-                pending_future = download_client.submit(
-                    self.host, self.username, self.password, channel, next_start, next_end,
-                    DownloadPriority.INTERACTIVE, stop_event,
-                )
-                pending_start = next_start
+            next_end = min(next_start + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
+            has_next = next_start < clip.end
 
-            outcome = self._play_chunk(session_id, channel, position, chunk_end, stop_event, semaphore, future)
+            def on_playback_start() -> None:
+                nonlocal pending_future, pending_start
+                if has_next:
+                    pending_future = download_client.submit(
+                        self.host, self.username, self.password, channel, next_start, next_end,
+                        DownloadPriority.PREFETCH, stop_event,
+                    )
+                    pending_start = next_start
+
+            outcome = self._play_chunk(
+                session_id, channel, position, chunk_end, stop_event, semaphore, future, on_playback_start
+            )
 
             if outcome == "stopped":
                 return  # detenido por el usuario o cambio de sesion
@@ -492,6 +505,7 @@ class DVRClient(QObject):
         stop_event: threading.Event,
         semaphore: threading.Semaphore,
         future,
+        on_playback_start=None,
     ) -> str:
         """Reproduce [start, end) a partir de `future` -- una descarga ya
         pedida al servicio de descargas (ver download_client.py, que se
@@ -524,6 +538,9 @@ class DVRClient(QObject):
             if not capture.isOpened():
                 capture.release()
                 return "error"
+
+            if on_playback_start is not None:
+                on_playback_start()
 
             fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
             if fps <= 0 or not fps < float("inf"):
