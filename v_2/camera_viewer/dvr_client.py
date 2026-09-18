@@ -4,16 +4,17 @@ import os
 import re
 import threading
 import time
-import uuid
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 import cv2
 import requests
 from PySide6.QtCore import QObject, Signal
 from requests.auth import HTTPDigestAuth
+
+from . import download_client
+from .download_manager import DownloadPriority, purge_download_dir
 
 DEFAULT_CHANNELS = (1, 2, 3, 4)
 # Puerto del endpoint 'realmonitor' (igual que cameras/vivo.py) -- 554 es
@@ -60,17 +61,15 @@ CONNECTION_SERIALIZATION_GAP = 1.5
 # reproducible con 4 (sin importar el ancho de banda: se probo tanto a
 # maxima velocidad como pausado a ritmo real, con el mismo resultado). Por
 # eso la reproduccion de grabaciones NO lee directo del DVR: descarga un
-# bloque acotado de video a un archivo local (maximo
-# MAX_CONCURRENT_RECORDING_DOWNLOADS descargas a la vez, con margen de
-# sobra bajo el limite real de 3) y lo reproduce desde ahi a ritmo real --
-# la reproduccion en si no toca la red, asi que los 4 canales pueden verse
-# a la vez sin nunca superar el limite de conexiones del DVR.
-MAX_CONCURRENT_RECORDING_DOWNLOADS = 2
+# bloque acotado de video a un archivo local (a traves de
+# RecordingDownloadManager, ver download_manager.py, que impone el limite
+# de concurrencia hacia el DVR) y lo reproduce desde ahi a ritmo real -- la
+# reproduccion en si no toca la red, asi que los 4 canales pueden verse a
+# la vez sin nunca superar el limite de conexiones del DVR.
 DOWNLOAD_CHUNK_SECONDS = 45.0
-POST_DOWNLOAD_GAP = 1.0
 
 # Backpressure de la REPRODUCCION de grabaciones (no de la descarga, que ya
-# tiene la suya arriba): a diferencia de vivo, aqui no se puede descartar
+# tiene la suya en download_manager.py): a diferencia de vivo, aqui no se puede descartar
 # ningun frame para aliviar presion -- el usuario esta viendo contenido
 # grabado especifico, saltarse frames se notaria como huecos/tirones en el
 # video. Por eso el freno es "esperar", no "descartar" (ver
@@ -84,7 +83,6 @@ POST_DOWNLOAD_GAP = 1.0
 # investigacion de 2026-09-17).
 RECORDING_MAX_INFLIGHT_FRAMES = 2
 RECORDING_BACKPRESSURE_POLL = 0.2
-DOWNLOAD_DIR = Path(__file__).resolve().parent.parent / "runtime" / "camera_viewer_downloads"
 
 # El DVR limita cada llamada individual a findNextFile a 100 resultados,
 # SIN IMPORTAR el "count" que se le pida (se probo pidiendo count=200 y
@@ -161,9 +159,12 @@ class DVRClient(QObject):
         # de conexion RTSP nuevo en curso al DVR.
         self._connection_gate = threading.Lock()
 
-        # Semaforo para las DESCARGAS de grabacion (no para su reproduccion,
-        # que es local y no cuenta) -- ver MAX_CONCURRENT_RECORDING_DOWNLOADS.
-        self._recording_download_gate = threading.Semaphore(MAX_CONCURRENT_RECORDING_DOWNLOADS)
+        # Las descargas NO se manejan aqui adentro -- ver download_client.py
+        # y download_service.py: pasan por un servicio separado (un solo
+        # RecordingDownloadManager real, sin importar cuantos procesos
+        # distintos le pidan descargas) para que el limite de concurrencia
+        # hacia el DVR se respete entre procesos, no solo entre hilos de
+        # este.
 
     def _open_capture_serialized(self, url: str, stop_event: threading.Event) -> cv2.VideoCapture:
         """Abre una conexion (RTSP o HTTP, segun la url) turnandose con
@@ -177,75 +178,6 @@ class DVRClient(QObject):
             capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
             stop_event.wait(CONNECTION_SERIALIZATION_GAP)
             return capture
-
-    def _download_recording_chunk(
-        self, channel: int, start: datetime, end: datetime, stop_event: threading.Event
-    ) -> Path | None:
-        """Descarga [start, end) de un canal a un archivo local temporal --
-        solo copia los bytes crudos que entrega loadfile.cgi, sin decodificar
-        nada todavia. Respeta MAX_CONCURRENT_RECORDING_DOWNLOADS (semaforo
-        compartido por todos los canales). Devuelve la ruta local, o None si
-        stop_event se activo o hubo un error de red (el llamador decide si
-        reintentar)."""
-        url = (
-            f"http://{self.host}/cgi-bin/loadfile.cgi"
-            f"?action=startLoad&channel={channel}"
-            f"&startTime={start.strftime('%Y-%m-%d%%20%H:%M:%S')}"
-            f"&endTime={end.strftime('%Y-%m-%d%%20%H:%M:%S')}"
-        )
-        auth = HTTPDigestAuth(self.username, self.password)
-
-        self._recording_download_gate.acquire()
-        try:
-            if stop_event.is_set():
-                return None
-
-            DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-            local_path = DOWNLOAD_DIR / f"ch{channel}_{uuid.uuid4().hex}.dav"
-            try:
-                with requests.get(url, auth=auth, stream=True, timeout=30) as response:
-                    response.raise_for_status()
-                    with local_path.open("wb") as fh:
-                        for block in response.iter_content(chunk_size=65536):
-                            if stop_event.is_set():
-                                break
-                            if block:
-                                fh.write(block)
-            except Exception:
-                local_path.unlink(missing_ok=True)
-                return None
-
-            if stop_event.is_set() or local_path.stat().st_size == 0:
-                local_path.unlink(missing_ok=True)
-                return None
-            return local_path
-        finally:
-            # Mismo margen de cortesia que _open_capture_serialized, para no
-            # reabrir un cupo de descarga apenas se libera uno.
-            stop_event.wait(POST_DOWNLOAD_GAP)
-            self._recording_download_gate.release()
-
-    def _drain_recording_download_gate(self) -> None:
-        """Bloquea hasta confirmar que NINGUNA descarga de grabacion sigue
-        en curso (adquiere el semaforo completo y lo libera de inmediato).
-        Ultima garantia antes de la primera conexion en vivo -- ver
-        start_live(): asi nunca se abre una conexion RTSP mientras una
-        descarga de grabacion sigue viva, ni siquiera en el peor caso donde
-        un hilo de reproduccion no alcanzo a reaccionar a tiempo al
-        stop_event (p. ej. bloqueado en una lectura de red)."""
-        for _ in range(MAX_CONCURRENT_RECORDING_DOWNLOADS):
-            self._recording_download_gate.acquire()
-        for _ in range(MAX_CONCURRENT_RECORDING_DOWNLOADS):
-            self._recording_download_gate.release()
-
-    @staticmethod
-    def _purge_download_dir() -> None:
-        """Borra archivos temporales de descargas de una corrida anterior
-        (p. ej. si la app se cerro de golpe a medio descargar un bloque)."""
-        if not DOWNLOAD_DIR.exists():
-            return
-        for path in DOWNLOAD_DIR.glob("*.dav"):
-            path.unlink(missing_ok=True)
 
     # -- busqueda de grabaciones ------------------------------------------
 
@@ -393,7 +325,7 @@ class DVRClient(QObject):
         # si no, un hilo viejo puede intentar emitir una señal justo cuando
         # este objeto ya se esta destruyendo (ver stop_playback/closeEvent).
         self._stop_and_join()
-        self._purge_download_dir()
+        purge_download_dir()
 
         self._playback_session += 1
         session_id = self._playback_session
@@ -516,15 +448,20 @@ class DVRClient(QObject):
         stop_event: threading.Event,
         semaphore: threading.Semaphore,
     ) -> str:
-        """Descarga [start, end) a un archivo local (turnandose con los
-        demas canales, ver _download_recording_chunk) y lo reproduce desde
-        ahi a ritmo real. Devuelve "stopped", "error" o "ended" -- ya no hay
-        ambiguedad de "se corto por un corte de red a medias": el archivo ya
-        esta completo en disco antes de reproducirlo, asi que cualquier
-        fallo durante la reproduccion es un archivo vacio/corrupto, no un
-        corte transitorio de la conexion en vivo con el DVR."""
+        """Descarga [start, end) a un archivo local (a traves del servicio
+        de descargas, ver download_client.py, que se turna con las demas
+        descargas pendientes de cualquier canal -- de este proceso o de
+        cualquier otro) y lo reproduce desde ahi a ritmo real. Devuelve
+        "stopped", "error" o "ended" -- ya no hay ambiguedad de "se corto
+        por un corte de red a medias": el archivo ya esta completo en disco
+        antes de reproducirlo, asi que cualquier fallo durante la
+        reproduccion es un archivo vacio/corrupto, no un corte transitorio
+        de la conexion en vivo con el DVR."""
         self.recording_channel_status.emit(channel, f"Descargando {start:%H:%M:%S}...")
-        local_path = self._download_recording_chunk(channel, start, end, stop_event)
+        future = download_client.submit(
+            self.host, self.username, self.password, channel, start, end, DownloadPriority.INTERACTIVE, stop_event
+        )
+        local_path = future.result()
 
         if stop_event.is_set() or session_id != self._playback_session:
             if local_path is not None:
@@ -591,11 +528,12 @@ class DVRClient(QObject):
         # tiene su propio timeout de 30s, +5s de sobra) para asegurar de
         # verdad que ningun hilo de reproduccion sigue vivo -- y despues,
         # como garantia final, se confirma que ninguna descarga de
-        # grabacion sigue en curso (drena el semaforo por completo) antes
-        # de la primera conexion en vivo. Nunca debe haber una sesion de
-        # grabacion abierta al mismo tiempo que una de vivo.
+        # grabacion sigue en curso EN NINGUN PROCESO (drena el servicio de
+        # descargas por completo) antes de la primera conexion en vivo.
+        # Nunca debe haber una sesion de grabacion abierta al mismo tiempo
+        # que una de vivo.
         self._stop_and_join(timeout=35.0)
-        self._drain_recording_download_gate()
+        download_client.drain()
         self.stop_live()
 
         stop_event = threading.Event()

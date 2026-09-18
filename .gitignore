@@ -14,6 +14,8 @@ v_2/logs/camera_viewer/
 v_2/logs/dvr_stress_test/
 v_2/runtime/camera_viewer.lock
 v_2/runtime/camera_viewer_downloads/
+v_2/runtime/download_service.lock
+v_2/runtime/download_service.authkey
 v_2/runtime/ticket.bin
 v_2/share/.~lock.*
 
