@@ -76,6 +76,12 @@ class MainWindow(QMainWindow):
         self.connection_panel = ConnectionPanel(self.client.host, self.client.username, self.client.password)
         left_layout.addWidget(self.connection_panel)
         left_layout.addStretch(1)
+        # Recordatorio del atajo, al fondo de la columna: tenue a proposito
+        # (no es un control, solo una pista) y con las menos palabras posibles.
+        fullscreen_hint = QLabel("F11: pantalla completa")
+        fullscreen_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fullscreen_hint.setStyleSheet("color: #9CA3AF; font-size: 12px;")
+        left_layout.addWidget(fullscreen_hint)
         top_splitter.addWidget(left_column)
 
         # Un CameraGrid distinto por modo (no uno solo compartido): vivo
