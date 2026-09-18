@@ -388,10 +388,20 @@ class DVRClient(QObject):
         semaphore: threading.Semaphore,
     ) -> None:
         """Reproduce por bloques acotados (DOWNLOAD_CHUNK_SECONDS): cada
-        bloque se descarga completo a un archivo local (_play_chunk) antes
-        de reproducirlo -- la descarga respeta el limite de concurrencia
-        del DVR (MAX_CONCURRENT_RECORDING_DOWNLOADS), la reproduccion en si
-        es local y no cuenta contra ese limite."""
+        bloque se descarga a un archivo local (a traves del servicio de
+        descargas) antes de reproducirlo -- la descarga respeta el limite
+        de concurrencia del DVR, la reproduccion en si es local y no cuenta
+        contra ese limite.
+
+        Mientras se reproduce un bloque, se adelanta la descarga del
+        SIGUIENTE (si sigue en el mismo clip) -- sin esto, cada bloque
+        pedia su descarga recien cuando terminaba de reproducirse el
+        anterior, y como los 4 canales avanzan casi sincronizados, los 4
+        pedian turno casi al mismo instante y se veian pausados a la vez
+        cada DOWNLOAD_CHUNK_SECONDS esperando su descarga (reportado
+        2026-09-17, ver captura en el hilo de la investigacion). Con la
+        pre-descarga, para cuando el bloque actual termina de reproducirse
+        el siguiente ya deberia estar listo (o casi) en disco."""
         clip = self._find_clip(clips, selected_time)
         if clip is None:
             self.recording_channel_status.emit(channel, "Sin grabacion en esa hora")
@@ -399,21 +409,50 @@ class DVRClient(QObject):
 
         position = max(clip.start, selected_time)
         retries_left = MAX_CLIP_RETRIES
+        pending_future = None  # descarga ya en curso para el bloque que sigue, si aplica
+        pending_start: datetime | None = None
 
         while True:
             if stop_event.is_set() or session_id != self._playback_session:
                 return
 
             chunk_end = min(position + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
-            outcome = self._play_chunk(session_id, channel, position, chunk_end, stop_event, semaphore)
+
+            if pending_future is not None and pending_start == position:
+                future = pending_future
+            else:
+                self.recording_channel_status.emit(channel, f"Descargando {position:%H:%M:%S}...")
+                future = download_client.submit(
+                    self.host, self.username, self.password, channel, position, chunk_end,
+                    DownloadPriority.INTERACTIVE, stop_event,
+                )
+            pending_future = None
+            pending_start = None
+
+            # Adelanta el SIGUIENTE bloque (si lo hay dentro de este mismo
+            # clip) mientras el actual se reproduce -- ver docstring.
+            next_start = chunk_end
+            if next_start < clip.end:
+                next_end = min(next_start + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
+                pending_future = download_client.submit(
+                    self.host, self.username, self.password, channel, next_start, next_end,
+                    DownloadPriority.INTERACTIVE, stop_event,
+                )
+                pending_start = next_start
+
+            outcome = self._play_chunk(session_id, channel, position, chunk_end, stop_event, semaphore, future)
 
             if outcome == "stopped":
                 return  # detenido por el usuario o cambio de sesion
 
             if outcome == "error":
                 # Fallo al descargar el bloque (o el archivo descargado
-                # salio vacio/corrupto) -- reintentar el MISMO bloque antes
-                # de darlo por perdido.
+                # salio vacio/corrupto) -- descarta cualquier pre-descarga
+                # ya en curso (el plan de bloques ya no aplica igual tras
+                # un reintento) y reintenta el MISMO bloque antes de darlo
+                # por perdido.
+                pending_future = None
+                pending_start = None
                 if retries_left <= 0:
                     self.recording_channel_status.emit(channel, "No se pudo reproducir la grabacion")
                     return
@@ -429,7 +468,12 @@ class DVRClient(QObject):
             retries_left = MAX_CLIP_RETRIES
             position = chunk_end
             if position < clip.end:
-                continue  # sigue el mismo clip, siguiente bloque
+                continue  # sigue el mismo clip, siguiente bloque (ya pre-descargandose)
+
+            # Fin del clip -- la pre-descarga (si la hubo) era para dentro
+            # del mismo clip y ya no aplica a un clip adyacente distinto.
+            pending_future = None
+            pending_start = None
 
             next_clip = self._find_adjacent_clip(clips, clip.end)
             if next_clip is None:
@@ -447,20 +491,25 @@ class DVRClient(QObject):
         end: datetime,
         stop_event: threading.Event,
         semaphore: threading.Semaphore,
+        future,
     ) -> str:
-        """Descarga [start, end) a un archivo local (a traves del servicio
-        de descargas, ver download_client.py, que se turna con las demas
-        descargas pendientes de cualquier canal -- de este proceso o de
-        cualquier otro) y lo reproduce desde ahi a ritmo real. Devuelve
-        "stopped", "error" o "ended" -- ya no hay ambiguedad de "se corto
-        por un corte de red a medias": el archivo ya esta completo en disco
-        antes de reproducirlo, asi que cualquier fallo durante la
-        reproduccion es un archivo vacio/corrupto, no un corte transitorio
-        de la conexion en vivo con el DVR."""
-        self.recording_channel_status.emit(channel, f"Descargando {start:%H:%M:%S}...")
-        future = download_client.submit(
-            self.host, self.username, self.password, channel, start, end, DownloadPriority.INTERACTIVE, stop_event
-        )
+        """Reproduce [start, end) a partir de `future` -- una descarga ya
+        pedida al servicio de descargas (ver download_client.py, que se
+        turna con las demas descargas pendientes de cualquier canal, de
+        este proceso o de cualquier otro), posiblemente pedida con
+        anticipacion mientras se reproducia el bloque anterior (ver
+        _play_channel_worker). Devuelve "stopped", "error" o "ended" -- ya
+        no hay ambiguedad de "se corto por un corte de red a medias": el
+        archivo ya esta completo en disco antes de reproducirlo, asi que
+        cualquier fallo durante la reproduccion es un archivo
+        vacio/corrupto, no un corte transitorio de la conexion en vivo con
+        el DVR."""
+        if not future.done():
+            # Si ya estaba lista (caso normal gracias a la pre-descarga) no
+            # hace falta mostrar "Descargando" -- solo se nota cuando de
+            # verdad toca esperar (primer bloque de un clip, o la red no
+            # alcanzo a adelantarse dentro de la ventana del bloque previo).
+            self.recording_channel_status.emit(channel, f"Descargando {start:%H:%M:%S}...")
         local_path = future.result()
 
         if stop_event.is_set() or session_id != self._playback_session:
