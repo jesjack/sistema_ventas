@@ -361,6 +361,16 @@ class DVRClient(QObject):
 
     @staticmethod
     def _find_clip(clips: list[Clip], selected_time: datetime) -> Clip | None:
+        # Primero el clip donde la hora cae ESTRICTAMENTE antes del final: los
+        # clips del DVR son contiguos (02:00-03:00, 03:00-04:00), asi que una
+        # hora justo en la frontera coincide con el final de uno y el inicio
+        # del siguiente -- devolver el primero (el que termina ahi) dejaba un
+        # rango de descarga de largo cero y el canal fallaba con
+        # "No se pudo reproducir". El cierre inclusivo solo sirve de respaldo
+        # para la ultima marca de un clip sin siguiente.
+        for clip in clips:
+            if clip.start <= selected_time < clip.end:
+                return clip
         for clip in clips:
             if clip.start <= selected_time <= clip.end:
                 return clip
