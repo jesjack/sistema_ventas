@@ -193,3 +193,39 @@ sola a los 63 s del tramo de 2 descargas por una descarga fallida.
   descargas con velocidad limitada (por si el atasco es por saturar la CPU/red del
   DVR), y registrar el rango de video de cada descarga junto a cada atasco (por si
   coinciden con el cruce de archivos de grabación).
+
+## Adenda 4 (2026-09-18): 2 descargas simultáneas con y sin pausa de cortesía de 1 s
+
+Se usó el `RecordingDownloadManager` real (2 hilos) alternando `post_download_gap`
+1 s / 0 s, con la app cerrada. Rangos de 45 s de las 12:00-12:50, canales rotando.
+
+**Fase 0: primer cuadro de los 4 canales con 2 cupos** (6 repeticiones por configuración;
+tiempo hasta que llegan los 4 clips; se excluyen las repeticiones con atasco):
+
+| Pausa | Canales 1-2 | Canales 3-4 | Repeticiones con atasco |
+|---|---|---|---|
+| 1 s | 2.8 s | 6.4 s (5.95-6.74) | 2 de 6 (53.9 s y 42.2 s; la 2.ª con 2 descargas fallidas) |
+| 0 s | 2.6 s | 5.3 s (5.20-5.51) | 2 de 6 (24.7 s y 15.8 s) |
+
+La pausa cuesta ~1.1 s solo en el primer cuadro de los canales 3 y 4.
+
+**Fases continuas** (4 min cada una, 2 descargas seguidas + `getSystemInfo` cada ~0.25 s):
+
+| Fase | Consultas | Mediana | Máx | Atascos > 3 s | Tiempo > 1 s | Descargas |
+|---|---|---|---|---|---|---|
+| 1 s (P1) | 449 | 0.10 s | 25.0 s | 5 | 60.8 s | 122 ok, 0 fallos |
+| 0 s (P2) | 183 | 0.38 s | 28.1 s | 10 | 126.4 s | 102 ok, 0 fallos |
+| 1 s (P3) | 534 | 0.10 s | 9.7 s | 3 | 28.5 s | 144 ok, 0 fallos |
+| 0 s (P4) | 24 (cortada a los 73 s) | 0.36 s | 30.1 s (timeout) | 3 | 58.7 s | 11 ok, 2 `ConnectionError` |
+
+- Sin pausa las consultas ligeras van ~3.7 veces más lentas (mediana 0.36-0.38 s contra 0.10 s),
+  con más atascos, y hay fallos de descarga: 2 de 3 corridas sin pausa (con la de la Adenda 3) contra
+  0 de 2 con pausa. Las descargas con pausa no rinden menos (122 y 144 contra 102 trabajos).
+- Los fallos coinciden con el final de un atasco de ~30 s del DVR.
+- La pausa **no elimina** los atascos: aparecen con ella (hasta 25 s) y también hubo 2 descargas fallidas
+  con pausa en la fase 0 (tras un atasco de 42 s). Solo reduce su frecuencia y su duración.
+- Los atascos pueden ser de hasta 30 s (antes se veían 10 s), y las propias descargas se atascan en
+  el primer byte (15-54 s en 4 de 12 repeticiones, con y sin pausa). Los timeouts de consultas ligeras
+  deben ser mayores a 30 s o se convierten en fallos.
+- DVR sano al final: 4 consultas de ~0.08 s, ping sin pérdidas.
+- n pequeño (2-3 corridas por configuración): tendencia clara pero no concluyente.
