@@ -98,6 +98,7 @@ from hardware.barcode_printer import imprimir_codigo_barras
 from hardware.ticket_printer import TicketPrinter
 from services.button_bridge import SheetButtonBridge
 from services.identidad import obtener_usuario_actual
+from services.instancia_unica import asegurar_instancia_unica
 from services.modo_sistema import leer_modo, escribir_modo, solicitar_relanzamiento
 from services.seguimiento_sesion import SeguimientoSesionSistema
 from services.ventas_service import VentasService
@@ -133,6 +134,12 @@ def obtener_documento_calc(desktop):
     return None
 
 if __name__ == "__main__":
+    # Solo un usuario a la vez: si otro tiene el puerto de LibreOffice, se le
+    # cierra su sistema y este proceso sale para que open_system.sh relance
+    # (ver services/instancia_unica.py).
+    if not asegurar_instancia_unica():
+        sys.exit(0)
+
     # Conectar a LibreOffice
     local_context = uno.getComponentContext()
     resolver = local_context.ServiceManager.createInstanceWithContext("com.sun.star.bridge.UnoUrlResolver", local_context)

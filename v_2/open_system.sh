@@ -11,8 +11,13 @@ primera_vuelta=1
 # queda huerfano: la siguiente apertura muestra el aviso y abre main.ods como
 # "copia" (solo lectura / sin poder guardar). El lock no guarda PID, asi que
 # la unica forma de saber si es un falso positivo es ver si hay algun
-# soffice.bin de ESTE usuario vivo (el perfil, y por tanto el lock, es por
-# usuario). Si lo hay, se deja el lock intacto: puede ser una instancia real.
+# soffice.bin de ESTE usuario vivo. Si lo hay, se deja el lock intacto: puede
+# ser una instancia real.
+# El filtro por usuario es a proposito: si el lock es de OTRO usuario, main.py
+# (root, ver services/instancia_unica.py) lo desplaza justo despues de abrir,
+# y dejar su lock aqui haria que este arranque muestre el aviso de "copia" y
+# main.py nunca llegue a correr. Ese otro sistema se cierra enseguida y
+# main.ods no persiste datos, asi que compartirlo unos segundos no cuesta nada.
 limpiar_lock_huerfano() {
     [[ -e "$LOCK_MAIN_ODS" ]] || return 0
 
