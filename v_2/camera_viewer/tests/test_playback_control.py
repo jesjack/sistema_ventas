@@ -105,13 +105,26 @@ class PlaybackControlsWidgetTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_speed_button_cycles_through_all_speeds_and_wraps(self) -> None:
+    def test_speed_buttons_step_through_the_speeds_and_stop_at_the_ends(self) -> None:
         controls, seen = PlaybackControls(), []
-        controls.set_active(True)
         controls.speed_selected.connect(lambda speed: (seen.append(speed), controls.set_speed(speed)))
-        for _ in range(len(SPEEDS)):
-            controls._speed_button.click()
-        self.assertEqual(seen, [1.5, 2.0, 0.5, 1.0])
+        controls.set_active(True)
+        self.assertFalse(controls._slower.isEnabled() and controls._speed == SPEEDS[0])
+        controls._faster.click()
+        controls._faster.click()
+        self.assertFalse(controls._faster.isEnabled())  # ya en la velocidad máxima
+        controls._slower.click()
+        controls._slower.click()
+        controls._slower.click()
+        self.assertFalse(controls._slower.isEnabled())  # ya en la mínima
+        self.assertEqual(seen, [1.5, 2.0, 1.5, 1.0, 0.5])
+        self.assertEqual(controls._speed_label.text(), "x0.5")
+
+    def test_all_controls_have_the_same_height(self) -> None:
+        controls = PlaybackControls()
+        controls.show()
+        heights = {widget.height() for widget in (*controls._buttons, controls._speed_label)}
+        self.assertEqual(len(heights), 1, heights)
 
     def test_step_button_only_enabled_when_active_and_paused(self) -> None:
         controls = PlaybackControls()
@@ -120,7 +133,7 @@ class PlaybackControlsWidgetTests(unittest.TestCase):
         self.assertFalse(controls._step.isEnabled())
         controls.set_paused(True)
         self.assertTrue(controls._step.isEnabled())
-        self.assertEqual(controls._pause.text(), "▶ Reanudar")
+        self.assertEqual(controls._pause.text(), "Reanudar")
         controls.set_active(False)
         self.assertFalse(controls._step.isEnabled())
 
