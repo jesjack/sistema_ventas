@@ -1,0 +1,4 @@
+table.ChannelTitle[0].Name=CAM 1
+table.ChannelTitle[1].Name=CAM 2
+table.ChannelTitle[2].Name=CAM 3
+table.ChannelTitle[3].Name=CAM 4

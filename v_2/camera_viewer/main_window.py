@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QStackedWidget, QV
 from .calendar_panel import CalendarPanel
 from .camera_grid import CameraGrid
 from .connection_panel import ConnectionPanel
+from .dvr_info_dialog import DvrInfoDialog
 from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient, LIVE_TO_RECORDINGS_SETTLE
 from .light_query_manager import LightPriority
 from .timeline_widget import TimelineWidget
@@ -113,6 +114,7 @@ class MainWindow(QMainWindow):
         self.calendar.day_selected.connect(self._on_day_selected)
         self.calendar.month_changed.connect(self._on_calendar_month_changed)
         self.timeline.time_selected.connect(self._on_time_selected)
+        self.connection_panel.info_clicked.connect(self._show_dvr_info)
 
         self.client.clips_ready.connect(self._on_clips_ready)
         self.client.search_failed.connect(self._on_search_failed)
@@ -168,6 +170,9 @@ class MainWindow(QMainWindow):
         if not self._is_live:
             self.status_label.setText(f"Buscando grabaciones del {day}...")
         self.client.search(start_dt, end_dt, priority)
+
+    def _show_dvr_info(self) -> None:
+        DvrInfoDialog(self.client.host, self.client.username, self.client.password, self._is_live, self).exec()
 
     def _reset_recordings_view(self) -> None:
         """Detiene cualquier reproduccion y deja los paneles de grabaciones

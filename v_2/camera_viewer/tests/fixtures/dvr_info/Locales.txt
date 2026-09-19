@@ -1,0 +1,16 @@
+table.Locales.DSTEnable=false
+table.Locales.DSTEnd.Day=1
+table.Locales.DSTEnd.Hour=0
+table.Locales.DSTEnd.Minute=0
+table.Locales.DSTEnd.Month=1
+table.Locales.DSTEnd.Week=0
+table.Locales.DSTEnd.Year=2000
+table.Locales.DSTStart.Day=1
+table.Locales.DSTStart.Hour=0
+table.Locales.DSTStart.Minute=0
+table.Locales.DSTStart.Month=1
+table.Locales.DSTStart.Week=0
+table.Locales.DSTStart.Year=2000
+table.Locales.DateSeparator=/
+table.Locales.TimeFormat=dd/MM/yyyy hh:mm:ss
+table.Locales.WorkDay=62

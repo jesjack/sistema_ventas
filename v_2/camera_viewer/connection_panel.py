@@ -10,6 +10,7 @@ class ConnectionPanel(QWidget):
     Incluye el boton que alterna entre ver grabaciones y ver en vivo."""
 
     live_toggle_clicked = Signal()
+    info_clicked = Signal()
 
     def __init__(self, host: str, username: str, password: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -33,6 +34,10 @@ class ConnectionPanel(QWidget):
         # todo el contenedor (incluida la columna de las etiquetas) y queda
         # visiblemente mas ancho que los inputs.
         form.addRow("", self.live_toggle_button)
+
+        self.info_button = QPushButton("Información del DVR")
+        self.info_button.clicked.connect(self.info_clicked)
+        form.addRow("", self.info_button)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

@@ -1,0 +1,3 @@
+processor=ST7108
+serialNumber=6L00943PAZ627B4
+updateSerial=XVR5x04-S2
