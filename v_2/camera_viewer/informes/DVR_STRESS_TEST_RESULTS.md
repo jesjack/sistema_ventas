@@ -229,3 +229,32 @@ La pausa cuesta ~1.1 s solo en el primer cuadro de los canales 3 y 4.
   deben ser mayores a 30 s o se convierten en fallos.
 - DVR sano al final: 4 consultas de ~0.08 s, ping sin pérdidas.
 - n pequeño (2-3 corridas por configuración): tendencia clara pero no concluyente.
+
+## Adenda 5 (2026-09-19): prueba de aceptación del embudo con carril ligero (2 descargas + 1 o 2 hilos ligeros)
+
+Configuración de producción (commit c9c9fa1): 2 descargas seguidas con pausa de 1 s por el
+`RecordingDownloadManager` y consultas `getSystemInfo` por el `LightQueryManager` (timeouts 5/35 s,
+3 intentos, 1 s entre ellos) con 2 solicitantes continuos y una espera de 0.25 s entre consultas. Cuatro
+tramos de 5 min en orden A-B-B-A (A = 1 hilo ligero, B = 2 hilos), 30 s entre tramos, app cerrada.
+
+| Tramo | Hilos ligeros | Consultas | Fallos | Reintentos | Mediana / p90 / p99 | Máx | Tiempo en espera > 1 s* | Descargas |
+|---|---|---|---|---|---|---|---|---|
+| A1 | 1 | 872 | 0 | 0 | 0.11 / 0.52 / 10.2 s | 30.2 s | 284 s | 131 ok, 0 fallos |
+| B1 | 2 | 1159 | 0 | 0 | 0.12 / 0.35 / 1.7 s | 26.6 s | 146 s | 167 ok, 0 fallos |
+| B2 | 2 | 995 | 0 | 2 | 0.12 / 0.40 / 7.5 s | 36.3 s | 193 s | 148 ok, 0 fallos |
+| A2 | 1 | 1154 | 0 | 1 | 0.10 / 0.41 / 5.9 s | 24.2 s | 143 s | 170 ok, 0 fallos |
+
+\* Suma de las esperas > 1 s de los 2 solicitantes (un mismo atasco cuenta dos veces).
+
+- **Cero fallos en 4180 consultas y 616 descargas.** Antes, sin embudo y sin pausa, 2 de 3 corridas de
+  2 descargas tuvieron descargas fallidas. Los 3 reintentos (el máximo de 36.3 s es un intento que
+  agotó los 35 s de lectura y el reintento lo resolvió) evitaron 3 fallos que habrían llegado a la interfaz.
+- **Los atascos siguen ahí**, de 6 a 36 s y cada ~69-70 s (410.7, 479.7, 550.4, 619.5 s en B1), y afectan
+  a los dos solicitantes a la vez: parecen del DVR entero, no de una conexión.
+- **1 hilo ligero contra 2: sin diferencia concluyente.** Agregando A: 2026 consultas y 427 s de espera;
+  agregando B: 2154 consultas y 339 s. La variación entre tramos del mismo tipo (A1 contra A2) es tan grande como
+  la diferencia entre tipos (el primer tramo fue el peor). Ninguna configuración causó fallos ni afectó a las
+  descargas. Se deja `LIGHT_THREADS = 2`.
+- El DVR quedó sano al terminar.
+- Nota de método: al lanzarla se colaron 2 copias unos 20 s (4 descargas simultáneas); se detuvieron, se
+  comprobó el DVR (sano) y se reinició desde cero; esos segundos no cuentan en la tabla.
