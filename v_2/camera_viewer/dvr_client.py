@@ -293,7 +293,7 @@ class DVRClient(QObject):
 
         self._playback_session += 1
         session_id = self._playback_session
-        self.control.reset(paused)
+        self.control.reset(paused, selected_time)
         self._playback_stop_events = {channel: threading.Event() for channel in DEFAULT_CHANNELS}
         self._playback_semaphores = {
             channel: threading.Semaphore(RECORDING_MAX_INFLIGHT_FRAMES) for channel in DEFAULT_CHANNELS

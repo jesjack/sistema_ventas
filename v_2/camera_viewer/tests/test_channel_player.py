@@ -123,10 +123,21 @@ class ChunkStoreTests(unittest.TestCase):
 class Harness:
     """Un ChannelPlayer con un DVR falso: cada descarga genera un video sintético del rango pedido."""
 
-    def __init__(self, clip_end: datetime | None = None, delay: float = 0.0, fail_first: int = 0) -> None:
+    def __init__(
+        self,
+        clip_end: datetime | None = None,
+        delay: float = 0.0,
+        fail_first: int = 0,
+        channel: int = 1,
+        control: PlaybackControl | None = None,
+        store: ChunkStore | None = None,
+        clip_start: datetime | None = None,
+    ) -> None:
         self.tmp = Path(tempfile.mkdtemp())
-        self.store = ChunkStore()
-        self.control = PlaybackControl((1,))
+        self.channel = channel
+        self.store = store or ChunkStore()
+        self.control = control or PlaybackControl((1,))
+        self.wall_frames: list[tuple[float, float]] = []  # (instante real, hora de video en s desde T0) de cada cuadro
         self.submits: list[tuple[datetime, datetime, int, threading.Event]] = []
         self.frames: list[float] = []  # hora (s desde T0) de cada cuadro mostrado
         self.statuses: list[str] = []
@@ -143,7 +154,14 @@ class Harness:
             emit_status=lambda channel, text: self.statuses.append(text),
             emit_day_changed=lambda day: None,
         )
-        self.player = ChannelPlayer(1, [Clip(1, T0, clip_end or T0 + timedelta(minutes=10))], deps, self.stop, self.semaphore, lambda: True)
+        self.player = ChannelPlayer(
+            channel,
+            [Clip(channel, clip_start or T0, clip_end or T0 + timedelta(minutes=10))],
+            deps,
+            self.stop,
+            self.semaphore,
+            lambda: True,
+        )
         self.thread: threading.Thread | None = None
 
     def submit(self, channel: int, start: datetime, end: datetime, priority: int, stop: threading.Event) -> Future:
@@ -173,9 +191,11 @@ class Harness:
 
     def on_frame(self, channel: int, frame: np.ndarray) -> None:
         self.frames.append(decode_seconds(frame))
+        self.wall_frames.append((time.monotonic(), self.frames[-1]))
         self.semaphore.release()  # hace de "la interfaz ya lo mostró"
 
     def start(self, target_seconds: float, start_delay: float = 0.0) -> None:
+        self.control.reset(self.control.paused, T0 + timedelta(seconds=target_seconds))  # arma el reloj compartido
         self.thread = threading.Thread(
             target=self.player.run, args=(T0 + timedelta(seconds=target_seconds), start_delay), daemon=True
         )
@@ -579,6 +599,152 @@ class ReversePlaybackTests(PlayerTestCase):
         self.assertLess(len(h.frames) / elapsed, 36)
         self.assertGreater(len(h.frames) / elapsed, 24)
         self.assertGreater((h.frames[0] - h.frames[-1]) / elapsed, 1.8)  # el video retrocede al doble
+
+
+class Group:
+    """Los 4 canales con un reloj y un almacén compartidos, como en la app."""
+
+    CHANNELS = (1, 2, 3, 4)
+
+    def __init__(self, test: PlayerTestCase, delays: dict[int, float] | None = None, clips: dict[int, tuple] | None = None) -> None:
+        self.control = PlaybackControl(self.CHANNELS)
+        self.store = ChunkStore()
+        delays = delays or {}
+        clips = clips or {}
+        self.h = {}
+        for channel in self.CHANNELS:
+            start, end = clips.get(channel, (None, None))
+            self.h[channel] = Harness(
+                channel=channel, control=self.control, store=self.store, delay=delays.get(channel, 0.0),
+                clip_start=start, clip_end=end,
+            )
+            test.addCleanup(self.h[channel].stop_and_join)
+
+    def start(self, target_seconds: float) -> None:
+        self.control.reset(self.control.paused, T0 + timedelta(seconds=target_seconds))
+        for h in self.h.values():
+            h.thread = threading.Thread(target=h.player.run, args=(T0 + timedelta(seconds=target_seconds), 0.0), daemon=True)
+            h.thread.start()
+
+    def media_at(self, channel: int, wall: float) -> float | None:
+        earlier = [m for w, m in self.h[channel].wall_frames if w <= wall]
+        return earlier[-1] if earlier else None
+
+    def max_spread(self, walls: list[float], channels: tuple[int, ...] | None = None) -> float:
+        """Mayor diferencia de hora de video entre canales, en cada instante real dado."""
+        worst = 0.0
+        for wall in walls:
+            times = [self.media_at(c, wall) for c in (channels or self.CHANNELS)]
+            if None in times:
+                return float("inf")
+            worst = max(worst, max(times) - min(times))
+        return worst
+
+    def first_wall(self, channel: int) -> float | None:
+        frames = self.h[channel].wall_frames
+        return frames[0][0] if frames else None
+
+
+class SynchronizedChannelsTests(PlayerTestCase):
+    def sample_walls(self, group: Group, count: int = 6, span: float = 3.0) -> list[float]:
+        now = time.monotonic()
+        return [now - span * (i + 1) / count for i in range(count)]
+
+    def test_all_channels_start_together_even_if_one_downloads_slowly(self) -> None:
+        group = Group(self, delays={3: 1.0})
+        group.start(5.0)
+        time.sleep(4.5)
+        firsts = [group.first_wall(c) for c in Group.CHANNELS]
+        self.assertNotIn(None, firsts)
+        self.assertLess(max(firsts) - min(firsts), 0.15)  # nadie se adelanta al lento
+        self.assertLess(group.max_spread(self.sample_walls(group)), 0.15)
+
+    def test_channels_stay_in_step_over_time(self) -> None:
+        group = Group(self, delays={1: 0.3, 2: 0.0, 3: 0.6, 4: 0.9})
+        group.start(0.0)
+        time.sleep(8.0)  # cruza varios bloques
+        self.assertLess(group.max_spread(self.sample_walls(group, 12, 6.0)), 0.15)
+
+    def test_a_channel_slower_than_the_barrier_joins_later_at_the_right_time(self) -> None:
+        with mock.patch("camera_viewer.playback_control.BARRIER_TIMEOUT", 0.5):
+            group = Group(self, delays={3: 2.5})
+            group.start(5.0)
+            time.sleep(11.0)  # tras unirse tarde, le toca esperar también su siguiente bloque (2.5 s): se le da tiempo de recuperarse
+        others = [group.first_wall(c) for c in (1, 2, 4)]
+        self.assertLess(max(others) - min(others), 0.15)  # los demás no lo esperan más allá del tope
+        late = group.first_wall(3)
+        self.assertGreater(late - min(others), 1.5)  # llegó después...
+        self.assertGreater(group.h[3].wall_frames[0][1], 5.0 + 1.5)  # ...y entró en la hora actual, no en el punto de partida
+        tail = [time.monotonic() - 0.2 * i for i in range(1, 6)]
+        self.assertLess(group.max_spread(tail), 0.15)
+
+    def test_a_channel_without_recording_does_not_hold_the_others_back(self) -> None:
+        group = Group(self, clips={4: (T0 + timedelta(minutes=5), T0 + timedelta(minutes=6))})  # canal 4 no graba en el punto
+        started = time.monotonic()
+        group.start(5.0)
+        time.sleep(1.5)
+        firsts = [group.first_wall(c) for c in (1, 2, 3)]
+        self.assertNotIn(None, firsts)
+        self.assertLess(max(firsts) - started, 0.8)
+        self.assertIn("Sin grabación en esa hora", group.h[4].statuses)
+
+    def test_a_seek_brings_all_channels_back_together(self) -> None:
+        group = Group(self, delays={2: 0.4})
+        group.start(0.0)
+        time.sleep(2.0)
+        group.control.request_seek(T0 + timedelta(seconds=120))
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline and not all(any(abs(m - 120) < 1 for _, m in group.h[c].wall_frames) for c in Group.CHANNELS):
+            time.sleep(0.05)
+        time.sleep(1.5)
+        walls = [time.monotonic() - 0.2 * i for i in range(1, 6)]
+        self.assertLess(group.max_spread(walls), 0.15)
+        self.assertGreater(group.media_at(1, time.monotonic()), 120.0)
+
+    def test_after_a_seek_a_channel_that_must_download_does_not_hold_the_others_for_long(self) -> None:
+        with mock.patch("camera_viewer.playback_control.SEEK_BARRIER_TIMEOUT", 0.5):
+            group = Group(self)
+            group.start(0.0)
+            time.sleep(1.5)
+            group.h[3].delay = 3.0  # a partir de ahora, el canal 3 tarda 3 s en cada descarga
+            requested = time.monotonic()
+            group.control.request_seek(T0 + timedelta(seconds=200))  # punto que ningún canal tiene en disco
+            time.sleep(12.0)  # (el lento, ya unido, aún espera su siguiente bloque de 3 s: se le da tiempo de recuperarse)
+        fast = [next((w for w, m in group.h[c].wall_frames if m >= 199.9), None) for c in (1, 2, 4)]
+        self.assertNotIn(None, fast)
+        self.assertLess(max(fast) - requested, 2.0)  # los rápidos no esperaron los 3 s del lento
+        slow = next((w for w, m in group.h[3].wall_frames if m >= 199.9), None)
+        self.assertIsNotNone(slow)
+        self.assertGreater(slow - requested, 2.5)  # el lento llegó después...
+        self.assertGreater(next(m for w, m in group.h[3].wall_frames if m >= 199.9), 199.9)
+        spreads = sorted(group.max_spread([time.monotonic() - 0.2 * i]) for i in range(1, 11))
+        self.assertLess(spreads[len(spreads) // 2], 0.2)  # ...y se unió a la hora del resto (mediana de los últimos 2 s)
+
+    def test_pause_and_resume_keep_the_channels_together(self) -> None:
+        group = Group(self, delays={3: 0.5})
+        group.start(0.0)
+        time.sleep(2.0)
+        group.control.set_paused(True)
+        time.sleep(0.8)
+        group.control.set_paused(False)
+        time.sleep(2.0)
+        self.assertLess(group.max_spread([time.monotonic() - 0.2 * i for i in range(1, 8)]), 0.15)
+
+    def test_a_channel_that_falls_behind_catches_up_by_skipping_frames(self) -> None:
+        group = Group(self)
+        group.start(0.0)
+        time.sleep(1.5)
+        stuck = group.h[3]
+        stuck.semaphore = threading.Semaphore(0)  # la interfaz de este canal "se traba": no libera cuadros
+        stuck.player.semaphore = stuck.semaphore
+        time.sleep(1.0)  # un segundo entero sin poder mostrar
+        for _ in range(3):
+            stuck.semaphore.release()
+        time.sleep(2.0)
+        walls = [time.monotonic() - 0.2 * i for i in range(1, 6)]
+        self.assertLess(group.max_spread(walls), 0.15)  # ya alcanzó al reloj
+        media_gaps = [b - a for (_, a), (_, b) in zip(stuck.wall_frames, stuck.wall_frames[1:])]
+        self.assertGreater(max(media_gaps), 0.5)  # y lo hizo saltando, no reproduciendo el atraso a cámara rápida
 
 
 if __name__ == "__main__":

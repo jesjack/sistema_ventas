@@ -6,6 +6,8 @@ import os
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -86,6 +88,8 @@ class PlaybackControlTests(unittest.TestCase):
 
         self.control.set_paused(True)
         self.control.request_seek(datetime(2026, 9, 19, 10, 0, 5))
+        self.assertEqual(self.control.wait_turn(1, self.never), "seek")  # el salto se atiende primero
+        self.control.take_seek(1)
         self.assertEqual(self.control.wait_turn(1, self.never), "step")
 
     def test_reset_paused_grants_one_frame_and_keeps_speed(self) -> None:
@@ -109,6 +113,113 @@ class PlaybackControlTests(unittest.TestCase):
         self.control.mark_playing(2, True)
         self.control.mark_playing(1, False)
         self.assertEqual(self.control.playing_channels(), {2})
+
+
+T0 = datetime(2026, 9, 19, 10, 0, 0)
+
+
+class ClockTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.control = PlaybackControl(CHANNELS)
+        self.never = lambda: False
+
+    def start_clock(self, target: datetime = T0) -> None:
+        self.control.reset(False, target)
+        for channel in CHANNELS:
+            self.control.announce_ready(channel)
+
+    def test_no_clock_until_a_playback_is_armed(self) -> None:
+        self.assertFalse(self.control.has_clock())
+        self.assertIsNone(self.control.media_now())
+
+    def test_the_clock_waits_for_every_channel_before_starting(self) -> None:
+        self.control.reset(False, T0)
+        self.assertTrue(self.control.has_clock() and not self.control.clock_running())
+        for channel in (1, 2, 3):
+            self.control.announce_ready(channel)
+        self.assertFalse(self.control.clock_running())
+        self.control.announce_ready(4)
+        self.assertTrue(self.control.clock_running())
+
+    def test_wait_turn_holds_channels_until_the_barrier_opens(self) -> None:
+        self.control.reset(False, T0)
+        results: list[str] = []
+        threads = [threading.Thread(target=lambda c=c: results.append(self.control.wait_turn(c, self.never))) for c in (1, 2)]
+        for thread in threads:
+            thread.start()
+        time.sleep(0.3)
+        self.assertEqual(results, [])  # nadie arranca solo
+        for channel in CHANNELS:
+            self.control.announce_ready(channel)
+        for thread in threads:
+            thread.join(2)
+        self.assertEqual(results, ["go", "go"])
+
+    def test_absent_channels_do_not_hold_the_others_back(self) -> None:
+        self.control.reset(False, T0)
+        for channel in (1, 2, 3):
+            self.control.announce_ready(channel)
+        self.control.announce_absent(4)
+        self.assertTrue(self.control.clock_running())
+
+    def test_the_clock_starts_after_the_timeout_without_the_slow_channel(self) -> None:
+        with mock.patch("camera_viewer.playback_control.BARRIER_TIMEOUT", 0.2):
+            self.control.reset(False, T0)
+            self.control.announce_ready(1)
+            self.assertEqual(self.control.wait_turn(1, self.never), "go")  # esperó el tope y arrancó
+            self.assertTrue(self.control.clock_running())
+
+    def test_media_time_advances_with_speed_and_freezes_on_pause(self) -> None:
+        self.start_clock()
+        time.sleep(0.3)
+        self.assertAlmostEqual((self.control.media_now() - T0).total_seconds(), 0.3, delta=0.08)
+        self.control.set_speed(2.0)
+        before = self.control.media_now()
+        time.sleep(0.3)
+        self.assertAlmostEqual((self.control.media_now() - before).total_seconds(), 0.6, delta=0.12)
+        self.control.set_paused(True)
+        frozen = self.control.media_now()
+        time.sleep(0.3)
+        self.assertEqual(self.control.media_now(), frozen)
+        self.control.set_paused(False)
+        time.sleep(0.2)
+        self.assertGreater(self.control.media_now(), frozen)
+
+    def test_changing_speed_or_direction_does_not_make_the_clock_jump(self) -> None:
+        self.start_clock()
+        time.sleep(0.3)
+        before = self.control.media_now()
+        self.control.set_speed(2.0)
+        self.control.set_reverse(True)
+        after = self.control.media_now()
+        self.assertLess(abs((after - before).total_seconds()), 0.05)
+        time.sleep(0.3)
+        self.assertLess(self.control.media_now(), after)  # ahora retrocede
+
+    def test_wall_for_maps_video_time_to_real_time(self) -> None:
+        self.start_clock()
+        now = time.monotonic()
+        self.assertAlmostEqual(self.control.wall_for(T0 + timedelta(seconds=1)) - now, 1.0, delta=0.05)
+        self.control.set_speed(2.0)
+        self.assertAlmostEqual(self.control.wall_for(self.control.media_now() + timedelta(seconds=1)) - time.monotonic(), 0.5, delta=0.05)
+        self.control.set_reverse(True)
+        self.assertAlmostEqual(self.control.wall_for(self.control.media_now() - timedelta(seconds=1)) - time.monotonic(), 0.5, delta=0.05)
+
+    def test_a_seek_rearms_the_barrier_at_the_new_time(self) -> None:
+        self.start_clock()
+        target = T0 + timedelta(seconds=90)
+        self.control.request_seek(target)
+        self.assertFalse(self.control.clock_running())
+        self.assertEqual(self.control.media_now(), target)
+
+    def test_paused_playback_never_starts_the_clock_until_resumed(self) -> None:
+        self.control.reset(True, T0)
+        for channel in CHANNELS:
+            self.control.announce_ready(channel)
+        self.assertFalse(self.control.clock_running())
+        self.control.set_paused(False)
+        self.assertTrue(self.control.clock_running())
+        self.assertAlmostEqual((self.control.media_now() - T0).total_seconds(), 0.0, delta=0.05)
 
 
 class PlaybackControlsWidgetTests(unittest.TestCase):

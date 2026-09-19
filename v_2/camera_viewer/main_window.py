@@ -23,6 +23,7 @@ RECORDINGS_HINT = "Selecciona una hora en la línea de tiempo"
 # los minutos recientes dejen de verse como "sin grabacion") y se re-sincroniza
 # el cursor con la hora real.
 LIVE_TOOLS_REFRESH_MS = 60_000
+PLAYHEAD_REFRESH_MS = 100
 
 
 class MainWindow(QMainWindow):
@@ -54,6 +55,12 @@ class MainWindow(QMainWindow):
         self._back_shortcut.activated.connect(lambda: self._jump(-JUMP_SECONDS))
         self._forward_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
         self._forward_shortcut.activated.connect(lambda: self._jump(JUMP_SECONDS))
+
+        # El cursor de la línea de tiempo en grabaciones sigue el reloj compartido de la
+        # reproducción (client.control), no uno propio: así coincide con el video.
+        self._playhead_timer = QTimer(self)
+        self._playhead_timer.setInterval(PLAYHEAD_REFRESH_MS)
+        self._playhead_timer.timeout.connect(self._update_playhead)
 
         self._live_tools_timer = QTimer(self)
         self._live_tools_timer.setInterval(LIVE_TOOLS_REFRESH_MS)
@@ -204,46 +211,42 @@ class MainWindow(QMainWindow):
 
     def _toggle_pause(self) -> None:
         paused = self.client.toggle_pause()
-        if paused:
-            self.timeline.pause_playhead()
-        else:
-            self.timeline.resume_playhead()
         self.playback_controls.set_paused(paused)
 
     def _jump(self, seconds: int) -> None:
         """Salta ±seconds desde donde va el cursor, sin reiniciar la reproducción
         (ver DVRClient.seek). Conserva la pausa: en pausa se ve el primer
         cuadro del punto nuevo y sigue en pausa."""
-        current = self.timeline.playhead_time()
+        current = self.client.control.media_now()
         day = self.timeline.day
         if current is None or day is None or self._is_live:
             return
         day_start = datetime.combine(day, dtime.min)
         target = min(max(current + timedelta(seconds=seconds), day_start), day_start + timedelta(hours=23, minutes=59, seconds=59))
-        paused = self.client.control.paused
         self._accept_recording_output = True
         self.client.seek(target)
-        self.timeline.start_playhead(target, paused=paused)
+        self.timeline.draw_playhead(target)
 
-    def _signed_speed(self) -> float:
-        """Velocidad con signo para el cursor de la línea de tiempo (negativa en reversa)."""
-        control = self.client.control
-        return -control.speed if control.reverse else control.speed
+    def _update_playhead(self) -> None:
+        if self._is_live or not self.client.playback_active:
+            return
+        moment = self.client.control.media_now()
+        if moment is not None:
+            self.timeline.draw_playhead(moment)
 
     def _set_speed(self, speed: float) -> None:
         self.client.set_speed(speed)
-        self.timeline.set_playhead_speed(self._signed_speed())
         self.playback_controls.set_speed(speed)
 
     def _set_reverse(self, reverse: bool) -> None:
         self.client.set_reverse(reverse)
-        self.timeline.set_playhead_speed(self._signed_speed())
         self.playback_controls.set_reverse(reverse)
 
     def _reset_recordings_view(self) -> None:
         """Detiene cualquier reproduccion y deja los paneles de grabaciones
         como nuevos, con el aviso de elegir una hora."""
         self.client.stop_playback()
+        self._playhead_timer.stop()
         self.timeline.stop_playhead()
         self.timeline.clear_marker()
         self._accept_recording_output = False
@@ -285,7 +288,8 @@ class MainWindow(QMainWindow):
             self.client.seek(selected_time, resume=True)
         else:
             self.client.play_from(selected_time, self._clips_by_channel, start_delay=start_delay)
-        self.timeline.start_playhead(selected_time)
+        self.timeline.draw_playhead(selected_time)
+        self._playhead_timer.start()
         self._set_playback_active(True)
 
     def _on_playback_day_changed(self, day: date) -> None:
@@ -296,8 +300,7 @@ class MainWindow(QMainWindow):
         if self._is_live or self.timeline.day == day:
             return
         self.calendar.select_date(day)
-        self._load_day(day)
-        self.timeline.start_playhead(datetime.combine(day, dtime.min), paused=self.client.control.paused)
+        self._load_day(day)  # el cursor reaparece solo: el reloj compartido ya sigue en el día nuevo
 
     def _on_recording_frame_ready(self, channel: int, frame) -> None:
         if not self._accept_recording_output:

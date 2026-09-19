@@ -103,3 +103,32 @@ Cada salto de OpenCV decodifica desde el cuadro clave anterior (~15 cuadros de s
 **Hallazgo aparte: los canales no están sincronizados entre sí.** En la captura de la reversa, CAM 2 y CAM 3 marcaban `10:05:40`
 cuando CAM 1 y CAM 4 marcaban `10:05:50`. Cada canal arranca cuando termina SU descarga (en esa corrida el DVR tardó ~14 s), y desde
 entonces cada uno avanza con su propio reloj: la diferencia del arranque se queda. Ya ocurría en avance.
+
+## Adenda 3 (2026-09-19): sincronía entre los 4 canales (reloj compartido)
+
+**Problema.** Cada canal arrancaba cuando terminaba SU descarga y avanzaba con su propio reloj, así que la diferencia de arranque
+se quedaba: con el DVR lento (~14 s para entregar los 4 primeros bloques) CAM 2 y CAM 3 marcaban `10:05:40` cuando CAM 1 y CAM 4
+marcaban `10:05:50`. El cursor de la línea de tiempo tenía además otro reloj distinto, que arrancaba al hacer clic.
+
+**Diseño** (`playback_control.py`, `channel_player.py`):
+- Un **reloj de referencia** compartido (hora de video ↔ tiempo real, con velocidad y sentido). Cada canal muestra un cuadro cuando el reloj
+  llega a su hora de video; el cursor de la línea de tiempo lee ese mismo reloj.
+- **Barrera de arranque:** tras elegir una hora (o un salto) el reloj queda detenido en esa hora y arranca cuando los 4 canales avisan que tienen su
+  primer cuadro listo, o que no tienen nada que mostrar (sin grabación, fin de segmento), o al vencer el tope: **6 s** al arrancar,
+  **2 s** tras un salto (casi siempre está todo en disco y no espera nada). El canal que tarda más no frena a los demás: se les une después,
+  saltando a la hora actual del reloj ("Descargando…" mientras tanto). Mientras esperan a los otros, los canales listos muestran "Sincronizando...".
+- **Alcanzar al reloj:** un cuadro atrasado más de 0.12 s se decodifica y no se pinta (para alcanzar); si el atraso pasa de 1.5 s, el canal salta
+  directo a la hora del reloj.
+- Pausa, velocidad y sentido reajustan el reloj sin saltos (un solo punto de partida).
+
+**Comprobado con el DVR real** (ventana completa): al elegir 10:05:30 el reloj queda parado en 10:05:30 y los 4 canales muestran
+`10:05:36` a la vez (antes, hasta 10 s de diferencia); el cursor marca 10:05:36.24; la pausa congela el cursor exactamente
+(10:05:48.34 antes y después); tras un salto de −10 s, los canales con el punto en disco siguen sin esperar y los que aún descargan
+se unen al terminar. A x2 el bucle de eventos llegó a 435 ms en un solo aviso.
+
+**Pruebas** (DVR falso con un canal lento, 4 canales reales del reproductor): arrancan juntos aunque uno tarde 1 s; se mantienen a < 0.15 s de
+diferencia durante varios bloques con descargas de 0.3-0.9 s; el que tarda más que la barrera se une después a la hora correcta; un canal sin
+grabación no frena a los demás; un salto los reúne; pausa/reanudar los mantiene juntos; el que se traba 1 s alcanza al reloj saltando cuadros.
+
+**Pendiente/observación:** tras varios saltos seguidos o a x2, algunos canales muestran "Descargando…" mientras el resto sigue: el adelanto solo pide
+el siguiente bloque y a velocidad alta se consume más rápido de lo que llega. Un adelanto más profundo a velocidades altas lo mejoraría.

@@ -15,7 +15,7 @@ from .chunk_store import ChunkEntry, ChunkStore
 from .clip import Clip
 from .download_manager import DownloadPriority
 from .light_query_manager import LightPriority
-from .playback_control import PlaybackControl
+from .playback_control import SYNC_STATUS, PlaybackControl
 
 # Reproductor de UN canal de grabaciones. Corre en su propio hilo y sirve el
 # video desde el almacén local de bloques (chunk_store.py): solo descarga del
@@ -62,6 +62,13 @@ DEFAULT_FPS = 25.0
 # ~2 bloques x 3 MB x 30 cuadros ≈ 180 MB por canal (~700 MB entre los 4) solo en reversa.
 REVERSE_BLOCK_FRAMES = 30
 EPSILON = timedelta(milliseconds=1)
+# Sincronía con el reloj compartido (ver playback_control.py): un cuadro que va más
+# atrasado que LATE_SKIP segundos no se pinta (se decodifica y se descarta, para
+# alcanzar al reloj); si el atraso pasa de LATE_SEEK (p. ej. se esperó una descarga)
+# se salta directo a la hora actual del reloj.
+LATE_SKIP = 0.12
+LATE_SEEK = 1.5
+PACE_STEP = 0.03
 
 
 def find_clip(clips: list[Clip], moment: datetime) -> Clip | None:
@@ -331,7 +338,9 @@ class ChannelPlayer:
                 if outcome == "seek":
                     target = seek
                     continue
-                # "idle": fin/inicio de segmento o sin grabación; espera un salto.
+                # "idle": fin/inicio de segmento o sin grabación; no hace esperar a los
+                # demás canales y espera un salto.
+                self.control.announce_absent(channel)
                 target = self.control.wait_seek(channel, self._should_stop)
                 if target is None:
                     return
@@ -508,7 +517,6 @@ class ChannelPlayer:
             fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
             if fps <= 0 or fps == float("inf"):
                 fps = DEFAULT_FPS
-            interval = 1.0 / fps
             expected = max(1, round((entry.end - entry.start).total_seconds() * fps))
             reader = _ChunkReader(capture, expected)
             reader.reverse = reverse
@@ -524,10 +532,10 @@ class ChannelPlayer:
 
             self._on_chunk_start(clip, entry, position)
             control.mark_playing(channel, True)
-            self.deps.emit_status(channel, control.status_text())
+            control.announce_ready(channel)  # barrera de arranque: ya tengo dónde empezar
+            waiting_for_others = control.has_clock() and not control.clock_running() and not control.paused
+            self.deps.emit_status(channel, SYNC_STATUS if waiting_for_others else control.status_text())
 
-            next_frame_at = time.monotonic()
-            seen_epoch = control.epoch
             credit = 1.0  # cuadros "por pintar" acumulados (ver DISPLAY_FPS_CAP)
             frames_read = 0
             progressed = False
@@ -535,43 +543,72 @@ class ChannelPlayer:
                 if self._should_stop():
                     return "stopped", None
 
-                # Pausa compartida: espera aquí (sin tocar el DVR) hasta reanudar, o deja pasar un cuadro suelto.
+                # Pausa/arranque compartidos: espera aquí (sin tocar el DVR) a que el reloj corra,
+                # o a un permiso de cuadro suelto si está en pausa.
                 turn = control.wait_turn(channel, self._should_stop)
                 if turn == "stop":
                     return "stopped", None
+                if waiting_for_others:
+                    waiting_for_others = False
+                    self.deps.emit_status(channel, control.status_text())
 
-                rebase = turn == "step"
                 seek = control.take_seek(channel)
                 if seek is not None:
                     if not (entry.start <= seek < entry.end):
-                        if turn == "step":
-                            control.give_step(channel)  # en pausa: el cuadro del punto nuevo lo mostrará el bloque nuevo
-                        return "seek", seek
+                        return "seek", seek  # (en pausa el permiso de cuadro queda para el bloque nuevo)
                     reader.seek(frame_at(seek))
                     credit = 1.0
-                    rebase = True
                     progressed = True
+                    control.announce_ready(channel)  # el salto rearmó la barrera
+                    waiting_for_others = control.has_clock() and not control.clock_running() and not control.paused
+                    if waiting_for_others:
+                        self.deps.emit_status(channel, SYNC_STATUS)
+                    continue
 
                 if control.reverse != reader.reverse:
                     reader.set_reverse(control.reverse)
                     credit = 1.0
-                    rebase = True
                     progressed = True
-                    self._prefetch_neighbours(clip, entry)  # ahora importa el vecino del otro lado
 
-                if rebase or control.epoch != seen_epoch:
-                    seen_epoch = control.epoch
-                    next_frame_at = time.monotonic()
-
-                now = time.monotonic()
-                if turn != "step" and now < next_frame_at:
-                    time.sleep(next_frame_at - now)
+                # Ritmo: este cuadro se muestra cuando el reloj compartido llegue a su hora de video.
+                late = 0.0
+                if turn != "step" and control.has_clock():
+                    media = entry.start + timedelta(seconds=reader.next_index / fps)
+                    resync = False
+                    while True:
+                        if self._should_stop():
+                            return "stopped", None
+                        if (
+                            control.peek_seek(channel) is not None
+                            or control.paused
+                            or not control.clock_running()
+                            or control.reverse != reader.reverse
+                        ):
+                            resync = True  # cambió algo (salto, pausa, sentido): se reevalúa desde arriba
+                            break
+                        delta = control.wall_for(media) - time.monotonic()
+                        if delta <= 0:
+                            late = -delta
+                            break
+                        time.sleep(min(delta, PACE_STEP))
+                    if resync:
+                        continue
+                    if late > LATE_SEEK:
+                        target = control.media_now()
+                        if target is not None:
+                            if not (entry.start <= target < entry.end):
+                                return "seek", target
+                            reader.seek(frame_at(target))
+                            credit = 1.0
+                            continue
 
                 speed = control.speed
                 capped = turn != "step" and speed > 1.0 and speed * fps > DISPLAY_FPS_CAP * (1 + 1e-9)
                 paint = True
                 if reader.reverse:
                     reader.paint_ratio = 1.0 / speed if capped else 1.0  # en reversa el lector decide qué cuadros convierte
+                elif late > LATE_SKIP:
+                    paint = False  # atrasado: se decodifica sin pintar para alcanzar al reloj
                 elif capped:
                     credit += 1.0 / speed
                     paint = credit >= 1.0 - 1e-9
@@ -582,16 +619,15 @@ class ChannelPlayer:
                     break
                 frames_read += 1
                 if reader.reverse:
-                    paint = frame is not None
+                    paint = frame is not None and late <= LATE_SKIP
                 if paint:
-                    # Backpressure: aquí NUNCA se descarta un cuadro ya
-                    # decodificado -- se espera a que la interfaz confirme haber
+                    # Backpressure: aquí NUNCA se descarta un cuadro ya decodificado por
+                    # falta de turno -- se espera a que la interfaz confirme haber
                     # consumido uno anterior (DVRClient.notify_recording_frame_consumed).
                     while not self.semaphore.acquire(timeout=BACKPRESSURE_POLL):
                         if self._should_stop():
                             return "stopped", None
                     self.deps.emit_frame(channel, frame)
-                next_frame_at = max(next_frame_at + interval / control.speed, time.monotonic())
             if frames_read == 0 and not progressed:
                 return "error", None
             return ("ended_reverse" if reader.reverse else "ended"), None
