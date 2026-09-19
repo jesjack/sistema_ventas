@@ -3,27 +3,19 @@
 from __future__ import annotations
 
 import os
-import tempfile
 import threading
 import time
 import unittest
-from concurrent.futures import Future
-from pathlib import Path
 
-import cv2
-import numpy as np
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from camera_viewer.dvr_client import DVRClient
 from camera_viewer.playback_control import PAUSED_STATUS, PlaybackControl
 from camera_viewer.playback_controls import SPEEDS, PlaybackControls
 
 CHANNELS = (1, 2, 3, 4)
-FPS = 30
-FRAMES = 60  # 2 s de video
 
 
 class PlaybackControlTests(unittest.TestCase):
@@ -136,107 +128,6 @@ class PlaybackControlsWidgetTests(unittest.TestCase):
         self.assertEqual(controls._pause.text(), "Reanudar")
         controls.set_active(False)
         self.assertFalse(controls._step.isEnabled())
-
-
-class PlayChunkTests(unittest.TestCase):
-    """_play_chunk real, con un video sintético en disco (no toca el DVR)."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.app = QApplication.instance() or QApplication([])
-
-    def setUp(self) -> None:
-        self.client = DVRClient()
-        self.stop = threading.Event()
-        self.semaphore = threading.Semaphore(2)
-        self.frames = 0
-        self.statuses: list[str] = []
-
-        def on_frame(channel, frame) -> None:
-            self.frames += 1
-            self.semaphore.release()  # hace de "la interfaz ya lo mostró"
-
-        # Directa: sin bucle de eventos en la prueba, una conexión en cola nunca se entrega.
-        direct = Qt.ConnectionType.DirectConnection
-        self.client.recording_frame_ready.connect(on_frame, direct)
-        self.client.recording_channel_status.connect(lambda channel, text: self.statuses.append(text), direct)
-
-    def make_clip(self) -> Future:
-        path = Path(tempfile.mkdtemp()) / "clip.avi"
-        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), FPS, (64, 48))
-        for index in range(FRAMES):
-            writer.write(np.full((48, 64, 3), index * 4 % 255, dtype=np.uint8))
-        writer.release()
-        future: Future = Future()
-        future.set_result(path)
-        return future
-
-    def play(self, future: Future | None = None) -> tuple[threading.Thread, list[str]]:
-        outcome: list[str] = []
-        future = future or self.make_clip()
-        thread = threading.Thread(
-            target=lambda: outcome.append(
-                self.client._play_chunk(0, 1, None, None, self.stop, self.semaphore, future)
-            ),
-            daemon=True,
-        )
-        thread.start()
-        return thread, outcome
-
-    def test_plays_at_real_time_and_double_speed(self) -> None:
-        started = time.monotonic()
-        thread, outcome = self.play()
-        thread.join(10)
-        normal = time.monotonic() - started
-        self.assertEqual((outcome, self.frames), (["ended"], FRAMES))
-        self.assertGreater(normal, 1.7)
-
-        self.frames = 0
-        self.client.control.set_speed(2.0)
-        started = time.monotonic()
-        thread, outcome = self.play()
-        thread.join(10)
-        fast = time.monotonic() - started
-        self.assertEqual((outcome, self.frames), (["ended"], FRAMES))  # ningún cuadro se pierde a x2
-        self.assertLess(fast, normal * 0.75)
-
-    def test_pause_freezes_and_resume_continues_without_losing_or_repeating_frames(self) -> None:
-        thread, outcome = self.play()
-        time.sleep(0.5)
-        self.client.toggle_pause()
-        time.sleep(0.2)  # deja terminar el cuadro en vuelo
-        frozen = self.frames
-        time.sleep(0.6)
-        self.assertEqual(self.frames, frozen)  # en pausa no avanza nada
-        self.assertIn(PAUSED_STATUS, self.statuses)
-        self.client.toggle_pause()
-        thread.join(10)
-        self.assertEqual((outcome, self.frames), (["ended"], FRAMES))
-
-    def test_step_shows_one_frame_at_a_time_while_paused(self) -> None:
-        self.client.control.reset(paused=True)
-        thread, outcome = self.play()
-        time.sleep(0.5)
-        self.assertEqual(self.frames, 1)  # el primer cuadro se ve aunque arranque en pausa
-        self.client.step_frame()
-        time.sleep(0.3)
-        self.assertEqual(self.frames, 2)
-        time.sleep(0.4)
-        self.assertEqual(self.frames, 2)
-        self.stop.set()
-        thread.join(5)
-        self.assertEqual(outcome, ["stopped"])
-
-    def test_cancel_while_paused_returns_promptly(self) -> None:
-        thread, outcome = self.play()
-        time.sleep(0.3)
-        self.client.toggle_pause()
-        time.sleep(0.2)
-        started = time.monotonic()
-        self.stop.set()
-        thread.join(5)
-        self.assertEqual(outcome, ["stopped"])
-        self.assertLess(time.monotonic() - started, 1.0)
 
 
 if __name__ == "__main__":

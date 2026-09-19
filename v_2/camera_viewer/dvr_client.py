@@ -5,14 +5,16 @@ import threading
 import time
 from calendar import monthrange
 from concurrent.futures import Future
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import cv2
 from PySide6.QtCore import QObject, Signal
 
 from . import download_client
-from .download_manager import DownloadPriority, purge_download_dir
+from .download_manager import purge_download_dir
+from .channel_player import ChannelPlayer, PlayerDeps
+from .chunk_store import ChunkStore
+from .clip import Clip
 from .light_query_manager import LightPriority
 from .playback_control import PlaybackControl
 
@@ -34,11 +36,6 @@ LIVE_SUBTYPE = 1
 # de reconexiones cuando esta caido o sobrecargado.
 RECONNECT_BACKOFF_INITIAL = 1.0
 RECONNECT_BACKOFF_MAX = 10.0
-
-# Cuantas veces se reintenta descargar el MISMO bloque de grabacion antes
-# de darlo por perdido.
-MAX_CLIP_RETRIES = 3
-CLIP_RETRY_BACKOFF = 1.5
 
 # El DVR (Dahua XVR51xxHS-S2, ver camera_viewer/informes/DVR_HARDWARE.md) es un
 # equipo de gama baja: un solo SoC embebido generico y un puerto Ethernet
@@ -66,7 +63,6 @@ CONNECTION_SERIALIZATION_GAP = 1.5
 # de concurrencia hacia el DVR) y lo reproduce desde ahi a ritmo real -- la
 # reproduccion en si no toca la red, asi que los 4 canales pueden verse a
 # la vez sin nunca superar el limite de conexiones del DVR.
-DOWNLOAD_CHUNK_SECONDS = 45.0
 
 # Backpressure de la REPRODUCCION de grabaciones (no de la descarga, que ya
 # tiene la suya en download_manager.py): a diferencia de vivo, aqui no se puede descartar
@@ -82,7 +78,6 @@ DOWNLOAD_CHUNK_SECONDS = 45.0
 # si la GUI se atrasa (causa confirmada del congelamiento del sistema, ver
 # investigacion de 2026-09-17).
 RECORDING_MAX_INFLIGHT_FRAMES = 2
-RECORDING_BACKPRESSURE_POLL = 0.2
 
 # Espera antes de la primera descarga al pasar de vivo a grabaciones (ver
 # play_from): mismo margen de cortesia que entre conexiones RTSP.
@@ -101,29 +96,6 @@ LIVE_TO_RECORDINGS_SETTLE = CONNECTION_SERIALIZATION_GAP
 # bucle se detenia creyendo que ya no habia mas, cuando en realidad
 # faltaba pedir una pagina extra.
 MAX_RECORDED_DAYS_PAGES = 50
-
-
-@dataclass(frozen=True)
-class Clip:
-    channel: int
-    start: datetime
-    end: datetime
-
-
-class _Prefetch:
-    """Pre-descarga en curso del bloque que sigue al que se esta
-    reproduciendo (posiblemente ya en el clip siguiente, incluso del dia
-    siguiente). `helper` es el hilo que la prepara cuando primero hay que
-    pedir los clips del dia siguiente al DVR."""
-
-    def __init__(self) -> None:
-        self.future = None
-        self.start: datetime | None = None
-        self.helper: threading.Thread | None = None
-
-    def clear(self) -> None:
-        self.future = None
-        self.start = None
 
 
 class DVRClient(QObject):
@@ -175,6 +147,9 @@ class DVRClient(QObject):
         self._playback_session = 0
         # Pausa/velocidad/avance de cuadro compartidos por los 4 canales.
         self.control = PlaybackControl(DEFAULT_CHANNELS)
+        # Bloques de video ya descargados, compartidos por los 4 reproductores
+        # (ver chunk_store.py y channel_player.py).
+        self.chunk_store = ChunkStore()
 
         self._live_stop_event: threading.Event | None = None
         self._live_threads: list[threading.Thread] = []
@@ -325,17 +300,51 @@ class DVRClient(QObject):
         }
         self._playback_threads = []
 
+        deps = PlayerDeps(
+            store=self.chunk_store,
+            control=self.control,
+            submit=self._submit_download,
+            fetch_clips=self._fetch_next_day_clips,
+            emit_frame=self.recording_frame_ready.emit,
+            emit_status=self.recording_channel_status.emit,
+            emit_day_changed=self.playback_day_changed.emit,
+        )
         for channel in DEFAULT_CHANNELS:
-            channel_clips = clips_by_channel.get(channel, [])
-            stop_event = self._playback_stop_events[channel]
-            semaphore = self._playback_semaphores[channel]
-            thread = threading.Thread(
-                target=self._play_channel_worker,
-                args=(session_id, channel, selected_time, channel_clips, stop_event, semaphore, start_delay),
-                daemon=True,
+            player = ChannelPlayer(
+                channel,
+                clips_by_channel.get(channel, []),
+                deps,
+                self._playback_stop_events[channel],
+                self._playback_semaphores[channel],
+                is_current=lambda session_id=session_id: session_id == self._playback_session,
             )
+            thread = threading.Thread(target=player.run, args=(selected_time, start_delay), daemon=True)
             self._playback_threads.append(thread)
             thread.start()
+
+    @property
+    def playback_active(self) -> bool:
+        """Hay una reproducción en curso (aunque esté en pausa o esperando un salto)."""
+        return any(thread.is_alive() for thread in self._playback_threads)
+
+    def seek(self, target: datetime, resume: bool = False) -> None:
+        """Salta a `target` SIN reiniciar la reproducción: cada canal busca dentro
+        del bloque que ya tiene en disco, o abre el vecino (ver channel_player.py);
+        solo descarga si el almacén no lo tiene. resume=True además reanuda si estaba en pausa."""
+        if resume and self.control.paused:
+            self.control.set_paused(False)
+        self.control.request_seek(target)
+        if resume:
+            self._emit_control_status()
+
+    def _submit_download(self, channel: int, start: datetime, end: datetime, priority: int, stop: threading.Event) -> Future:
+        return download_client.submit(self.host, self.username, self.password, channel, start, end, priority, stop)
+
+    def _fetch_next_day_clips(self, channel: int, start: datetime, end: datetime, priority: int) -> list[Clip]:
+        # Los 4 canales lo piden casi a la vez: se turnan en vez de abrirle al
+        # DVR 4 búsquedas simultáneas.
+        with self._next_day_fetch_gate:
+            return self._fetch_clips(channel, start, end, priority)
 
     def stop_playback(self) -> None:
         self._stop_and_join()
@@ -369,337 +378,7 @@ class DVRClient(QObject):
         self._playback_stop_events = {}
         self._playback_semaphores = {}
         self._playback_threads = []
-
-    @staticmethod
-    def _find_clip(clips: list[Clip], selected_time: datetime) -> Clip | None:
-        # Primero el clip donde la hora cae ESTRICTAMENTE antes del final: los
-        # clips del DVR son contiguos (02:00-03:00, 03:00-04:00), asi que una
-        # hora justo en la frontera coincide con el final de uno y el inicio
-        # del siguiente -- devolver el primero (el que termina ahi) dejaba un
-        # rango de descarga de largo cero y el canal fallaba con
-        # "No se pudo reproducir". El cierre inclusivo solo sirve de respaldo
-        # para la ultima marca de un clip sin siguiente.
-        for clip in clips:
-            if clip.start <= selected_time < clip.end:
-                return clip
-        for clip in clips:
-            if clip.start <= selected_time <= clip.end:
-                return clip
-        return None
-
-    @staticmethod
-    def _find_adjacent_clip(clips: list[Clip], previous_end: datetime) -> Clip | None:
-        """Busca un clip que continue sin hueco justo despues de
-        previous_end -- evita mostrar "Fin de segmento" cuando en realidad
-        la grabacion sigue de inmediato en un clip distinto (el DVR parte
-        las grabaciones en archivos, pero para el usuario deberia verse
-        como una sola reproduccion continua)."""
-        for clip in clips:
-            if clip.start <= previous_end < clip.end:
-                return clip
-        return None
-
-    @staticmethod
-    def _next_chunk_target(clips: list[Clip], clip: Clip, chunk_end: datetime) -> tuple[datetime, datetime] | None:
-        """Rango [inicio, fin) del bloque que sigue a uno que termina en
-        chunk_end: el siguiente del mismo clip, o -- si este era el ultimo --
-        el primero del clip adyacente (si ya se conoce)."""
-        if chunk_end < clip.end:
-            return chunk_end, min(chunk_end + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
-        adjacent = DVRClient._find_adjacent_clip(clips, clip.end)
-        if adjacent is None:
-            return None
-        return adjacent.start, min(adjacent.start + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), adjacent.end)
-
-    def _submit_prefetch(
-        self, channel: int, target: tuple[datetime, datetime], stop_event: threading.Event, prefetch: _Prefetch
-    ) -> None:
-        prefetch.start = target[0]
-        prefetch.future = download_client.submit(
-            self.host, self.username, self.password, channel, target[0], target[1],
-            DownloadPriority.PREFETCH, stop_event,
-        )
-
-    def _prefetch_next_day(
-        self,
-        channel: int,
-        clips: list[Clip],
-        clip: Clip,
-        stop_event: threading.Event,
-        prefetch: _Prefetch,
-    ) -> None:
-        """Corre en un hilo aparte mientras se reproduce el ULTIMO clip de un
-        dia (que termina a medianoche): los clips que conoce el hilo de
-        reproduccion son solo los del dia elegido, asi que sin esto al llegar
-        a las 00:00 no habia "clip siguiente" y salia "Fin de segmento". Pide
-        los clips del dia que sigue y, con ellos, pre-descarga su primer
-        bloque igual que en cualquier otra frontera de clip."""
-        day_start = clip.end
-        day_end = day_start + timedelta(hours=23, minutes=59, seconds=59)
-        with self._next_day_fetch_gate:
-            if stop_event.is_set():
-                return
-            try:
-                fetched = self._fetch_clips(channel, day_start, day_end, LightPriority.PERIODIC)
-            except Exception:
-                return  # sin clips del dia siguiente: se cae al "Fin de segmento" de siempre
-        if stop_event.is_set():
-            return
-        clips.extend(fetched)
-        target = self._next_chunk_target(clips, clip, clip.end)
-        if target is not None:
-            self._submit_prefetch(channel, target, stop_event, prefetch)
-
-    def _play_channel_worker(
-        self,
-        session_id: int,
-        channel: int,
-        selected_time: datetime,
-        clips: list[Clip],
-        stop_event: threading.Event,
-        semaphore: threading.Semaphore,
-        start_delay: float = 0.0,
-    ) -> None:
-        """Reproduce por bloques acotados (DOWNLOAD_CHUNK_SECONDS): cada
-        bloque se descarga a un archivo local (a traves del servicio de
-        descargas) antes de reproducirlo -- la descarga respeta el limite
-        de concurrencia del DVR, la reproduccion en si es local y no cuenta
-        contra ese limite.
-
-        Mientras se reproduce un bloque, se adelanta la descarga del
-        SIGUIENTE (si sigue en el mismo clip) -- sin esto, cada bloque
-        pedia su descarga recien cuando terminaba de reproducirse el
-        anterior, y como los 4 canales avanzan casi sincronizados, los 4
-        pedian turno casi al mismo instante y se veian pausados a la vez
-        cada DOWNLOAD_CHUNK_SECONDS esperando su descarga (reportado
-        2026-09-17, ver captura en el hilo de la investigacion). Con la
-        pre-descarga, para cuando el bloque actual termina de reproducirse
-        el siguiente ya deberia estar listo (o casi) en disco."""
-        clip = self._find_clip(clips, selected_time)
-        if clip is None:
-            self.recording_channel_status.emit(channel, "Sin grabación en esa hora")
-            return
-
-        # Copia propia: _prefetch_next_day le agrega los clips del dia
-        # siguiente, y la lista original es la misma que usa MainWindow para
-        # dibujar la linea de tiempo del dia elegido.
-        clips = list(clips)
-
-        position = max(clip.start, selected_time)
-        retries_left = MAX_CLIP_RETRIES
-        if start_delay > 0:
-            self.recording_channel_status.emit(channel, f"Descargando {position:%H:%M:%S}...")
-            if stop_event.wait(start_delay):
-                return
-        prefetch = _Prefetch()
-        next_day_requested = False
-
-        while True:
-            if stop_event.is_set() or session_id != self._playback_session:
-                return
-
-            chunk_end = min(position + timedelta(seconds=DOWNLOAD_CHUNK_SECONDS), clip.end)
-
-            if prefetch.future is not None and prefetch.start == position:
-                future = prefetch.future
-            else:
-                self.recording_channel_status.emit(channel, f"Descargando {position:%H:%M:%S}...")
-                future = download_client.submit(
-                    self.host, self.username, self.password, channel, position, chunk_end,
-                    DownloadPriority.INTERACTIVE, stop_event,
-                )
-            prefetch.clear()
-
-            # Adelanta el bloque que SIGUE mientras el actual se reproduce
-            # -- dentro del mismo clip, o el primero del clip adyacente si
-            # este es el ultimo (sin esto, cada cruce de un clip a otro,
-            # p. ej. de una hora a la siguiente, pausaba 2-3 s los canales
-            # esperando una descarga; medido 2026-09-18). Se pide recien
-            # cuando el bloque actual YA se descargo y empieza a
-            # reproducirse (on_playback_start), no junto con el pedido del
-            # actual: si se mandaran casi al mismo tiempo (desde hilos
-            # distintos, orden de llegada no determinista) la pre-descarga
-            # podia llegar primero a una cola vacia y ocupar un hilo
-            # descargador, dejando el bloque que el usuario SI esta
-            # esperando detras de ella (medido: hasta ~10s de espera).
-            def on_playback_start() -> None:
-                nonlocal next_day_requested
-                target = self._next_chunk_target(clips, clip, chunk_end)
-                if target is not None:
-                    self._submit_prefetch(channel, target, stop_event, prefetch)
-                elif (
-                    chunk_end >= clip.end
-                    and clip.end.time() == datetime.min.time()
-                    and not next_day_requested
-                ):
-                    # Ultimo clip del dia y no se conoce nada despues: puede
-                    # que la grabacion siga en el dia siguiente.
-                    next_day_requested = True
-                    prefetch.helper = threading.Thread(
-                        target=self._prefetch_next_day,
-                        args=(channel, clips, clip, stop_event, prefetch),
-                        daemon=True,
-                    )
-                    prefetch.helper.start()
-
-            outcome = self._play_chunk(
-                session_id, channel, position, chunk_end, stop_event, semaphore, future, on_playback_start
-            )
-
-            if outcome == "stopped":
-                return  # detenido por el usuario o cambio de sesion
-
-            if outcome == "error":
-                # Fallo al descargar el bloque (o el archivo descargado
-                # salio vacio/corrupto) -- descarta cualquier pre-descarga
-                # ya en curso (el plan de bloques ya no aplica igual tras
-                # un reintento) y reintenta el MISMO bloque antes de darlo
-                # por perdido.
-                prefetch.clear()
-                if retries_left <= 0:
-                    self.recording_channel_status.emit(channel, "No se pudo reproducir la grabación")
-                    return
-                retries_left -= 1
-                self.recording_channel_status.emit(
-                    channel, f"Reintentando descarga ({MAX_CLIP_RETRIES - retries_left}/{MAX_CLIP_RETRIES})..."
-                )
-                if stop_event.wait(CLIP_RETRY_BACKOFF):
-                    return
-                continue
-
-            # outcome == "ended": este bloque se reprodujo completo.
-            retries_left = MAX_CLIP_RETRIES
-            position = chunk_end
-            if position < clip.end:
-                continue  # sigue el mismo clip, siguiente bloque (ya pre-descargandose)
-
-            next_clip = self._find_adjacent_clip(clips, clip.end)
-            if next_clip is None and prefetch.helper is not None:
-                # Todavia se estaban pidiendo los clips del dia siguiente
-                # (normalmente ya termino: tuvo todo el ultimo clip).
-                while prefetch.helper.is_alive():
-                    if stop_event.is_set() or session_id != self._playback_session:
-                        return
-                    prefetch.helper.join(0.2)
-                next_clip = self._find_adjacent_clip(clips, clip.end)
-            if next_clip is None:
-                self.recording_channel_status.emit(channel, "Fin de segmento")
-                return
-
-            if next_clip.start.date() != clip.start.date():
-                self.playback_day_changed.emit(next_clip.start.date())
-
-            clip = next_clip
-            position = clip.start
-
-    def _play_chunk(
-        self,
-        session_id: int,
-        channel: int,
-        start: datetime,
-        end: datetime,
-        stop_event: threading.Event,
-        semaphore: threading.Semaphore,
-        future,
-        on_playback_start=None,
-    ) -> str:
-        """Reproduce [start, end) a partir de `future` -- una descarga ya
-        pedida al servicio de descargas (ver download_client.py, que se
-        turna con las demas descargas pendientes de cualquier canal, de
-        este proceso o de cualquier otro), posiblemente pedida con
-        anticipacion mientras se reproducia el bloque anterior (ver
-        _play_channel_worker). Devuelve "stopped", "error" o "ended" -- ya
-        no hay ambiguedad de "se corto por un corte de red a medias": el
-        archivo ya esta completo en disco antes de reproducirlo, asi que
-        cualquier fallo durante la reproduccion es un archivo
-        vacio/corrupto, no un corte transitorio de la conexion en vivo con
-        el DVR."""
-        control = self.control
-        if not future.done():
-            # Si ya estaba lista (caso normal gracias a la pre-descarga) no
-            # hace falta mostrar "Descargando" -- solo se nota cuando de
-            # verdad toca esperar (primer bloque de un clip, o la red no
-            # alcanzo a adelantarse dentro de la ventana del bloque previo).
-            self.recording_channel_status.emit(channel, f"Descargando {start:%H:%M:%S}...")
-        local_path = future.result()
-
-        if stop_event.is_set() or session_id != self._playback_session:
-            if local_path is not None:
-                local_path.unlink(missing_ok=True)
-            return "stopped"
-        if local_path is None:
-            return "error"
-
-        try:
-            capture = cv2.VideoCapture(str(local_path), cv2.CAP_FFMPEG)
-            if not capture.isOpened():
-                capture.release()
-                return "error"
-
-            if on_playback_start is not None:
-                on_playback_start()
-            # La velocidad no cambia frame a frame -- se avisa una sola vez
-            # por bloque (antes se re-emitia la hora en CADA frame, ~30/s por
-            # canal, para una etiqueta que repetia la hora que el DVR ya
-            # imprime en el video).
-            control.mark_playing(channel, True)
-            self.recording_channel_status.emit(channel, control.status_text())
-
-            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
-            if fps <= 0 or not fps < float("inf"):
-                fps = 25.0
-            frame_interval = 1.0 / fps
-            next_frame_at = time.monotonic()
-            frames_read = 0
-            seen_epoch = control.epoch
-
-            try:
-                while True:
-                    if stop_event.is_set() or session_id != self._playback_session:
-                        return "stopped"
-
-                    # Pausa compartida: espera aquí (sin tocar el archivo ni el
-                    # DVR) hasta reanudar, o deja pasar un cuadro suelto.
-                    turn = control.wait_turn(
-                        channel, lambda: stop_event.is_set() or session_id != self._playback_session
-                    )
-                    if turn == "stop":
-                        return "stopped"
-                    if turn == "step" or control.epoch != seen_epoch:
-                        seen_epoch = control.epoch
-                        next_frame_at = time.monotonic()
-
-                    now = time.monotonic()
-                    if turn != "step" and now < next_frame_at:
-                        time.sleep(next_frame_at - now)
-
-                    success, frame = capture.read()
-                    if not success:
-                        break
-
-                    frames_read += 1
-
-                    # Backpressure (ver RECORDING_MAX_INFLIGHT_FRAMES): a
-                    # diferencia de vivo, aqui NUNCA se descarta un frame ya
-                    # decodificado -- se espera a que la GUI confirme haber
-                    # consumido uno anterior (notify_recording_frame_consumed)
-                    # antes de emitir este. El poll corto es solo para poder
-                    # reaccionar a stop_event/cambio de sesion sin quedar
-                    # bloqueado para siempre si el usuario cancela mientras
-                    # se espera turno.
-                    while not semaphore.acquire(timeout=RECORDING_BACKPRESSURE_POLL):
-                        if stop_event.is_set() or session_id != self._playback_session:
-                            return "stopped"
-
-                    self.recording_frame_ready.emit(channel, frame)
-                    next_frame_at = max(next_frame_at + frame_interval / control.speed, time.monotonic())
-            finally:
-                capture.release()
-                control.mark_playing(channel, False)
-
-            return "ended" if frames_read > 0 else "error"
-        finally:
-            local_path.unlink(missing_ok=True)
+        self.chunk_store.clear()
 
     # -- vista en vivo (RTSP realmonitor, igual protocolo que cameras/vivo.py) --
 

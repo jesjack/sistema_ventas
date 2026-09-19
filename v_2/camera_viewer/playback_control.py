@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 from typing import Callable
 
 # Estado de reproducción COMPARTIDO por los 4 canales (pausa, velocidad y
 # avance cuadro a cuadro). Cada canal tiene su propio hilo y su propio reloj
-# (ver DVRClient._play_chunk); este objeto es lo único que tienen en común.
+# (ver ChannelPlayer._play_entry); este objeto es lo único que tienen en común.
 # No usa Qt: los hilos lo consultan en cada cuadro, y la interfaz lo cambia
 # desde su hilo.
 
@@ -25,6 +26,8 @@ class PlaybackControl:
         self._epoch = 0
         self._steps = {channel: 0 for channel in channels}
         self._playing: set[int] = set()
+        # Salto pendiente por canal (hora a la que ir). Gana el último pedido.
+        self._seeks: dict[int, datetime] = {}
 
     @property
     def paused(self) -> bool:
@@ -53,6 +56,7 @@ class PlaybackControl:
             self._paused = paused
             self._steps = {channel: (1 if paused else 0) for channel in self._channels}
             self._playing.clear()
+            self._seeks.clear()
             self._epoch += 1
             self._cond.notify_all()
 
@@ -89,6 +93,36 @@ class PlaybackControl:
                 self._steps[channel] += 1
             self._cond.notify_all()
             return True
+
+    # -- saltos (ver channel_player.py) ---------------------------------------
+
+    def request_seek(self, target: datetime) -> None:
+        """Pide a los 4 canales ir a `target`. En pausa, cada uno deja pasar un
+        cuadro para mostrar la imagen del punto nuevo y sigue en pausa."""
+        with self._cond:
+            for channel in self._channels:
+                self._seeks[channel] = target
+                if self._paused:
+                    self._steps[channel] += 1
+            self._cond.notify_all()
+
+    def take_seek(self, channel: int) -> datetime | None:
+        with self._cond:
+            return self._seeks.pop(channel, None)
+
+    def peek_seek(self, channel: int) -> datetime | None:
+        with self._cond:
+            return self._seeks.get(channel)
+
+    def wait_seek(self, channel: int, should_stop: Callable[[], bool]) -> datetime | None:
+        """Espera (canal sin video que mostrar: fin de segmento, sin grabación)
+        a que llegue un salto. None = lo cancelaron."""
+        with self._cond:
+            while channel not in self._seeks:
+                if should_stop():
+                    return None
+                self._cond.wait(GATE_POLL)
+            return self._seeks.pop(channel)
 
     def wait_turn(self, channel: int, should_stop: Callable[[], bool]) -> str:
         """Lo llama el hilo de un canal antes de cada cuadro. Devuelve "go"

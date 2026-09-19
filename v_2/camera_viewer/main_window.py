@@ -210,8 +210,9 @@ class MainWindow(QMainWindow):
         self.playback_controls.set_paused(paused)
 
     def _jump(self, seconds: int) -> None:
-        """Salta ±seconds desde donde va el cursor. Conserva la pausa: en
-        pausa se ve el primer cuadro del punto nuevo y sigue en pausa."""
+        """Salta ±seconds desde donde va el cursor, sin reiniciar la reproducción
+        (ver DVRClient.seek). Conserva la pausa: en pausa se ve el primer
+        cuadro del punto nuevo y sigue en pausa."""
         current = self.timeline.playhead_time()
         day = self.timeline.day
         if current is None or day is None or self._is_live:
@@ -220,7 +221,7 @@ class MainWindow(QMainWindow):
         target = min(max(current + timedelta(seconds=seconds), day_start), day_start + timedelta(hours=23, minutes=59, seconds=59))
         paused = self.client.control.paused
         self._accept_recording_output = True
-        self.client.play_from(target, self._clips_by_channel, paused=paused)
+        self.client.seek(target)
         self.timeline.start_playhead(target, paused=paused)
 
     def _set_speed(self, speed: float) -> None:
@@ -267,7 +268,12 @@ class MainWindow(QMainWindow):
 
         self._accept_recording_output = True
         self.status_label.setText(f"Reproduciendo desde {selected_time:%Y-%m-%d %H:%M:%S}...")
-        self.client.play_from(selected_time, self._clips_by_channel, start_delay=start_delay)
+        if self.client.playback_active:
+            # Ya hay una reproducción de este día: se salta dentro de ella (usa
+            # los bloques que ya están en disco; solo descarga lo que falte).
+            self.client.seek(selected_time, resume=True)
+        else:
+            self.client.play_from(selected_time, self._clips_by_channel, start_delay=start_delay)
         self.timeline.start_playhead(selected_time)
         self._set_playback_active(True)
 
@@ -289,7 +295,7 @@ class MainWindow(QMainWindow):
         if panel is not None:
             panel.set_frame(frame)
         # Libera el freno de backpressure de la reproduccion de grabaciones
-        # para este canal (ver DVRClient._play_chunk).
+        # para este canal (ver ChannelPlayer._play_entry).
         self.client.notify_recording_frame_consumed(channel)
 
     def _on_recording_channel_status(self, channel: int, text: str) -> None:
