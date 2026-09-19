@@ -163,3 +163,33 @@ descargas nunca fallaron (35 y 16 trabajos, 0 fallos).
 - Falta medir la frecuencia y la duración de esos atascos (sondeo continuo de una
   consulta con timeout largo, en reposo vs. con 1 descarga) y si coinciden con algo
   concreto (inicio de trabajos, cruce de archivos de grabación).
+
+## Adenda 3 (2026-09-18): sondeo continuo de consultas ligeras con 0, 1 y 2 descargas
+
+Una consulta `getSystemInfo` cada ~0.25 s (timeout 30 s) durante toda la prueba;
+tres tramos de 4 minutos con 0, 1 y 2 descargas de clips de 45 s seguidas y sin
+pausa (con un candado para que no cierren y abran a la vez). La prueba se cortó
+sola a los 63 s del tramo de 2 descargas por una descarga fallida.
+
+| Tramo | Consultas | Errores | Latencia p50 / máx | Atascos > 3 s |
+|---|---|---|---|---|
+| 0 descargas (240 s) | 959 (4.0/s) | 0 | 78 ms / 0.13 s | 0 |
+| 1 descarga (240 s) | 813 (3.4/s) | 0 | 93 ms / 10.04 s | 5 (7-10 s cada uno; 38.7 s en total por encima de 1 s) |
+| 2 descargas (63 s, cortado) | 92 (1.4/s) | 0 | 358 ms / 10.59 s | 1 |
+
+- **En reposo el DVR es estable**: cero atascos en 4 minutos. Los atascos los provoca
+  tener una descarga activa.
+- **Con 1 descarga los atascos son periódicos**: a los 274, 341, 410 y 480 s (cada
+  ~69 s) con duraciones crecientes (5.8, 7.4, 8.4 y 10.0 s). El siguiente, a los 550 s,
+  cayó en el tramo de 2 descargas (10.6 s), aun con 20 s sin descargas antes; sin
+  descargas (tramo 0) no hubo ninguno. Hipótesis sin comprobar: una tarea periódica
+  interna del DVR que bloquea las consultas mientras se sirve una descarga.
+- Las descargas en sí no se afectan con 1 (116 trabajos, 0 fallos, primer byte máx 0.39 s).
+- **Primer fallo de descargas en todas las pruebas**: con 2 descargas sin pausa, 2
+  fallaron con `ConnectionError` a los 63 s (el DVR siguió sano después). Esto
+  **debilita** la conclusión de la Adenda 1 de que la pausa de cortesía no hace falta:
+  vale para 1 hilo, no está demostrado para 2 hilos sostenidos. No quitar la pausa.
+- Pendiente: 2 descargas CON la pausa de 1 s durante minutos (configuración real),
+  descargas con velocidad limitada (por si el atasco es por saturar la CPU/red del
+  DVR), y registrar el rango de video de cada descarga junto a cada atasco (por si
+  coinciden con el cruce de archivos de grabación).
