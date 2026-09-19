@@ -258,3 +258,29 @@ tramos de 5 min en orden A-B-B-A (A = 1 hilo ligero, B = 2 hilos), 30 s entre tr
 - El DVR quedó sano al terminar.
 - Nota de método: al lanzarla se colaron 2 copias unos 20 s (4 descargas simultáneas); se detuvieron, se
   comprobó el DVR (sano) y se reinició desde cero; esos segundos no cuentan en la tabla.
+
+## Adenda 6 (2026-09-19): 4 transmisiones en vivo + descargas de clips a la vez
+
+Hasta hoy nunca se había medido la combinación (la regla "no mezclar grabaciones con vivo" era una precaución). Prueba escalonada, app
+cerrada: 4 canales RTSP (substream, aperturas con 1.5 s de separación, como la app) abiertos todo el tiempo, y encima descargas por
+el `RecordingDownloadManager` (pausa de 1 s), con consultas de salud cada 0.5 s. Se corta a la primera anomalía.
+
+| Prueba | Vivo (fps por canal / hueco máx) | Descargas | Consultas de salud |
+|---|---|---|---|
+| 4 en vivo solas, 60 s | 15.0 / 0.1 s | — | 105, mediana 70 ms, máx 0.1 s |
+| + 1 descarga de 45 s, 60 s | 15.0 / 0.1 s | 35 ok, 0 fallos, 1.7 s c/u | 96, máx 2.3 s |
+| + 2 descargas de 45 s, 119 s | 14.5 / 0.1 s | 26 ok, **2 fallos**, **8.3 s c/u** | 55, mediana 140 ms, **máx 31.4 s** (4 > 3 s) |
+| 4 en vivo + 1 descarga de 5 min, 295 s | 14.9 / 0.1 s | 22 ok, **2 fallos**, 12.2 s c/u | 372, máx 30.8 s (5 > 3 s) |
+
+- **El vivo nunca se afectó**: ninguna reconexión, ningún hueco > 0.1 s, en ninguna de las pruebas. El DVR siguió respondiendo consultas
+  y con la salud normal al terminar cada una.
+- **Lo que sí se degrada son las descargas**: con 2 descargas + vivo tardan 4-5 veces más y fallan; con 1 descarga de trozos de 5 min hubo 2 fallos
+  de 24 (sin vivo y con trozos de 45 s, 0 de 616 en la Adenda 5).
+- **Controles inconclusos y un efecto secundario**: el control "1 descarga de 5 min SIN vivo" falló en el segundo 1.8 y terminó con la salud
+  2/3 (consultas de hasta 59 s), y "4 en vivo + 1 descarga de 60 s" tuvo descargas de 34.7 s de media. El DVR ya venía castigado por las
+  pruebas anteriores (~25 minutos seguidos con varios fallos), así que esos dos controles **no son comparables**.
+- **DVR degradado después**: consultas y vivo normales (0.06-0.11 s; 20 fps), disco sin errores, pero **una descarga de 5 s (1.3 MB) tarda 22-71 s** en
+  cualquier canal y hora (lo normal es < 1 s), incluso tras 5+ minutos sin carga. Antes de estas pruebas, hoy mismo, las descargas tardaban 1-2 s.
+  No se puede separar si lo causaron las pruebas o coincidió con un problema propio del DVR; queda pendiente ver si se recupera solo o con reinicio.
+- **Conclusión para el diseño**: mezclar descargas con el vivo **no derriba el vivo, pero no es fiable para las descargas**, y con dos a la vez
+  degrada el servicio de grabaciones. Se mantiene la regla de pausar las exportaciones durante la vista en vivo.
