@@ -5,12 +5,13 @@ from datetime import datetime
 from typing import Callable
 
 # Estado de reproducción COMPARTIDO por los 4 canales (pausa, velocidad y
-# avance cuadro a cuadro). Cada canal tiene su propio hilo y su propio reloj
+# sentido normal/reversa). Cada canal tiene su propio hilo y su propio reloj
 # (ver ChannelPlayer._play_entry); este objeto es lo único que tienen en común.
 # No usa Qt: los hilos lo consultan en cada cuadro, y la interfaz lo cambia
 # desde su hilo.
 
 PAUSED_STATUS = "Pausa"
+REVERSE_STATUS_PREFIX = "Reversa"
 GATE_POLL = 0.1  # cada cuánto un hilo en pausa revisa si lo cancelaron
 
 
@@ -20,6 +21,7 @@ class PlaybackControl:
         self._cond = threading.Condition()
         self._paused = False
         self._speed = 1.0
+        self._reverse = False
         # Sube cada vez que cambia el ritmo (reanudar, cambiar velocidad): los
         # hilos lo comparan con el último que vieron y reinician su reloj de
         # cuadros, para no "ponerse al día" a golpes tras una pausa.
@@ -44,14 +46,21 @@ class PlaybackControl:
         with self._cond:
             return self._epoch
 
+    @property
+    def reverse(self) -> bool:
+        with self._cond:
+            return self._reverse
+
     def status_text(self) -> str:
         with self._cond:
-            return PAUSED_STATUS if self._paused else f"x{self._speed:g}"
+            if self._paused:
+                return PAUSED_STATUS
+            return f"{REVERSE_STATUS_PREFIX} x{self._speed:g}" if self._reverse else f"x{self._speed:g}"
 
     def reset(self, paused: bool) -> None:
         """Al arrancar una reproducción nueva (play_from). La velocidad se
-        conserva. Si arranca en pausa, cada canal deja pasar UN cuadro para
-        que se vea la imagen del punto elegido."""
+        y el sentido se conservan. Si arranca en pausa, cada canal deja pasar UN
+        cuadro para que se vea la imagen del punto elegido."""
         with self._cond:
             self._paused = paused
             self._steps = {channel: (1 if paused else 0) for channel in self._channels}
@@ -84,15 +93,14 @@ class PlaybackControl:
             self._epoch += 1
             self._cond.notify_all()
 
-    def step(self) -> bool:
-        """Deja pasar un cuadro por canal. Solo tiene efecto en pausa."""
+    def set_reverse(self, reverse: bool) -> None:
+        """Cambia el sentido (normal/reversa). La velocidad y la pausa se conservan."""
         with self._cond:
-            if not self._paused:
-                return False
-            for channel in self._channels:
-                self._steps[channel] += 1
+            if reverse == self._reverse:
+                return
+            self._reverse = reverse
+            self._epoch += 1
             self._cond.notify_all()
-            return True
 
     # -- saltos (ver channel_player.py) ---------------------------------------
 
@@ -104,6 +112,13 @@ class PlaybackControl:
                 self._seeks[channel] = target
                 if self._paused:
                     self._steps[channel] += 1
+            self._cond.notify_all()
+
+    def give_step(self, channel: int) -> None:
+        """Devuelve un permiso de cuadro no usado (el canal iba a mostrar un
+        cuadro en pausa pero antes tuvo que ir a otro bloque a buscarlo)."""
+        with self._cond:
+            self._steps[channel] += 1
             self._cond.notify_all()
 
     def take_seek(self, channel: int) -> datetime | None:

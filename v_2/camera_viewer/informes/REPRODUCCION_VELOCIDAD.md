@@ -63,3 +63,43 @@ Comprobado con el DVR real y la ventana completa (fuera de pantalla), tras 20 s 
 
 Un bloque de 60 s del canal 2 falló dos veces por un tropiezo del DVR (`ConnectionError` tras el reintento del embudo) y se
 recuperó al tercer intento (reintento del reproductor).
+
+## Adenda 2 (2026-09-19): reproducción en reversa
+
+H.264 no se puede decodificar hacia atrás, pero el DVR pone un cuadro clave por segundo y OpenCV salta a cualquier cuadro
+con precisión exacta. Por eso la reversa decodifica hacia adelante un bloque de 30 cuadros (`REVERSE_BLOCK_FRAMES`) y lo muestra
+del último al primero, y mientras tanto va decodificando el bloque anterior a razón de un par de cuadros por cada cuadro
+mostrado (mismo hilo del canal). Las descargas miran hacia atrás en espejo: el bloque que termina en la posición actual
+(el primero, corto, de 15 s), y el anterior se pide con prioridad PREFETCH; el de adelante queda como BACKGROUND (al revés que en avance).
+
+**Decodificación pura, 4 canales a la vez (sin interfaz), cuadros por segundo por canal:**
+
+| Modo | Cuadros/s por canal |
+|---|---|
+| Avance (referencia) | 95-109 |
+| Reversa, bloque de 12 cuadros | 36 |
+| Reversa, bloque de 20 | 58-67 |
+| Reversa, bloque de 30 | 70-80 |
+| Reversa, bloque de 45 / 60 | 76-85 / 75-95 |
+
+Cada salto de OpenCV decodifica desde el cuadro clave anterior (~15 cuadros de sobra): con bloques chicos ese costo domina.
+
+**Ventana completa contra el DVR real** (reversa con los 4 canales, cruzando fronteras de bloque; retraso del bucle de eventos = temporizador de 20 ms):
+
+| Variante | x1: cuadros pintados/s por canal | x1: retraso máx del bucle | x2: pintados/s | x2: retraso máx |
+|---|---|---|---|---|
+| Bloque de 12, un solo hilo | 25.0 | 18 ms | 17.7 | 36 ms |
+| Bloque de 30, un solo hilo | 26.2 | 29 ms | 22.5 | 22 ms |
+| Bloque de 15 + hilo auxiliar (doble búfer) | 29.5 | 538-762 ms | 20.5-23.2 | 1.4-3.9 s |
+| **Bloque de 30, siguiente bloque decodificado de a poco (elegida)** | **28.2** | **19 ms** | **25.5** | **165 ms** |
+
+- Con un hilo auxiliar la velocidad llegaba a 29.5 pero la interfaz sufría tirones de hasta ~4 s (compite por CPU con los hilos de los
+  canales; bajar su prioridad, limitar los hilos de FFmpeg o cambiar el asignador de memoria no lo arregló). Se descartó.
+- La elegida: a x1 se pinta el 94 % del tiempo real (el video se atrasa ~6 % frente al cursor) y a x2 ≈ x1.7 reales, con la interfaz fluida.
+- La hora impresa por el propio DVR en el video baja de 10:05:50 a 10:05:46 en 4 s de reloj: retrocede a la velocidad correcta.
+- Memoria en reversa: ~2 bloques × 30 cuadros ≈ 180 MB por canal (~700 MB entre los 4) mientras se retrocede.
+- A velocidades altas, en reversa solo se convierten a imagen los cuadros que se van a pintar (~30 por segundo); el resto solo se decodifica.
+
+**Hallazgo aparte: los canales no están sincronizados entre sí.** En la captura de la reversa, CAM 2 y CAM 3 marcaban `10:05:40`
+cuando CAM 1 y CAM 4 marcaban `10:05:50`. Cada canal arranca cuando termina SU descarga (en esa corrida el DVR tardó ~14 s), y desde
+entonces cada uno avanza con su propio reloj: la diferencia del arranque se queda. Ya ocurría en avance.

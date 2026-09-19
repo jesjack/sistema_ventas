@@ -279,24 +279,30 @@ class ServiceEndToEndTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        with socket.socket() as sock:
-            sock.bind(("localhost", 0))
-            port = sock.getsockname()[1]
         cls.tmp = Path(tempfile.mkdtemp())
-        cls.patches = [
-            mock.patch.object(download_service, "SERVICE_ADDRESS", ("localhost", port)),
-            mock.patch.object(download_service, "AUTHKEY_PATH", cls.tmp / "authkey"),
-        ]
-        for patch in cls.patches:
-            patch.start()
         cls.recordings = RecordingDownloadManager(max_concurrent=2, download_dir=cls.tmp, post_download_gap=0)
         cls.light = LightQueryManager(threads=2, max_attempts=2, retry_delay=0)
-        threading.Thread(
-            target=download_service.serve_forever, args=(cls.recordings, cls.light), daemon=True
-        ).start()
-        deadline = time.monotonic() + 5
-        while download_client._try_connect() is None and time.monotonic() < deadline:
-            time.sleep(0.05)
+        cls.patches = [mock.patch.object(download_service, "AUTHKEY_PATH", cls.tmp / "authkey")]
+        cls.patches[0].start()
+        # El puerto libre que se elige puede ser tomado por otro proceso antes de que el
+        # servicio lo abra (las pruebas corren junto a otras): se reintenta con otro.
+        for _attempt in range(8):
+            with socket.socket() as sock:
+                sock.bind(("localhost", 0))
+                port = sock.getsockname()[1]
+            address_patch = mock.patch.object(download_service, "SERVICE_ADDRESS", ("localhost", port))
+            address_patch.start()
+            threading.Thread(target=download_service.serve_forever, args=(cls.recordings, cls.light), daemon=True).start()
+            deadline = time.monotonic() + 2
+            while download_client._try_connect() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            conn = download_client._try_connect()
+            if conn is not None:
+                conn.close()
+                cls.patches.append(address_patch)
+                return
+            address_patch.stop()
+        raise RuntimeError("no se pudo levantar el servicio de prueba")
 
     @classmethod
     def tearDownClass(cls) -> None:

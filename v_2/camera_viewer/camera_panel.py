@@ -7,7 +7,7 @@ from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QGraphicsPixmapItem, QLabel
 
-from .playback_control import PAUSED_STATUS
+from .playback_control import PAUSED_STATUS, REVERSE_STATUS_PREFIX
 from .zoom_canvas import ZoomPanGraphicsView
 
 
@@ -168,6 +168,7 @@ class CameraPanel(ZoomPanGraphicsView):
         return (
             text.startswith(self.LIVE_STATUS_PREFIX)
             or text == PAUSED_STATUS
+            or text.startswith(REVERSE_STATUS_PREFIX)
             or bool(self.SPEED_STATUS_PATTERN.fullmatch(text))
         )
 

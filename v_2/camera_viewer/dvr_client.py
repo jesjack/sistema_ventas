@@ -360,8 +360,9 @@ class DVRClient(QObject):
         self.control.set_speed(speed)
         self._emit_control_status()
 
-    def step_frame(self) -> None:
-        self.control.step()
+    def set_reverse(self, reverse: bool) -> None:
+        self.control.set_reverse(reverse)
+        self._emit_control_status()
 
     def _emit_control_status(self) -> None:
         """Actualiza la esquina de los canales que YA están mostrando video

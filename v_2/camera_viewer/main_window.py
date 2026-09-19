@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         self.connection_panel.info_clicked.connect(self._show_dvr_info)
         self.playback_controls.pause_clicked.connect(self._toggle_pause)
         self.playback_controls.jump_clicked.connect(self._jump)
-        self.playback_controls.step_clicked.connect(self.client.step_frame)
+        self.playback_controls.reverse_toggled.connect(self._set_reverse)
         self.playback_controls.speed_selected.connect(self._set_speed)
 
         self.client.clips_ready.connect(self._on_clips_ready)
@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
         mientras hay una reproducción de grabaciones en curso."""
         self.playback_controls.set_active(active)
         self.playback_controls.set_paused(self.client.control.paused if active else False)
+        self.playback_controls.set_reverse(self.client.control.reverse if active else False)
         self.playback_controls.set_speed(self.client.control.speed)
         for shortcut in (self._pause_shortcut, self._back_shortcut, self._forward_shortcut):
             shortcut.setEnabled(active)
@@ -224,10 +225,20 @@ class MainWindow(QMainWindow):
         self.client.seek(target)
         self.timeline.start_playhead(target, paused=paused)
 
+    def _signed_speed(self) -> float:
+        """Velocidad con signo para el cursor de la línea de tiempo (negativa en reversa)."""
+        control = self.client.control
+        return -control.speed if control.reverse else control.speed
+
     def _set_speed(self, speed: float) -> None:
         self.client.set_speed(speed)
-        self.timeline.set_playhead_speed(speed)
+        self.timeline.set_playhead_speed(self._signed_speed())
         self.playback_controls.set_speed(speed)
+
+    def _set_reverse(self, reverse: bool) -> None:
+        self.client.set_reverse(reverse)
+        self.timeline.set_playhead_speed(self._signed_speed())
+        self.playback_controls.set_reverse(reverse)
 
     def _reset_recordings_view(self) -> None:
         """Detiene cualquier reproduccion y deja los paneles de grabaciones

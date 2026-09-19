@@ -20,7 +20,13 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from camera_viewer import channel_player  # noqa: E402
-from camera_viewer.channel_player import ChannelPlayer, PlayerDeps, chunk_end_for  # noqa: E402
+from camera_viewer.channel_player import (  # noqa: E402
+    ChannelPlayer,
+    PlayerDeps,
+    _ChunkReader,
+    chunk_end_for,
+    chunk_start_for,
+)
 from camera_viewer.chunk_store import ChunkStore  # noqa: E402
 from camera_viewer.clip import Clip  # noqa: E402
 from camera_viewer.download_manager import DownloadPriority  # noqa: E402
@@ -58,6 +64,15 @@ class ChunkEndTests(unittest.TestCase):
             )
         self.assertEqual(chunk_end_for(T0 + timedelta(seconds=60), end, False), T0 + timedelta(seconds=120))
         self.assertEqual(chunk_end_for(T0 + timedelta(seconds=41), T0 + timedelta(seconds=90), False), T0 + timedelta(seconds=90))
+
+
+class ChunkStartTests(unittest.TestCase):
+    def test_mirror_of_chunk_end(self) -> None:
+        clip_start = T0
+        self.assertEqual(chunk_start_for(T0 + timedelta(seconds=100), clip_start, True), T0 + timedelta(seconds=85))
+        self.assertEqual(chunk_start_for(T0 + timedelta(seconds=100), clip_start, False), T0 + timedelta(seconds=60))
+        self.assertEqual(chunk_start_for(T0 + timedelta(seconds=120), clip_start, False), T0 + timedelta(seconds=60))
+        self.assertEqual(chunk_start_for(T0 + timedelta(seconds=30), clip_start, False), T0)  # tope: inicio del clip
 
 
 class ChunkStoreTests(unittest.TestCase):
@@ -202,6 +217,13 @@ class PlayerTestCase(unittest.TestCase):
         )
         patch.start()
         self.addCleanup(patch.stop)
+        patch = mock.patch.object(
+            channel_player,
+            "chunk_start_for",
+            lambda end, clip_start, first: max(end - timedelta(seconds=3 if first else 4), clip_start),
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
         patch = mock.patch.object(channel_player, "CLIP_RETRY_BACKOFF", 0.05)
         patch.start()
         self.addCleanup(patch.stop)
@@ -210,6 +232,83 @@ class PlayerTestCase(unittest.TestCase):
         h = Harness(**kwargs)
         self.addCleanup(h.stop_and_join)
         return h
+
+
+def make_video(frames: int, first_index: int = 0) -> tuple[Path, cv2.VideoCapture]:  # (ruta, captura)
+    path = Path(tempfile.mkdtemp()) / "v.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), FPS, (64, 48))
+    for i in range(frames):
+        writer.write(encode_index(first_index + i))
+    writer.release()
+    return path, cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
+
+
+def index_of(frame) -> int:
+    return round(decode_seconds(frame) * FPS)
+
+
+class ChunkReaderTests(unittest.TestCase):
+    def test_forward_reads_every_frame_in_order_then_ends(self) -> None:
+        path, capture = make_video(40)
+        reader = _ChunkReader(capture, 40, str(path))
+        self.addCleanup(reader.close)
+        seen = []
+        while True:
+            ok, frame = reader.read(True)
+            if not ok:
+                break
+            seen.append(index_of(frame))
+        self.assertEqual(seen, list(range(40)))
+
+    def test_reverse_reads_every_frame_backwards_across_blocks(self) -> None:
+        patch = mock.patch.object(channel_player, "REVERSE_BLOCK_FRAMES", 12)  # varios bloques en 40 cuadros
+        patch.start()
+        self.addCleanup(patch.stop)
+        path, capture = make_video(40)
+        reader = _ChunkReader(capture, 40, str(path))
+        self.addCleanup(reader.close)
+        reader.reverse = True
+        reader.seek(39)
+        seen = []
+        while True:
+            ok, frame = reader.read(True)
+            if not ok:
+                break
+            seen.append(index_of(frame))
+        self.assertEqual(seen, list(range(39, -1, -1)))  # 40 cuadros en bloques de 12, 12, 12 y 4
+
+    def test_seek_in_both_directions(self) -> None:
+        path, capture = make_video(60)
+        reader = _ChunkReader(capture, 60, str(path))
+        self.addCleanup(reader.close)
+        reader.seek(25)
+        self.assertEqual([index_of(reader.read(True)[1]) for _ in range(3)], [25, 26, 27])
+        reader.set_reverse(True)
+        reader.seek(10)
+        self.assertEqual([index_of(reader.read(True)[1]) for _ in range(3)], [10, 9, 8])
+
+    def test_switching_direction_never_repeats_or_skips_a_frame(self) -> None:
+        path, capture = make_video(60)
+        reader = _ChunkReader(capture, 60, str(path))
+        self.addCleanup(reader.close)
+        reader.seek(20)
+        forward = [index_of(reader.read(True)[1]) for _ in range(5)]  # 20..24
+        reader.set_reverse(True)
+        backward = [index_of(reader.read(True)[1]) for _ in range(6)]  # 23..18
+        reader.set_reverse(False)
+        onward = [index_of(reader.read(True)[1]) for _ in range(3)]  # 19, 20, 21
+        self.assertEqual(forward, [20, 21, 22, 23, 24])
+        self.assertEqual(backward, [23, 22, 21, 20, 19, 18])
+        self.assertEqual(onward, [19, 20, 21])
+
+    def test_reverse_at_the_first_frame_ends(self) -> None:
+        path, capture = make_video(20)
+        reader = _ChunkReader(capture, 20, str(path))
+        self.addCleanup(reader.close)
+        reader.reverse = True
+        reader.seek(0)
+        self.assertTrue(reader.read(True)[0])
+        self.assertFalse(reader.read(True)[0])
 
 
 class PlaybackTests(PlayerTestCase):
@@ -314,9 +413,10 @@ class PlaybackTests(PlayerTestCase):
         h.start(4.0)
         time.sleep(0.8)
         self.assertEqual(len(h.frames), 1)
-        h.control.step()
+        h.seek(2.0)  # un salto en pausa deja pasar otro cuadro (el del punto nuevo)
+        self.assertIsNotNone(h.wait_for_time(2.0))
         time.sleep(0.3)
-        self.assertEqual(len(h.frames), 2)
+        self.assertEqual(len(h.frames), 2)  # solo ese: sigue en pausa
         self.assertIn(PAUSED_STATUS, h.statuses)
 
     def test_double_speed_advances_twice_as_fast_but_paints_about_30_frames_per_second(self) -> None:
@@ -399,6 +499,86 @@ class PlaybackTests(PlayerTestCase):
             h.wait_frames(240, 15)  # ~8 s de video
             starts = [e.start for e in h.store.entries(1)]
             self.assertNotIn(T0, starts)  # lo de hace más de 2 s ya se borró
+
+
+class ReversePlaybackTests(PlayerTestCase):
+    def reverse_harness(self, **kwargs) -> Harness:
+        h = self.harness(**kwargs)
+        h.control.set_reverse(True)
+        return h
+
+    def test_plays_backwards_frame_by_frame_across_chunk_boundaries(self) -> None:
+        h = self.reverse_harness()
+        h.start(9.0)
+        h.wait_frames(150, 15)  # 5 s hacia atrás: cruza 2 bloques
+        times = h.frames[:150]
+        self.assertAlmostEqual(times[0], 9.0, delta=0.1)
+        self.assertEqual({round((b - a) * FPS) for a, b in zip(times, times[1:])}, {-1})
+        self.assertIn("Reversa x1", h.statuses)
+
+    def test_reverse_downloads_a_short_chunk_ending_at_the_position_and_prefetches_the_previous_one(self) -> None:
+        h = self.reverse_harness()
+        h.start(9.0)
+        h.wait_frames(3)
+        time.sleep(0.4)
+        interactive = h.interactive_submits()[0]
+        self.assertEqual(interactive[:2], (T0 + timedelta(seconds=6), T0 + timedelta(seconds=9)))
+        by_start = {s[0]: s[2] for s in h.submits}
+        self.assertEqual(by_start[T0 + timedelta(seconds=2)], DownloadPriority.PREFETCH)  # el de atrás, con prioridad
+        self.assertEqual(by_start[T0 + timedelta(seconds=9)], DownloadPriority.BACKGROUND)  # el de adelante, de reserva
+
+    def test_reverse_reaches_the_start_of_the_segment_then_waits_for_a_seek(self) -> None:
+        h = self.reverse_harness()
+        h.start(2.0)
+        deadline = time.monotonic() + 8
+        while "Inicio de segmento" not in h.statuses and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertIn("Inicio de segmento", h.statuses)
+        self.assertTrue(h.thread.is_alive())
+        h.seek(5.0)
+        self.assertIsNotNone(h.wait_for_time(5.0))
+
+    def test_switching_to_reverse_and_back_in_the_middle_is_continuous(self) -> None:
+        h = self.harness()
+        h.start(2.0)
+        h.wait_frames(20)
+        h.control.set_reverse(True)
+        h.wait_frames(len(h.frames) + 20)
+        h.control.set_reverse(False)
+        h.wait_frames(len(h.frames) + 20)
+        steps = [round((b - a) * FPS) for a, b in zip(h.frames, h.frames[1:])]
+        self.assertEqual(set(steps), {1, -1})
+        self.assertNotIn(0, steps)  # ningún cuadro repetido al cambiar de sentido
+        self.assertTrue(all(abs(s) == 1 for s in steps))
+
+    def test_reverse_with_seek_and_pause(self) -> None:
+        h = self.reverse_harness()
+        h.start(9.0)
+        h.wait_frames(5)
+        h.seek(4.0)
+        self.assertIsNotNone(h.wait_for_time(4.0))
+        h.control.set_paused(True)
+        time.sleep(0.3)
+        frozen = len(h.frames)
+        time.sleep(0.4)
+        self.assertEqual(len(h.frames), frozen)
+        h.seek(3.0)
+        time.sleep(0.5)
+        self.assertEqual(len(h.frames), frozen + 1)
+        self.assertAlmostEqual(h.frames[-1], 3.0, delta=0.1)
+
+    def test_double_speed_reverse_goes_back_twice_as_fast_and_paints_about_30_fps(self) -> None:
+        h = self.reverse_harness()
+        h.control.set_speed(2.0)
+        h.start(30.0)
+        h.wait_frames(2)
+        h.frames.clear()
+        started = time.monotonic()
+        time.sleep(2.0)
+        elapsed = time.monotonic() - started
+        self.assertLess(len(h.frames) / elapsed, 36)
+        self.assertGreater(len(h.frames) / elapsed, 24)
+        self.assertGreater((h.frames[0] - h.frames[-1]) / elapsed, 1.8)  # el video retrocede al doble
 
 
 if __name__ == "__main__":

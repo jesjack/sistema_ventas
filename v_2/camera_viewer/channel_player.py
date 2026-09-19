@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import threading
 import time
 from concurrent.futures import Future, TimeoutError as FutureTimeout
@@ -21,15 +22,21 @@ from .playback_control import PlaybackControl
 # DVR (por el embudo) lo que el almacén no tiene, y mientras reproduce trae
 # por adelantado los bloques vecinos -- así el siguiente, el anterior y los
 # saltos de ±10 s ya están en disco cuando se piden. Un salto NO reinicia el
-# hilo: llega como una orden por PlaybackControl.
+# hilo: llega como una orden por PlaybackControl. Lo mismo el sentido
+# (normal/reversa) y la velocidad.
 #
-# Reglas de bloques:
+# Reglas de bloques (en reversa se miran en espejo):
 #   - el primer bloque tras un salto a un punto NO descargado es corto (15 s),
 #     para ver imagen pronto;
-#   - los siguientes terminan en el primer minuto exacto que quede a más de
-#     20 s (duran de 20 a 80 s, y 60 s una vez alineados);
-#   - tras empezar un bloque se piden el siguiente (PREFETCH) y, si falta, lo
-#     de atrás hasta el minuto anterior (BACKGROUND).
+#   - los siguientes terminan (o, en reversa, empiezan) en el primer minuto
+#     exacto que quede a más de 20 s (duran de 20 a 80 s, y 60 s ya alineados);
+#   - tras empezar un bloque se pide el vecino hacia donde se va (PREFETCH) y
+#     el del otro lado (BACKGROUND).
+#
+# Reversa: H.264 no se decodifica hacia atrás, pero el DVR pone un cuadro
+# clave por segundo y OpenCV salta a cualquier cuadro con precisión exacta, así
+# que se decodifica hacia adelante un bloquecito (REVERSE_BLOCK_FRAMES) y se
+# muestra al revés, y luego el bloquecito anterior.
 
 FIRST_CHUNK_SECONDS = 15.0
 CHUNK_MIN_SECONDS = 20.0
@@ -44,6 +51,17 @@ WAIT_POLL = 0.2
 # eventos con paradas de ~10 s: "no responde").
 DISPLAY_FPS_CAP = 30.0
 DEFAULT_FPS = 25.0
+# Cuadros por bloque en la reversa. Cada salto de OpenCV decodifica desde el cuadro
+# clave anterior (~15 cuadros de sobra), así que con bloques chicos ese costo
+# domina: medido con los 4 canales a la vez, 12 cuadros -> 36 cuadros/s por canal,
+# 20 -> 58-67, 30 -> 70-80 (avanzar: 95-109). Mientras se muestra un bloque el
+# siguiente se va decodificando POCO A POCO en el mismo hilo (un par de cuadros por
+# cada cuadro mostrado): con un solo bloque decodificado de golpe la imagen se
+# frenaba ~0.4 s cada segundo (25 cuadros/s pintados a x1), y con un hilo auxiliar la
+# interfaz sufría tirones de hasta segundos por la competencia de CPU. Memoria:
+# ~2 bloques x 3 MB x 30 cuadros ≈ 180 MB por canal (~700 MB entre los 4) solo en reversa.
+REVERSE_BLOCK_FRAMES = 30
+EPSILON = timedelta(milliseconds=1)
 
 
 def find_clip(clips: list[Clip], moment: datetime) -> Clip | None:
@@ -70,6 +88,14 @@ def find_adjacent_clip(clips: list[Clip], previous_end: datetime) -> Clip | None
     return None
 
 
+def find_previous_clip(clips: list[Clip], next_start: datetime) -> Clip | None:
+    """Clip que termina justo donde empieza el que se está reproduciendo."""
+    for clip in clips:
+        if clip.start < next_start <= clip.end:
+            return clip
+    return None
+
+
 def chunk_end_for(start: datetime, clip_end: datetime, first: bool) -> datetime:
     if first:
         end = start + timedelta(seconds=FIRST_CHUNK_SECONDS)
@@ -78,6 +104,16 @@ def chunk_end_for(start: datetime, clip_end: datetime, first: bool) -> datetime:
         if end.second or end.microsecond:
             end = end.replace(second=0, microsecond=0) + timedelta(minutes=1)
     return min(end, clip_end)
+
+
+def chunk_start_for(end: datetime, clip_start: datetime, first: bool) -> datetime:
+    """Espejo de chunk_end_for: el inicio de un bloque que termina en `end`."""
+    if first:
+        start = end - timedelta(seconds=FIRST_CHUNK_SECONDS)
+    else:
+        start = end - timedelta(seconds=CHUNK_MIN_SECONDS)
+        start = start.replace(second=0, microsecond=0)
+    return max(start, clip_start)
 
 
 @dataclass
@@ -115,6 +151,138 @@ class _Request:
                 path.unlink(missing_ok=True)
                 return None
             return store.add(self.channel, self.start, self.end, path)
+
+
+class _NextBlock:
+    """El bloque que sigue en reversa, decodificándose de a poco."""
+
+    def __init__(self, low: int, high: int, flags: dict[int, bool]) -> None:
+        self.low, self.high, self.flags = low, high, flags
+        self.cursor = low
+        self.frames: list[tuple[int, object]] = []
+        self.positioned = False
+
+
+class _ChunkReader:
+    """Lee los cuadros de un bloque en cualquiera de los dos sentidos.
+
+    En avance lee en secuencia. En reversa decodifica hacia adelante un bloque de
+    REVERSE_BLOCK_FRAMES (saltando con `set` por número de cuadro) y lo entrega del
+    último al primero; mientras tanto va decodificando el bloque anterior a razón
+    de unos pocos cuadros por cada cuadro mostrado. `next_index` es el índice del
+    próximo cuadro que se va a mostrar."""
+
+    def __init__(self, capture: cv2.VideoCapture, expected_frames: int, path: str = "") -> None:
+        self.capture = capture
+        count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        self.total = int(count) if count and 0 < count < 1e7 else expected_frames
+        self.reverse = False
+        self.next_index = 0
+        self._block: list[tuple[int, object]] = []  # ascendente; el siguiente a mostrar es el último
+        self._next: _NextBlock | None = None
+        # En reversa, qué cuadros se convierten a imagen (los demás solo se decodifican):
+        # a velocidad alta se pintan ~30 por segundo (DISPLAY_FPS_CAP).
+        self.paint_ratio = 1.0
+        self._paint_credit = 1.0
+
+    def seek(self, index: int) -> None:
+        """Muestra `index` a continuación."""
+        self.next_index = max(0, min(index, self.total - 1))
+        self._reset_reverse_state()
+        if not self.reverse:
+            self.capture.set(cv2.CAP_PROP_POS_FRAMES, self.next_index)
+
+    def set_reverse(self, reverse: bool) -> None:
+        if reverse == self.reverse:
+            return
+        last_shown = self.next_index + (1 if self.reverse else -1)
+        self.reverse = reverse
+        self._reset_reverse_state()
+        self.next_index = last_shown + (-1 if reverse else 1)
+        if not reverse and 0 <= self.next_index < self.total:
+            self.capture.set(cv2.CAP_PROP_POS_FRAMES, self.next_index)
+
+    def _reset_reverse_state(self) -> None:
+        self._block = []
+        self._next = None
+        self._paint_credit = 1.0
+
+    def read(self, paint: bool) -> tuple[bool, object | None]:
+        """(ok, cuadro). El cuadro es None cuando no hay que pintarlo (en avance lo
+        decide `paint`; en reversa, `paint_ratio`)."""
+        if not self.reverse:
+            if self.next_index >= self.total:
+                return False, None
+            ok, frame = self.capture.read() if paint else (self.capture.grab(), None)
+            if ok:
+                self.next_index += 1
+            return ok, frame
+        if self.next_index < 0:
+            return False, None
+        if not self._block:
+            self._load_block()
+            if not self._block:
+                return False, None
+        index, frame = self._block.pop()
+        self.next_index = index - 1
+        self._decode_some_of_next()
+        return True, frame
+
+    def close(self) -> None:
+        self._reset_reverse_state()
+
+    # -- reversa: bloques ----------------------------------------------------------------
+
+    def _paint_flags(self, low: int, high: int) -> dict[int, bool]:
+        """Qué cuadros de [low, high] se pintan, contando en el orden en que se muestran (de high a low)."""
+        flags = {}
+        credit = self._paint_credit
+        for index in range(high, low - 1, -1):
+            credit += self.paint_ratio
+            flags[index] = credit >= 1.0 - 1e-9
+            if flags[index]:
+                credit -= 1.0
+        self._paint_credit = credit
+        return flags
+
+    def _decode_frames(self, block: _NextBlock, count: int) -> None:
+        """Decodifica hasta `count` cuadros más del bloque (con un solo salto al empezar)."""
+        if not block.positioned:
+            self.capture.set(cv2.CAP_PROP_POS_FRAMES, block.low)
+            block.positioned = True
+        for _ in range(count):
+            if block.cursor > block.high:
+                return
+            if block.flags[block.cursor]:
+                ok, frame = self.capture.read()
+            else:
+                ok, frame = self.capture.grab(), None
+            if not ok:
+                block.high = block.cursor - 1  # el archivo terminó antes de lo esperado
+                return
+            block.frames.append((block.cursor, frame))
+            block.cursor += 1
+
+    def _load_block(self) -> None:
+        high = min(self.next_index, self.total - 1)
+        low = max(0, high - REVERSE_BLOCK_FRAMES + 1)
+        block = self._next
+        if block is None or (block.low, block.high) != (low, high):
+            block = _NextBlock(low, high, self._paint_flags(low, high))
+        self._decode_frames(block, block.high - block.cursor + 1)  # lo que falte, de una vez
+        self._block = block.frames
+        self._next = None
+        if self._block and low > 0:
+            next_low, next_high = max(0, low - REVERSE_BLOCK_FRAMES), low - 1
+            self._next = _NextBlock(next_low, next_high, self._paint_flags(next_low, next_high))
+
+    def _decode_some_of_next(self) -> None:
+        """Adelanta el bloque siguiente repartiendo lo que falta entre los cuadros que quedan por mostrar."""
+        block = self._next
+        if block is None or block.cursor > block.high:
+            return
+        remaining_ticks = len(self._block) + 1
+        self._decode_frames(block, math.ceil((block.high - block.cursor + 1) / remaining_ticks))
 
 
 class ChannelPlayer:
@@ -163,7 +331,7 @@ class ChannelPlayer:
                 if outcome == "seek":
                     target = seek
                     continue
-                # "idle": fin de segmento o sin grabación; se queda esperando un salto.
+                # "idle": fin/inicio de segmento o sin grabación; espera un salto.
                 target = self.control.wait_seek(channel, self._should_stop)
                 if target is None:
                     return
@@ -172,8 +340,9 @@ class ChannelPlayer:
             self.control.mark_playing(channel, False)
 
     def _play_from(self, target: datetime) -> tuple[str, datetime | None]:
-        """Reproduce desde `target` hasta el fin del segmento. Devuelve
-        ("stopped"|"idle", None) o ("seek", hora) si llegó un salto fuera de lo que se reproducía."""
+        """Reproduce desde `target` hasta el fin (o, en reversa, el inicio) del
+        segmento. Devuelve ("stopped"|"idle", None) o ("seek", hora) si llegó un
+        salto fuera de lo que se reproducía."""
         channel = self.channel
         self._cancel_requests(keep_covering=target)
         clip = find_clip(self.clips, target)
@@ -187,15 +356,16 @@ class ChannelPlayer:
         while True:
             if self._should_stop():
                 return "stopped", None
+            reverse = self.control.reverse
 
-            outcome, entry, seek = self._acquire(clip, position, first)
+            outcome, entry, seek = self._acquire(clip, position, first, reverse)
             if outcome == "stopped":
                 return "stopped", None
             if outcome == "seek":
                 return "seek", seek
             if outcome == "ok":
                 first = False
-                outcome, seek = self._play_entry(clip, entry, position)
+                outcome, seek = self._play_entry(clip, entry, position, reverse)
                 if outcome == "stopped":
                     return "stopped", None
                 if outcome == "seek":
@@ -216,41 +386,60 @@ class ChannelPlayer:
                     return "stopped", None
                 continue
 
-            # "ended": el bloque se reprodujo completo.
             retries_left = MAX_CLIP_RETRIES
-            position = entry.end
-            if position < clip.end:
-                continue
-            outcome, next_clip = self._after_clip(clip)
-            if outcome == "stopped":
-                return "stopped", None
-            if next_clip is None:
-                self.deps.emit_status(channel, "Fin de segmento")
-                return "idle", None
+            if outcome == "ended":  # el bloque se reprodujo completo hacia adelante
+                position = entry.end
+                if position < clip.end:
+                    continue
+                outcome, next_clip = self._after_clip(clip)
+                if outcome == "stopped":
+                    return "stopped", None
+                if next_clip is None:
+                    self.deps.emit_status(channel, "Fin de segmento")
+                    return "idle", None
+                position_after = next_clip.start
+            else:  # "ended_reverse": el bloque se reprodujo completo hacia atrás
+                position = entry.start
+                if position > clip.start:
+                    continue
+                next_clip = find_previous_clip(self.clips, clip.start)
+                if next_clip is None:
+                    self.deps.emit_status(channel, "Inicio de segmento")
+                    return "idle", None
+                position_after = next_clip.end
             if next_clip.start.date() != clip.start.date():
                 self.deps.emit_day_changed(next_clip.start.date())
             clip = next_clip
-            position = clip.start
+            position = position_after
 
     # -- obtener el bloque de una posición --------------------------------------------
 
     def _acquire(
-        self, clip: Clip, position: datetime, first: bool
+        self, clip: Clip, position: datetime, first: bool, reverse: bool
     ) -> tuple[str, ChunkEntry | None, datetime | None]:
-        """("ok", bloque, None) | ("stopped"|"error", None, None) | ("seek", None, hora)."""
+        """("ok", bloque, None) | ("stopped"|"error", None, None) | ("seek", None, hora).
+
+        En reversa se busca lo que hay JUSTO ANTES de `position` (un bloque
+        cubre [inicio, fin): la frontera pertenece al bloque de después)."""
         channel = self.channel
-        entry = self.store.find(channel, position)
+        probe = position - EPSILON if reverse else position
+        entry = self.store.find(channel, probe)
         if entry is not None:
             return "ok", entry, None
 
-        request = self._request_covering(position)
+        request = self._request_covering(probe)
         if request is None:
-            end = chunk_end_for(position, clip.end, first)
-            request = self._submit(position, end, DownloadPriority.INTERACTIVE)
+            if reverse:
+                end = min(position, clip.end)
+                start = chunk_start_for(end, clip.start, first)
+            else:
+                start = position
+                end = chunk_end_for(position, clip.end, first)
+            request = self._submit(start, end, DownloadPriority.INTERACTIVE)
         if not request.future.done():
             # Solo se avisa cuando de verdad toca esperar (si ya estaba lista
             # gracias a la pre-descarga, no se nota).
-            self.deps.emit_status(channel, f"Descargando {position:%H:%M:%S}...")
+            self.deps.emit_status(channel, f"Descargando {request.start:%H:%M:%S}...")
 
         while True:
             try:
@@ -266,7 +455,7 @@ class ChannelPlayer:
 
         if self._should_stop():
             return "stopped", None, None
-        entry = request.register(self.store) or self.store.find(channel, position)
+        entry = request.register(self.store) or self.store.find(channel, probe)
         if entry is None:
             # Falló: se olvida esa solicitud para que el reintento pida otra en
             # vez de quedarse esperando el mismo resultado fallido.
@@ -305,10 +494,14 @@ class ChannelPlayer:
 
     # -- reproducir un bloque ---------------------------------------------------------------
 
-    def _play_entry(self, clip: Clip, entry: ChunkEntry, position: datetime) -> tuple[str, datetime | None]:
-        """("ended"|"stopped"|"error", None) o ("seek", hora) si el salto cae fuera de este bloque."""
+    def _play_entry(
+        self, clip: Clip, entry: ChunkEntry, position: datetime, reverse: bool
+    ) -> tuple[str, datetime | None]:
+        """("ended"|"ended_reverse"|"stopped"|"error", None) o ("seek", hora) si el
+        salto cae fuera de este bloque."""
         channel, control = self.channel, self.control
         capture = cv2.VideoCapture(str(entry.path), cv2.CAP_FFMPEG)
+        reader: _ChunkReader | None = None
         try:
             if not capture.isOpened():
                 return "error", None
@@ -316,12 +509,18 @@ class ChannelPlayer:
             if fps <= 0 or fps == float("inf"):
                 fps = DEFAULT_FPS
             interval = 1.0 / fps
+            expected = max(1, round((entry.end - entry.start).total_seconds() * fps))
+            reader = _ChunkReader(capture, expected)
+            reader.reverse = reverse
 
             def frame_at(moment: datetime) -> int:
                 return max(0, round((moment - entry.start).total_seconds() * fps))
 
-            if position > entry.start:
-                capture.set(cv2.CAP_PROP_POS_FRAMES, frame_at(position))
+            if reverse:
+                # Entrando desde el bloque de después (frontera): empieza por el último cuadro.
+                reader.seek(reader.total - 1 if position >= entry.end else frame_at(position))
+            elif position > entry.start:
+                reader.seek(frame_at(position))
 
             self._on_chunk_start(clip, entry, position)
             control.mark_playing(channel, True)
@@ -331,7 +530,7 @@ class ChannelPlayer:
             seen_epoch = control.epoch
             credit = 1.0  # cuadros "por pintar" acumulados (ver DISPLAY_FPS_CAP)
             frames_read = 0
-            did_seek = False
+            progressed = False
             while True:
                 if self._should_stop():
                     return "stopped", None
@@ -345,11 +544,20 @@ class ChannelPlayer:
                 seek = control.take_seek(channel)
                 if seek is not None:
                     if not (entry.start <= seek < entry.end):
+                        if turn == "step":
+                            control.give_step(channel)  # en pausa: el cuadro del punto nuevo lo mostrará el bloque nuevo
                         return "seek", seek
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, frame_at(seek))
+                    reader.seek(frame_at(seek))
                     credit = 1.0
                     rebase = True
-                    did_seek = True
+                    progressed = True
+
+                if control.reverse != reader.reverse:
+                    reader.set_reverse(control.reverse)
+                    credit = 1.0
+                    rebase = True
+                    progressed = True
+                    self._prefetch_neighbours(clip, entry)  # ahora importa el vecino del otro lado
 
                 if rebase or control.epoch != seen_epoch:
                     seen_epoch = control.epoch
@@ -360,19 +568,21 @@ class ChannelPlayer:
                     time.sleep(next_frame_at - now)
 
                 speed = control.speed
+                capped = turn != "step" and speed > 1.0 and speed * fps > DISPLAY_FPS_CAP * (1 + 1e-9)
                 paint = True
-                if turn != "step" and speed * fps > DISPLAY_FPS_CAP * (1 + 1e-9) and speed > 1.0:
+                if reader.reverse:
+                    reader.paint_ratio = 1.0 / speed if capped else 1.0  # en reversa el lector decide qué cuadros convierte
+                elif capped:
                     credit += 1.0 / speed
                     paint = credit >= 1.0 - 1e-9
                     if paint:
                         credit -= 1.0
-                if paint:
-                    ok, frame = capture.read()
-                else:
-                    ok, frame = capture.grab(), None
+                ok, frame = reader.read(paint)
                 if not ok:
                     break
                 frames_read += 1
+                if reader.reverse:
+                    paint = frame is not None
                 if paint:
                     # Backpressure: aquí NUNCA se descarta un cuadro ya
                     # decodificado -- se espera a que la interfaz confirme haber
@@ -382,8 +592,12 @@ class ChannelPlayer:
                             return "stopped", None
                     self.deps.emit_frame(channel, frame)
                 next_frame_at = max(next_frame_at + interval / control.speed, time.monotonic())
-            return ("ended", None) if frames_read > 0 or did_seek else ("error", None)
+            if frames_read == 0 and not progressed:
+                return "error", None
+            return ("ended_reverse" if reader.reverse else "ended"), None
         finally:
+            if reader is not None:
+                reader.close()
             capture.release()
             control.mark_playing(channel, False)
 
@@ -391,17 +605,28 @@ class ChannelPlayer:
 
     def _on_chunk_start(self, clip: Clip, entry: ChunkEntry, position: datetime) -> None:
         self.store.prune(self.channel, position - KEEP_BEHIND, position + KEEP_AHEAD)
-        self._prefetch_next(clip, entry)
-        self._prefetch_previous(clip, entry)
+        self._prefetch_neighbours(clip, entry)
 
-    def _prefetch_next(self, clip: Clip, entry: ChunkEntry) -> None:
+    def _prefetch_neighbours(self, clip: Clip, entry: ChunkEntry) -> None:
+        if self.control.reverse:
+            self._prefetch_previous(clip, entry, DownloadPriority.PREFETCH, long_chunk=True)
+            self._prefetch_next(clip, entry, DownloadPriority.BACKGROUND)
+        else:
+            self._prefetch_next(clip, entry, DownloadPriority.PREFETCH)
+            self._prefetch_previous(clip, entry, DownloadPriority.BACKGROUND, long_chunk=False)
+
+    def _prefetch_next(self, clip: Clip, entry: ChunkEntry, priority: int) -> None:
         if entry.end < clip.end:
             start, end = entry.end, chunk_end_for(entry.end, clip.end, False)
         else:
             adjacent = find_adjacent_clip(self.clips, clip.end)
             if adjacent is not None:
                 start, end = adjacent.start, chunk_end_for(adjacent.start, adjacent.end, False)
-            elif clip.end.time() == datetime.min.time() and not self._next_day_requested:
+            elif (
+                priority == DownloadPriority.PREFETCH
+                and clip.end.time() == datetime.min.time()
+                and not self._next_day_requested
+            ):
                 # Último clip del día y no se conoce nada después: puede que la
                 # grabación siga en el día siguiente.
                 self._next_day_requested = True
@@ -413,19 +638,27 @@ class ChannelPlayer:
             else:
                 return
         if self.store.find(self.channel, start) is None and self._request_covering(start) is None:
-            self._submit(start, end, DownloadPriority.PREFETCH)
+            self._submit(start, end, priority)
 
-    def _prefetch_previous(self, clip: Clip, entry: ChunkEntry) -> None:
-        """Lo de atrás, hasta el minuto anterior, para que retroceder sea instantáneo."""
+    def _prefetch_previous(self, clip: Clip, entry: ChunkEntry, priority: int, long_chunk: bool) -> None:
+        """Lo de atrás. En avance (BACKGROUND) solo hasta el minuto anterior, para que
+        retroceder sea instantáneo; en reversa (PREFETCH) un bloque completo, y cruzando
+        al clip anterior si este ya no tiene más atrás."""
         if entry.start <= clip.start:
-            return
-        boundary = entry.start.replace(second=0, microsecond=0)
-        if boundary == entry.start:
-            boundary -= timedelta(minutes=1)
-        start = max(clip.start, boundary)
-        probe = entry.start - timedelta(seconds=1)
+            previous = find_previous_clip(self.clips, clip.start) if long_chunk else None
+            if previous is None:
+                return
+            start, end = chunk_start_for(previous.end, previous.start, False), previous.end
+        elif long_chunk:
+            start, end = chunk_start_for(entry.start, clip.start, False), entry.start
+        else:
+            boundary = entry.start.replace(second=0, microsecond=0)
+            if boundary == entry.start:
+                boundary -= timedelta(minutes=1)
+            start, end = max(clip.start, boundary), entry.start
+        probe = end - timedelta(seconds=1)
         if self.store.find(self.channel, probe) is None and self._request_covering(probe) is None:
-            self._submit(start, entry.start, DownloadPriority.BACKGROUND)
+            self._submit(start, end, priority)
 
     def _prefetch_next_day(self, clip: Clip, entry: ChunkEntry) -> None:
         """Hilo aparte: pide los clips del día que sigue y, con ellos, adelanta su primer bloque."""
@@ -439,7 +672,7 @@ class ChannelPlayer:
         if self._should_stop():
             return
         self.clips.extend(fetched)
-        self._prefetch_next(clip, entry)
+        self._prefetch_next(clip, entry, DownloadPriority.PREFETCH)
 
     def _after_clip(self, clip: Clip) -> tuple[str, Clip | None]:
         next_clip = find_adjacent_clip(self.clips, clip.end)
