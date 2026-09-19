@@ -141,3 +141,25 @@ escalera, con corte ante la primera anomalía. Cada nivel duró 8 s.
 - Cada nivel se corrió una sola vez; el hallazgo en 5 sesiones totales salió en
   dos pruebas distintas (consultas y objetos de búsqueda), pero conviene repetirlo
   antes de tomarlo como límite firme.
+
+### Corrección a la Adenda 2 (misma fecha): los atascos parecen intermitentes, no un límite de sesiones
+
+Se repitió la prueba con **una sola** descarga activa (dos corridas, la segunda con
+20 s de calentamiento). Aun con **una sola consulta ligera a la vez** hubo
+atascos: en la primera corrida la consulta casi no avanzó (1 petición en 8 s + un
+`ReadTimeout`) y en la segunda, tras un calentamiento limpio (9.2 peticiones/s) y
+una pasada perfecta (9.4/s), la siguiente pasada tuvo un `ConnectTimeout` de 6 s.
+Los objetos de búsqueda abiertos (1 a 6) pasaron limpios en ambas corridas, y las
+descargas nunca fallaron (35 y 16 trabajos, 0 fallos).
+
+- Como el atasco también aparece con 1 consulta, el "con 2 descargas caben 2
+  consultas y con 3 aparecen timeouts" de la Adenda 2 **no es fiable**: pudo ser el
+  mismo atasco intermitente cayendo justo en esos niveles.
+- Lo que sí se sostiene: sin descargas, 1-12 consultas simultáneas no fallaron; con
+  descargas activas aparecen, cada cierto tiempo (se vieron 4 en unos 4 minutos de
+  descarga, más los picos de 4.29 s y 1.92 s de la prueba de la pausa), atascos de
+  varios segundos en las consultas ligeras, aun con una sola. Las descargas no se
+  afectan y el DVR siempre se recuperó.
+- Falta medir la frecuencia y la duración de esos atascos (sondeo continuo de una
+  consulta con timeout largo, en reposo vs. con 1 descarga) y si coinciden con algo
+  concreto (inicio de trabajos, cruce de archivos de grabación).
