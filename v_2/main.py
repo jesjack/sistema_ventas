@@ -173,7 +173,7 @@ if __name__ == "__main__":
         with sheet_admin.temporary_unlock():
             ventas = attach_existing(
                 hoja, 6, 1, ["HORA", "PRODUCTO", "PRECIO", "C.", "SUBTOTAL"],
-                header_color=0x50C878, title=f"VENTAS DEL DIA {fecha}",
+                header_color=0x50C878, title=f"VENTAS DEL DÍA {fecha}",
                 show_total=True, total_label_span=2,
                 placeholder="NO HAY VENTAS REALIZADAS", rows=ventas_rows_now,
             )
@@ -223,6 +223,13 @@ if __name__ == "__main__":
         # para que la visibilidad de botones nunca dependa de que el hilo de
         # latido de sesion arranque bien -- si eso falla mas abajo, igual
         # queremos poder armar los botones de este usuario.
+        try:
+            desactivados = table_manager.ventas_service.sincronizar_usuarios_con_sistema()
+            if desactivados:
+                print(f"[usuarios] {desactivados} usuario(s) cambiaron de estado al sincronizar con el sistema.")
+        except Exception as exc:
+            print(f"[usuarios] No se pudo sincronizar la lista de usuarios: {exc}")
+
         usuario_id, usuario_es_nuevo = table_manager.ventas_service.asegurar_usuario_sistema()
 
         seguimiento_sesion = None

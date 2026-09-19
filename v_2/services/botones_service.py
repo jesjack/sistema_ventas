@@ -101,7 +101,7 @@ class BotonesService:
                 boton_id = cur.lastrowid
                 con.commit()
         except sqlite3.IntegrityError:
-            raise ValueError(f"Ya existe un boton para el archivo '{archivo_accion}'.")
+            raise ValueError(f"Ya existe un botón para el archivo '{archivo_accion}'.")
 
         return boton_id
 
@@ -172,7 +172,16 @@ class BotonesService:
     def set_visibilidad(self, boton_id, nombres_usuario):
         with self._connect() as con:
             cur = con.cursor()
-            cur.execute("DELETE FROM boton_visibilidad WHERE boton_id = ?", (int(boton_id),))
+            # Solo se reemplazan los permisos de usuarios activos: el panel no
+            # muestra a los inactivos, y si su cuenta vuelve deben conservar sus botones.
+            cur.execute(
+                """
+                DELETE FROM boton_visibilidad
+                WHERE boton_id = ?
+                  AND usuario_id IN (SELECT id FROM usuarios_sistema WHERE activo = 1)
+                """,
+                (int(boton_id),),
+            )
             for nombre in nombres_usuario or []:
                 usuario_id = self._obtener_usuario_id(cur, nombre)
                 if usuario_id is None:

@@ -9,7 +9,7 @@ import os
 import sqlite3
 from typing import Iterable
 
-from services.identidad import obtener_usuario_actual, USUARIO_PLANTILLA
+from services.identidad import obtener_usuario_actual, usuario_existe_en_sistema, USUARIO_PLANTILLA
 
 
 PREPOSICIONES_CATALOGO = {
@@ -152,6 +152,9 @@ class VentasService:
                 {"sistema_operativo", "version_sistema", "nombre_equipo", "dominio", "creado_en", "ultimo_acceso"},
             ):
                 self._migrar_usuarios_sistema(cur)
+            # Despues de la migracion (que reconstruye la tabla) para que no la pierda.
+            if not self._tabla_tiene_columnas(cur, "usuarios_sistema", {"activo"}):
+                cur.execute("ALTER TABLE usuarios_sistema ADD COLUMN activo INTEGER NOT NULL DEFAULT 1")
             cur.execute(
                 """
                 INSERT OR IGNORE INTO usuarios_sistema
@@ -352,7 +355,7 @@ class VentasService:
     def registrar_codigo_barras(self, codigo_barras, producto_id, precio_venta):
         codigo = str(codigo_barras).strip()
         if not codigo:
-            raise ValueError("El codigo de barras no puede estar vacio.")
+            raise ValueError("El código de barras no puede estar vacío.")
 
         with self._connect() as con:
             cur = con.cursor()
@@ -409,13 +412,47 @@ class VentasService:
             else:
                 usuario_id = int(fila[0])
                 cur.execute(
-                    "UPDATE usuarios_sistema SET version_sistema = ?, ultimo_acceso = ? WHERE id = ?",
+                    "UPDATE usuarios_sistema SET version_sistema = ?, ultimo_acceso = ?, activo = 1 WHERE id = ?",
                     (version_sistema, ahora, usuario_id),
                 )
 
             con.commit()
 
         return usuario_id, es_nuevo
+
+    def sincronizar_usuarios_con_sistema(self):
+        # Marca activo=0 a los usuarios de este equipo que ya no existen como
+        # cuenta del sistema operativo (y reactiva a los que reaparecen). No
+        # borra filas: sesiones_sistema y boton_visibilidad dependen de ellas.
+        # Devuelve la cantidad de filas cuyo estado cambio.
+        datos = self.obtener_datos_usuario_sistema()
+        cambios = 0
+
+        with self._connect() as con:
+            cur = con.cursor()
+            cur.execute(
+                """
+                SELECT id, nombre_usuario, activo
+                FROM usuarios_sistema
+                WHERE nombre_usuario <> ?
+                  AND sistema_operativo = ?
+                  AND COALESCE(nombre_equipo, '') = ?
+                """,
+                (USUARIO_PLANTILLA, datos["sistema_operativo"], datos["nombre_equipo"]),
+            )
+            for usuario_id, nombre_usuario, activo in cur.fetchall():
+                existe = usuario_existe_en_sistema(nombre_usuario)
+                if existe is None:
+                    continue
+
+                nuevo_estado = 1 if existe else 0
+                if nuevo_estado != int(activo):
+                    con.execute("UPDATE usuarios_sistema SET activo = ? WHERE id = ?", (nuevo_estado, usuario_id))
+                    cambios += 1
+
+            con.commit()
+
+        return cambios
 
     def iniciar_sesion_sistema(self, usuario_id, fecha=None, hora=None, detalle=None, pid=None):
         ahora = datetime.now()
@@ -516,11 +553,12 @@ class VentasService:
             )
             con.commit()
 
-    def listar_usuarios_sistema(self):
+    def listar_usuarios_sistema(self, solo_activos=True):
+        filtro = "WHERE u.activo = 1" if solo_activos else ""
         with self._connect() as con:
             cur = con.cursor()
             cur.execute(
-                """
+                f"""
                 SELECT
                     u.id,
                     u.nombre_usuario,
@@ -534,6 +572,7 @@ class VentasService:
                     MAX(COALESCE(s.salida_real, s.ultimo_latido, s.inicio)) AS ultima_salida
                 FROM usuarios_sistema u
                 LEFT JOIN sesiones_sistema s ON s.usuario_id = u.id
+                {filtro}
                 GROUP BY
                     u.id,
                     u.nombre_usuario,
@@ -715,7 +754,7 @@ class VentasService:
     def agregar_producto_autocompletado(self, producto):
         nombre = str(producto).strip().lower()
         if not nombre:
-            raise ValueError("El producto no puede estar vacio.")
+            raise ValueError("El producto no puede estar vacío.")
 
         with self._connect() as con:
             cur = con.cursor()
@@ -731,7 +770,7 @@ class VentasService:
     def editar_producto_autocompletado(self, producto_id, nuevo_nombre):
         nombre = str(nuevo_nombre).strip().lower()
         if not nombre:
-            raise ValueError("El producto no puede estar vacio.")
+            raise ValueError("El producto no puede estar vacío.")
 
         with self._connect() as con:
             cur = con.cursor()
