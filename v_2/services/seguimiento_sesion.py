@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -17,7 +18,10 @@ class SeguimientoSesionSistema:
         self._lock = threading.Lock()
         self._cerrado = False
 
-        self.sesion_id = self.ventas_service.iniciar_sesion_sistema(self.usuario_id)
+        self.sesion_id = self.ventas_service.iniciar_sesion_sistema(
+            self.usuario_id,
+            pid=os.getpid(),
+        )
         self._hilo = threading.Thread(
             target=self._bucle_latido,
             name="SeguimientoSesionSistema",
@@ -32,7 +36,10 @@ class SeguimientoSesionSistema:
             except Exception:
                 pass
 
-    def cerrar(self, exitosa=True):
+    def cerrar(self, exitosa=False, detalle=None):
+        # exitosa=True solo debe pasarlo quien SABE que fue un cierre normal
+        # (ver main.py); por defecto una salida no explicada cuenta como no
+        # exitosa. "detalle" queda como motivo de salida en la sesión.
         with self._lock:
             if self._cerrado:
                 return
@@ -40,7 +47,11 @@ class SeguimientoSesionSistema:
 
         self._detener.set()
         try:
-            self.ventas_service.cerrar_sesion_sistema(self.sesion_id, exitosa=exitosa)
+            self.ventas_service.cerrar_sesion_sistema(
+                self.sesion_id,
+                detalle=detalle,
+                exitosa=exitosa,
+            )
         except Exception:
             pass
 

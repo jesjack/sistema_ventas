@@ -1,21 +1,70 @@
+import atexit
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
+# Antes de cualquier import local: los de más abajo dependen de esto.
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 LOGS_DIR = BASE_DIR / "logs"
 DEBUG_LOGS_DIR = LOGS_DIR / "debug"
 DEBUG_RUNS_TO_KEEP = 20
 ADMIN_RAIZ = "jesjack"
+# Salida inesperada del documento: cuántos relanzamientos seguidos se permiten
+# y cuánto tiempo estable (desde el último intento) los reinicia.
+MAX_RELANZAMIENTOS_POR_FALLO = 2
+VENTANA_RELANZAMIENTOS_SEGUNDOS = 600
+# Así se ve el cierre normal del documento (X, Alt+F4, botones, cambio de
+# modo): documento.Title lanza esta excepción, "cannot get value Title".
+# Observado en el 100 % de las salidas de logs/debug (18 de 18 hasta el
+# 2026-09-19, incluida una provocada a propósito ese día).
+EXCEPCION_CIERRE_NORMAL = "UnknownPropertyException"
+
+
+_SECUENCIA_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+class _SinColor:
+    """Envuelve un archivo y le quita las secuencias de color ANSI: la consola
+    sí las quiere (rich colorea los tracebacks), pero en el log de depuración
+    serían solo ruido ilegible."""
+
+    def __init__(self, archivo):
+        self._archivo = archivo
+
+    def write(self, data):
+        return self._archivo.write(_SECUENCIA_ANSI.sub("", data))
+
+    def flush(self):
+        self._archivo.flush()
+
+    def __getattr__(self, nombre):
+        archivo = self.__dict__.get("_archivo")
+        if archivo is None:
+            raise AttributeError(nombre)
+        return getattr(archivo, nombre)
 
 
 class _Tee:
     """Escribe a varios streams a la vez (ej. consola + archivo de debug),
     sin que un fallo de uno (ej. la consola ya cerrada) tumbe la escritura a
-    los demas."""
+    los demás.
+
+    Cualquier otro atributo (isatty, encoding, fileno...) se delega al primer
+    stream, para que librerías como rich sigan viendo una consola real."""
 
     def __init__(self, *streams):
-        self._streams = streams
+        # sys.stdout/sys.stderr pueden ser None (ej. sin consola adjunta).
+        self._streams = [s for s in streams if s is not None]
+
+    def __getattr__(self, nombre):
+        streams = self.__dict__.get("_streams")
+        if not streams:
+            raise AttributeError(nombre)
+        return getattr(streams[0], nombre)
 
     def write(self, data):
         for stream in self._streams:
@@ -58,8 +107,12 @@ def _activar_log_de_depuracion():
 
     nombre = datetime.now().strftime("run_%Y%m%d_%H%M%S.log")
     archivo = open(DEBUG_LOGS_DIR / nombre, "a", encoding="utf-8", buffering=1)
-    sys.stdout = _Tee(sys.stdout, archivo)
-    sys.stderr = _Tee(sys.stderr, archivo)
+    # Se registra primero para que, por el orden inverso de atexit, el archivo
+    # se cierre al final, después de los demás cierres que aún impriman algo.
+    atexit.register(archivo.close)
+    archivo_sin_color = _SinColor(archivo)
+    sys.stdout = _Tee(sys.stdout, archivo_sin_color)
+    sys.stderr = _Tee(sys.stderr, archivo_sin_color)
 
 
 _activar_log_de_depuracion()
@@ -69,13 +122,9 @@ from calc.calc_window_focus import es_libreoffice_calc_enfocado
 
 print("Iniciando sistema de ventas...")
 
-import atexit
 import time
 
 from services.scanner_detector import clear_buffer, get_scanned_string, is_scan
-
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
 
 try:
     import uno
@@ -91,6 +140,7 @@ from rich.traceback import install
 from calc.calc_focus import enfocar_celda_sin_azul, enfocar_ventana_de_calc, registrar_seguimiento_foco_calc
 from dialogs.codigo_autorizacion import solicitar_codigo
 from dialogs.aviso_impresion import mostrar_aviso_impresion
+from dialogs.aviso_error import mostrar_aviso_error
 from dialogs.imprimir_codigo_barras import solicitar_datos_codigo_barras
 from dialogs.seleccionar_fecha_ventas import solicitar_fecha_ventas
 from dialogs.precio_venta import solicitar_precio_venta
@@ -99,7 +149,13 @@ from hardware.ticket_printer import TicketPrinter
 from services.button_bridge import SheetButtonBridge
 from services.identidad import obtener_usuario_actual
 from services.instancia_unica import asegurar_instancia_unica
-from services.modo_sistema import leer_modo, escribir_modo, solicitar_relanzamiento
+from services.modo_sistema import (
+    leer_modo,
+    escribir_modo,
+    solicitar_relanzamiento,
+    registrar_intento_relanzamiento_por_fallo,
+    reiniciar_intentos_relanzamiento_por_fallo,
+)
 from services.seguimiento_sesion import SeguimientoSesionSistema
 from services.ventas_service import VentasService
 from services.botones_service import BotonesService
@@ -132,6 +188,75 @@ def obtener_documento_calc(desktop):
             continue
 
     return None
+
+
+def vigilar_documento(documento):
+    """Bloquea mientras el documento siga vivo; al dejar de responder
+    (cerrado con X, Alt+F4, botones o el ciclo de cambio de modo) devuelve la
+    excepción que lo delató."""
+    try:
+        while True:
+            # Si el documento se cierra, acceder a una propiedad básica lanza
+            # una excepción.
+            _ = documento.Title
+            # main.ods nunca persiste datos por sí mismo (es solo una
+            # interfaz sobre ventas.db, re-horneada por prebake_ventas.py en
+            # cada apertura) -- resetear esto aquí, una vez por segundo, evita
+            # el prompt de "¿guardar cambios?" al cerrar sin importar el
+            # motivo, sin necesitar un listener de modificación reactivo.
+            documento.setModified(False)
+            time.sleep(1)
+    except Exception as exc:
+        return exc
+
+
+def fue_cierre_normal_del_documento(exc):
+    """True si `exc` es como se ve el cierre normal del documento (ver
+    EXCEPCION_CIERRE_NORMAL). Cualquier otra excepción (ej. DisposedException
+    porque soffice se cayó) NO cuenta como cierre normal."""
+    return type(exc).__name__.endswith(EXCEPCION_CIERRE_NORMAL)
+
+
+def resolver_salida_del_documento(exc):
+    """Decide qué pasa tras dejar de responder el documento. Devuelve True si
+    fue un cierre normal.
+
+    - Cierre normal: se limpia el contador de relanzamientos y se sigue con el
+      cierre de siempre (open_system.sh/.bat terminan si no hay relanzar.flag).
+    - Cualquier otra excepción: se pide relanzar con el mismo mecanismo del
+      cambio de modo (relanzar.flag), hasta MAX_RELANZAMIENTOS_POR_FALLO veces
+      seguidas; después se cierra sin relanzar, para no ciclar sin fin.
+      El flag solo lo consume el launcher cuando soffice termina, y eso lo
+      hace terminar_libreoffice() al final del flujo de cada modo.
+    """
+    if fue_cierre_normal_del_documento(exc):
+        reiniciar_intentos_relanzamiento_por_fallo()
+        return True
+
+    if registrar_intento_relanzamiento_por_fallo(
+        MAX_RELANZAMIENTOS_POR_FALLO, VENTANA_RELANZAMIENTOS_SEGUNDOS
+    ):
+        print("[relanzamiento] Salida inesperada del documento: se relanza el sistema.")
+        solicitar_relanzamiento()
+    else:
+        print(
+            f"[relanzamiento] Salida inesperada y ya se agotaron los "
+            f"{MAX_RELANZAMIENTOS_POR_FALLO} relanzamientos permitidos: no se relanza."
+        )
+    return False
+
+
+def terminar_libreoffice(desktop):
+    # Cerrar el documento (X, o el ciclo de cambio de modo) no mata el proceso
+    # de soffice -- LibreOffice deja un "quickstarter" corriendo en segundo
+    # plano. open_system.bat/.sh esperan a que el PROCESO termine para decidir
+    # si relanzar, así que hay que forzar el cierre completo de la aplicación
+    # aquí, no solo del documento.
+    try:
+        desktop.terminate()
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
     # Solo un usuario a la vez: si otro tiene el puerto de LibreOffice, se le
@@ -189,32 +314,14 @@ if __name__ == "__main__":
         bridge.activate(clear_events=True)
         atexit.register(bridge.close)
 
+        exc = vigilar_documento(documento)
+        print(f"El documento (modo ventas_dia) ha sido cerrado o no es accesible: {type(exc)}: {exc}")
+        resolver_salida_del_documento(exc)
         try:
-            while True:
-                _ = documento.Title
-                # main.ods nunca persiste datos por si mismo (es solo una
-                # interfaz sobre ventas.db, re-horneada por prebake_ventas.py
-                # en cada apertura) -- resetear esto aqui, una vez por
-                # segundo, evita el prompt de "guardar cambios?" al cerrar
-                # sin importar el motivo (X, Alt+F4, botones), sin necesitar
-                # un listener de modificacion reactivo.
-                documento.setModified(False)
-                time.sleep(1)
+            bridge.close()
         except Exception:
-            print(f"El documento (modo ventas_dia) ha sido cerrado o no es accesible: {sys.exc_info()[0]}: {sys.exc_info()[1]}")
-            try:
-                bridge.close()
-            except Exception:
-                pass
-
-            # Ver nota identica mas abajo, en el flujo normal: cerrar el
-            # documento no mata el proceso de soffice (queda el
-            # "quickstarter" de fondo) y open_system.bat/.sh esperan a que el
-            # PROCESO termine para decidir si relanzar.
-            try:
-                desktop.terminate()
-            except Exception:
-                pass
+            pass
+        terminar_libreoffice(desktop)
 
     else:
         table_manager = TableManager(uno_context=context)
@@ -230,15 +337,35 @@ if __name__ == "__main__":
         except Exception as exc:
             print(f"[usuarios] No se pudo sincronizar la lista de usuarios: {exc}")
 
-        usuario_id, usuario_es_nuevo = table_manager.ventas_service.asegurar_usuario_sistema()
+        # Si la base no responde aquí, el punto de venta debe arrancar de todos
+        # modos (Enter/escaneo siguen funcionando); sin usuario_id solo se
+        # pierden los botones por usuario y el seguimiento de sesión.
+        usuario_id, usuario_es_nuevo = None, False
+        try:
+            usuario_id, usuario_es_nuevo = table_manager.ventas_service.asegurar_usuario_sistema()
+        except Exception as exc:
+            print(f"[usuarios] No se pudo registrar al usuario del sistema: {exc}")
+            try:
+                mostrar_aviso_error(
+                    context,
+                    "No se pudo registrar a tu usuario en la base de datos.\n\n"
+                    "El sistema seguirá funcionando para vender, pero sin tus botones "
+                    "personalizados ni el seguimiento de sesión. Reinícialo; si el "
+                    "problema continúa, avisa al administrador.\n\n"
+                    f"Detalle: {exc}",
+                    titulo="Error al iniciar sesión",
+                )
+            except Exception as exc_dialogo:
+                print(f"[usuarios] No se pudo mostrar el aviso en pantalla: {exc_dialogo}")
 
         seguimiento_sesion = None
-        try:
-            seguimiento_sesion = SeguimientoSesionSistema(table_manager.ventas_service, usuario_id)
-        except Exception as exc:
-            print(f"No se pudo iniciar el seguimiento de usuario: {exc}")
-        else:
-            atexit.register(seguimiento_sesion.cerrar)
+        if usuario_id is not None:
+            try:
+                seguimiento_sesion = SeguimientoSesionSistema(table_manager.ventas_service, usuario_id)
+            except Exception as exc:
+                print(f"No se pudo iniciar el seguimiento de usuario: {exc}")
+            else:
+                atexit.register(seguimiento_sesion.cerrar)
 
         # ventas_rows_now se necesita en ambos caminos (fast/slow) de cualquier forma,
         # es una consulta sqlite local barata.
@@ -256,7 +383,7 @@ if __name__ == "__main__":
         with sheet_admin.temporary_unlock():
             if prebaked:
                 try:
-                    input = attach_existing(
+                    tabla_entrada = attach_existing(
                         hoja, 1, 1, ["PRODUCTO", "PRECIO", "C."],
                         header_color=0x9B111E, title="INGRESE LOS DATOS",
                         rows=[("", "", 1)],
@@ -278,10 +405,10 @@ if __name__ == "__main__":
                     prebaked = False
 
             if not prebaked:
-                input = create_table(hoja, 1, 1, ["PRODUCTO", "PRECIO", "C."])
-                input.header_color = 0x9B111E
-                input.title = "INGRESE LOS DATOS"
-                input.append(["", "", 1])
+                tabla_entrada = create_table(hoja, 1, 1, ["PRODUCTO", "PRECIO", "C."])
+                tabla_entrada.header_color = 0x9B111E
+                tabla_entrada.title = "INGRESE LOS DATOS"
+                tabla_entrada.append(["", "", 1])
 
                 cart = create_table(hoja, 1, 5, ["PRODUCTO", "PRECIO", "C.", "SUBTOTAL"])
                 cart.header_color = 0x1CA9C9
@@ -305,7 +432,7 @@ if __name__ == "__main__":
             context,
             documento,
             hoja,
-            input,
+            tabla_entrada,
             table_manager.ventas_service,
             sheet_admin,
         )
@@ -328,8 +455,8 @@ if __name__ == "__main__":
             if registro is not None:
                 _producto_id, producto, precio = registro
                 with sheet_admin.temporary_unlock():
-                    input[0] = [producto, precio, 1]
-                    if table_manager.add_item_to_cart(input, cart):
+                    tabla_entrada[0] = [producto, precio, 1]
+                    if table_manager.add_item_to_cart(tabla_entrada, cart):
                         print(f"Producto agregado al carrito: {producto} (${precio:.2f})")
                     else:
                         print("No se pudo agregar el producto al carrito.")
@@ -354,12 +481,23 @@ if __name__ == "__main__":
             except Exception as exc:
                 print(f"No se pudo registrar el codigo de barras: {exc}")
 
+        def registrar_evento_de_fallo(evento, detalle, codigo=None):
+            # El historial es evidencia: si registrar el fallo también falla
+            # (ej. base bloqueada), se avisa por consola pero no se propaga,
+            # para no tumbar on_enter encima del error original.
+            try:
+                with sheet_admin.temporary_unlock():
+                    table_manager.registrar_evento_especial(
+                        ventas, evento, codigo=codigo, detalle=detalle,
+                    )
+            except Exception as exc:
+                print(f"No se pudo registrar el evento '{evento}' en el historial: {exc}")
+
         def on_enter():
             if not es_libreoffice_calc_enfocado(ctx=context):
                 print("Calc no tiene el foco. Ignorando la tecla Enter.")
                 return
             print("Tecla Enter detectada. Verificando si hay un escaneo...")
-            global selling
             try:
                 if autocompletado_handler.selector_activo:
                     return
@@ -375,10 +513,18 @@ if __name__ == "__main__":
                     return
                 cobrar = False
                 with sheet_admin.temporary_unlock():
-                    if not table_manager.add_item_to_cart(input, cart):
+                    if not table_manager.add_item_to_cart(tabla_entrada, cart):
                         cobrar = True
                 if cobrar:
-                    if ACCIONES["cobrar_carrito"].ejecutar(globals()) == "code":
+                    accion_cobrar = ACCIONES.get("cobrar_carrito")
+                    if accion_cobrar is None:
+                        print("[acciones] Falta acciones/cobrar_carrito.py: no se puede cobrar.")
+                        registrar_evento_de_fallo(
+                            "FALLO AL COBRAR",
+                            "No se pudo cobrar el carrito: falta acciones/cobrar_carrito.py.",
+                        )
+                        return
+                    if accion_cobrar.ejecutar(globals()) == "code":
                         codigo = solicitar_codigo(context)
                         if codigo is not None:
                             print(f"Codigo ingresado: {codigo}")
@@ -388,7 +534,15 @@ if __name__ == "__main__":
                                     printer.open_cash_drawer()
                                 except Exception as exc:
                                     print(f"No se pudo abrir la caja: {exc}")
-                                finally:
+                                    registrar_evento_de_fallo(
+                                        "FALLO AL ABRIR CAJA",
+                                        f"Se ingresó el código autorizado, pero no se pudo abrir la caja: {exc}",
+                                        codigo=codigo,
+                                    )
+                                else:
+                                    # Solo se audita la apertura si de verdad
+                                    # ocurrió: un fallo de la impresora no debe
+                                    # dejar un evento que diga que se abrio.
                                     with sheet_admin.temporary_unlock():
                                         table_manager.registrar_evento_especial(
                                             ventas,
@@ -402,7 +556,7 @@ if __name__ == "__main__":
         usuario_actual = obtener_usuario_actual()
         botones_service = BotonesService()
 
-        if usuario_es_nuevo:
+        if usuario_es_nuevo and usuario_id is not None:
             botones_service.otorgar_plantilla_a_usuario_nuevo(usuario_id)
 
         # ACCIONES queda como global del modulo (estamos dentro de
@@ -427,7 +581,11 @@ if __name__ == "__main__":
             if usuario_actual == ADMIN_RAIZ:
                 bridge.add_button("ADMINISTRAR ADMINS", abrir_panel_admin)
 
-            for boton_id, etiqueta, archivo_accion, _orden in botones_service.listar_botones_visibles_para(usuario_id):
+            botones_visibles = []
+            if usuario_id is not None:
+                botones_visibles = botones_service.listar_botones_visibles_para(usuario_id)
+
+            for boton_id, etiqueta, archivo_accion, _orden in botones_visibles:
                 modulo = ACCIONES.get(archivo_accion)
                 if modulo is None:
                     print(f"[botones] '{etiqueta}' referencia '{archivo_accion}', que no existe en acciones/. Se omite.")
@@ -459,39 +617,25 @@ if __name__ == "__main__":
         keyboard.add_hotkey("enter", on_enter)
 
         # Bucle de control: verifica si el documento sigue vivo
+        exc = vigilar_documento(documento)
+        print(f"El documento ha sido cerrado o no es accesible: {type(exc)}: {exc}")
+        cierre_normal = resolver_salida_del_documento(exc)
+        if seguimiento_sesion is not None:
+            try:
+                seguimiento_sesion.cerrar(
+                    exitosa=cierre_normal,
+                    detalle=None if cierre_normal else f"{type(exc).__name__}: {exc}",
+                )
+            except Exception:
+                pass
         try:
-            while True:
-                # Intentamos acceder a una propiedad básica del documento
-                # Si el documento se cierra, esto lanzará una excepción (DisposedException)
-                _ = documento.Title
-                # Ver nota identica en el flujo ventas_dia: evita el prompt de
-                # "guardar cambios?" al cerrar, sin importar el motivo.
-                documento.setModified(False)
-                time.sleep(1)  # Espera 1 segundo antes de volver a verificar
+            bridge.close()
         except Exception:
-            print(f"El documento ha sido cerrado o no es accesible: {sys.exc_info()[0]}: {sys.exc_info()[1]}")
-            if seguimiento_sesion is not None:
-                try:
-                    seguimiento_sesion.cerrar(exitosa=False)
-                except Exception:
-                    pass
-            try:
-                bridge.close()
-            except Exception:
-                pass
-            # Si da error porque el documento ya no existe, limpiamos el teclado y cerramos
-            try:
-                controlador.removeKeyHandler(autocompletado_handler)
-            except Exception:
-                pass
-            keyboard.unhook_all()
-
-            # Cerrar el documento (X, o el ciclo de cambio de modo) no mata el
-            # proceso de soffice -- LibreOffice deja un "quickstarter" corriendo
-            # en segundo plano. open_system.bat/.sh esperan a que el PROCESO
-            # termine para decidir si relanzar, asi que hay que forzar el cierre
-            # completo de la aplicacion aqui, no solo del documento.
-            try:
-                desktop.terminate()
-            except Exception:
-                pass
+            pass
+        # Si da error porque el documento ya no existe, limpiamos el teclado y cerramos
+        try:
+            controlador.removeKeyHandler(autocompletado_handler)
+        except Exception:
+            pass
+        keyboard.unhook_all()
+        terminar_libreoffice(desktop)

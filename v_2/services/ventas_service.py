@@ -534,10 +534,17 @@ class VentasService:
                 UPDATE sesiones_sistema
                 SET ultimo_latido = ?,
                     salida_real = ?,
-                    cerrada_correctamente = ?
+                    cerrada_correctamente = ?,
+                    detalle = COALESCE(?, detalle)
                 WHERE id = ?
                 """,
-                (instante, instante, 1 if exitosa else 0, int(sesion_id)),
+                (
+                    instante,
+                    instante,
+                    1 if exitosa else 0,
+                    None if detalle is None else str(detalle),
+                    int(sesion_id),
+                ),
             )
             cur.execute(
                 """
