@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from datetime import datetime, timedelta
 
 import cv2
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QDialog,
@@ -86,15 +87,54 @@ class _FunnelSampler:
             path.unlink(missing_ok=True)
 
 
+def _collect_job(host: str, username: str, password: str, is_live: bool, events: queue.Queue, stop: threading.Event) -> None:
+    """Corre en un hilo aparte. Solo deja avisos en `events`: NUNCA referencia
+    la ventana ni emite señales de Qt -- si el hilo fuera el último dueño de
+    la ventana, la destruiría desde un hilo que no es el de la interfaz y el
+    proceso entero moriría ("Bus error") al cerrarla mientras carga."""
+    try:
+        fetcher = _FunnelFetcher(host, username, password, stop)
+        sampler = None if is_live else _FunnelSampler(host, username, password, stop)
+        raw = collect(host, fetcher, sampler, lambda done, total, label: events.put(("progress", done, total, label)), stop)
+        now = datetime.now()
+        events.put(("report", format_report(build_sections(raw, host, now), host, now)))
+    except InfoCancelled:
+        events.put(("failed", ""))
+    except Exception as exc:
+        events.put(("failed", str(exc)))
+
+
+def _speed_job(host: str, username: str, password: str, events: queue.Queue, stop: threading.Event) -> None:
+    start = (datetime.now() - SAMPLE_AGE).replace(microsecond=0)
+    started = time.monotonic()
+    try:
+        path = download_client.submit(
+            host, username, password, 1, start, start + timedelta(seconds=SPEED_TEST_SECONDS),
+            DownloadPriority.INTERACTIVE, stop,
+        ).result(timeout=DOWNLOAD_WAIT)
+    except Exception:
+        path = None
+    elapsed = time.monotonic() - started
+    if path is None:
+        events.put(("speed", "Velocidad de descarga: no disponible"))
+        return
+    size = path.stat().st_size
+    path.unlink(missing_ok=True)
+    events.put(
+        (
+            "speed",
+            f"Velocidad de descarga: {fmt_bytes(size / elapsed)}/s ({size * 8 / elapsed / 1e6:.0f} Mbps), "
+            f"{fmt_bytes(size)} en {elapsed:.1f} s  [Medido]",
+        )
+    )
+
+
 class DvrInfoDialog(QDialog):
     """Ventana "Información del DVR": al abrirse consulta todo (una consulta
     a la vez, con barra de progreso y botón Cancelar) y muestra el informe
     completo cuando está listo. No se actualiza sola: solo con "Actualizar"."""
 
-    _progress = Signal(int, int, str)
-    _report_ready = Signal(str)
-    _collect_failed = Signal(str)
-    _speed_ready = Signal(str)
+    EVENT_POLL_MS = 100
 
     def __init__(self, host: str, username: str, password: str, is_live: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -105,6 +145,7 @@ class DvrInfoDialog(QDialog):
         self._stop = threading.Event()
         self._report = ""
         self._running = False
+        self._events: queue.Queue = queue.Queue()  # avisos de los hilos; se leen aquí, en el hilo de la interfaz
 
         self._step_label = QLabel()
         self._bar = QProgressBar()
@@ -140,10 +181,10 @@ class DvrInfoDialog(QDialog):
         self._copy_button.clicked.connect(self._copy)
         self._speed_button.clicked.connect(self._start_speed_test)
         self._close_button.clicked.connect(self.close)
-        self._progress.connect(self._on_progress)
-        self._report_ready.connect(self._on_report)
-        self._collect_failed.connect(self._on_failed)
-        self._speed_ready.connect(self._on_speed)
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(self.EVENT_POLL_MS)
+        self._poll_timer.timeout.connect(self._drain_events)
+        self._poll_timer.start()
 
         self.start()
 
@@ -154,25 +195,23 @@ class DvrInfoDialog(QDialog):
             return
         self._running = True
         self._stop = threading.Event()
+        self._events = queue.Queue()  # los avisos tardíos de una corrida cancelada se descartan con la cola vieja
         steps = total_steps(not self._is_live)
         self._bar.setRange(0, steps)
         self._bar.setValue(0)
         self._step_label.setText("Consultando al DVR…")
         self._text.clear()
         self._set_busy(True)
-        threading.Thread(target=self._collect_worker, args=(self._stop,), daemon=True).start()
+        args = (self._host, self._username, self._password, self._is_live, self._events, self._stop)
+        threading.Thread(target=_collect_job, args=args, daemon=True).start()
 
-    def _collect_worker(self, stop: threading.Event) -> None:
-        try:
-            fetcher = _FunnelFetcher(self._host, self._username, self._password, stop)
-            sampler = None if self._is_live else _FunnelSampler(self._host, self._username, self._password, stop)
-            raw = collect(self._host, fetcher, sampler, lambda done, total, label: self._progress.emit(done, total, label), stop)
-            now = datetime.now()
-            self._report_ready.emit(format_report(build_sections(raw, self._host, now), self._host, now))
-        except InfoCancelled:
-            self._collect_failed.emit("")
-        except Exception as exc:
-            self._collect_failed.emit(str(exc))
+    def _drain_events(self) -> None:
+        while True:
+            try:
+                kind, *payload = self._events.get_nowait()
+            except queue.Empty:
+                return
+            {"progress": self._on_progress, "report": self._on_report, "failed": self._on_failed, "speed": self._on_speed}[kind](*payload)
 
     def _on_progress(self, done: int, total: int, label: str) -> None:
         self._bar.setMaximum(total)
@@ -211,28 +250,8 @@ class DvrInfoDialog(QDialog):
     def _start_speed_test(self) -> None:
         self._speed_button.setEnabled(False)
         self._step_label.setText(f"Descargando {SPEED_TEST_SECONDS} s de video para medir la velocidad… (puede afectar un instante la reproducción)")
-        threading.Thread(target=self._speed_worker, args=(self._stop,), daemon=True).start()
-
-    def _speed_worker(self, stop: threading.Event) -> None:
-        start = (datetime.now() - SAMPLE_AGE).replace(microsecond=0)
-        started = time.monotonic()
-        try:
-            path = download_client.submit(
-                self._host, self._username, self._password, 1, start, start + timedelta(seconds=SPEED_TEST_SECONDS),
-                DownloadPriority.INTERACTIVE, stop,
-            ).result(timeout=DOWNLOAD_WAIT)
-        except Exception:
-            path = None
-        elapsed = time.monotonic() - started
-        if path is None:
-            self._speed_ready.emit("Velocidad de descarga: no disponible")
-            return
-        size = path.stat().st_size
-        path.unlink(missing_ok=True)
-        self._speed_ready.emit(
-            f"Velocidad de descarga: {fmt_bytes(size / elapsed)}/s ({size * 8 / elapsed / 1e6:.0f} Mbps), "
-            f"{fmt_bytes(size)} en {elapsed:.1f} s  [Medido]"
-        )
+        args = (self._host, self._username, self._password, self._events, self._stop)
+        threading.Thread(target=_speed_job, args=args, daemon=True).start()
 
     def _on_speed(self, line: str) -> None:
         self._speed_button.setEnabled(not self._running and not self._is_live)
@@ -242,4 +261,5 @@ class DvrInfoDialog(QDialog):
 
     def closeEvent(self, event) -> None:
         self._stop.set()
+        self._poll_timer.stop()
         super().closeEvent(event)
