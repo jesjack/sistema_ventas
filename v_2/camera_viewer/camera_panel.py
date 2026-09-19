@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QGraphicsPixmapItem, QLabel
 
+from .playback_control import PAUSED_STATUS
 from .zoom_canvas import ZoomPanGraphicsView
 
 
@@ -164,7 +165,11 @@ class CameraPanel(ZoomPanGraphicsView):
         self._status_label.raise_()
 
     def _is_corner_status(self, text: str) -> bool:
-        return text.startswith(self.LIVE_STATUS_PREFIX) or bool(self.SPEED_STATUS_PATTERN.fullmatch(text))
+        return (
+            text.startswith(self.LIVE_STATUS_PREFIX)
+            or text == PAUSED_STATUS
+            or bool(self.SPEED_STATUS_PATTERN.fullmatch(text))
+        )
 
     def _reposition_status_label(self) -> None:
         if self._is_corner_status(self._status_label.text()):

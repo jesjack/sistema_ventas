@@ -92,6 +92,8 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._gap_items: list[QGraphicsRectItem] = []
         self._playhead_started_at: float | None = None
         self._playhead_started_time: datetime | None = None
+        self._playhead_speed = 1.0
+        self._playhead_paused = False
 
         # Sin antialiasing a proposito: son formas planas (fondo, ticks),
         # y con el suavizado prendido dos rectangulos que comparten un
@@ -444,25 +446,66 @@ class TimelineWidget(ZoomPanGraphicsView):
 
     # -- marcador que avanza junto con la reproduccion ---------------------
 
-    def start_playhead(self, selected_time: datetime) -> None:
-        """Arranca el marcador avanzando en tiempo real desde
-        selected_time -- asume reproduccion a velocidad 1x (igual que la
-        del DVR), no rastrea el frame exacto de cada canal por separado."""
+    def start_playhead(self, selected_time: datetime, paused: bool = False) -> None:
+        """Arranca el marcador avanzando desde selected_time a la velocidad
+        de reproducción actual (ver set_playhead_speed) -- no rastrea el
+        frame exacto de cada canal por separado."""
         self._playhead_started_at = time_module.monotonic()
         self._playhead_started_time = selected_time
+        self._playhead_paused = paused
         self._draw_marker(self._seconds_since_midnight(selected_time))
-        self._playhead_timer.start()
+        if paused:
+            self._playhead_timer.stop()
+        else:
+            self._playhead_timer.start()
 
     def stop_playhead(self) -> None:
         self._playhead_timer.stop()
         self._playhead_started_at = None
         self._playhead_started_time = None
+        self._playhead_paused = False
+
+    def playhead_time(self) -> datetime | None:
+        """Hora que marca el cursor ahora mismo (None si no hay reproducción)."""
+        if self._playhead_started_at is None or self._playhead_started_time is None:
+            return None
+        if self._playhead_paused:
+            return self._playhead_started_time
+        elapsed = (time_module.monotonic() - self._playhead_started_at) * self._playhead_speed
+        return self._playhead_started_time + timedelta(seconds=elapsed)
+
+    def pause_playhead(self) -> None:
+        current = self.playhead_time()
+        if current is None or self._playhead_paused:
+            return
+        self._playhead_timer.stop()
+        self._playhead_started_time = current
+        self._playhead_paused = True
+
+    def resume_playhead(self) -> None:
+        if self._playhead_started_time is None or not self._playhead_paused:
+            return
+        self._playhead_started_at = time_module.monotonic()
+        self._playhead_paused = False
+        self._playhead_timer.start()
+
+    def set_playhead_speed(self, speed: float) -> None:
+        """Cambia la velocidad sin saltos: el tramo ya recorrido se congela
+        en la hora actual y desde ahí sigue con la nueva velocidad."""
+        current = self.playhead_time()
+        if current is not None and not self._playhead_paused:
+            self._playhead_started_time = current
+            self._playhead_started_at = time_module.monotonic()
+        self._playhead_speed = speed
 
     def _advance_playhead(self) -> None:
         if self._playhead_started_at is None or self._playhead_started_time is None or self._day is None:
             return
 
-        elapsed = time_module.monotonic() - self._playhead_started_at
+        if self._playhead_paused:
+            return
+
+        elapsed = (time_module.monotonic() - self._playhead_started_at) * self._playhead_speed
         current_time = self._playhead_started_time + timedelta(seconds=elapsed)
         if current_time.date() != self._day:
             self.stop_playhead()

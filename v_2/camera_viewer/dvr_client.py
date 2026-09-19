@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Signal
 from . import download_client
 from .download_manager import DownloadPriority, purge_download_dir
 from .light_query_manager import LightPriority
+from .playback_control import PlaybackControl
 
 DEFAULT_CHANNELS = (1, 2, 3, 4)
 # Puerto del endpoint 'realmonitor' (igual que cameras/vivo.py) -- 554 es
@@ -82,12 +83,6 @@ DOWNLOAD_CHUNK_SECONDS = 45.0
 # investigacion de 2026-09-17).
 RECORDING_MAX_INFLIGHT_FRAMES = 2
 RECORDING_BACKPRESSURE_POLL = 0.2
-
-# Etiqueta de velocidad de reproduccion que se muestra en la esquina de cada
-# panel mientras se reproduce una grabacion (ver CameraPanel). Por ahora solo
-# existe x1; cuando haya controles de velocidad esto pasa a ser un valor por
-# sesion de reproduccion.
-PLAYBACK_SPEED_LABEL = "x1"
 
 # Espera antes de la primera descarga al pasar de vivo a grabaciones (ver
 # play_from): mismo margen de cortesia que entre conexiones RTSP.
@@ -178,6 +173,8 @@ class DVRClient(QObject):
         self._playback_semaphores: dict[int, threading.Semaphore] = {}
         self._playback_threads: list[threading.Thread] = []
         self._playback_session = 0
+        # Pausa/velocidad/avance de cuadro compartidos por los 4 canales.
+        self.control = PlaybackControl(DEFAULT_CHANNELS)
 
         self._live_stop_event: threading.Event | None = None
         self._live_threads: list[threading.Thread] = []
@@ -305,8 +302,10 @@ class DVRClient(QObject):
         selected_time: datetime,
         clips_by_channel: dict[int, list[Clip]],
         start_delay: float = 0.0,
+        paused: bool = False,
     ) -> None:
-        """start_delay: espera (cancelable) antes de pedir la primera
+        """paused: arranca en pausa (muestra solo el primer cuadro de cada canal).
+        start_delay: espera (cancelable) antes de pedir la primera
         descarga -- se usa al venir de la vista en vivo: los 4 RTSP recien
         cerrados pueden tardar un instante en liberarse del lado del DVR, y
         pedirle descargas de inmediato se parece a abrir sesiones de mas."""
@@ -319,6 +318,7 @@ class DVRClient(QObject):
 
         self._playback_session += 1
         session_id = self._playback_session
+        self.control.reset(paused)
         self._playback_stop_events = {channel: threading.Event() for channel in DEFAULT_CHANNELS}
         self._playback_semaphores = {
             channel: threading.Semaphore(RECORDING_MAX_INFLIGHT_FRAMES) for channel in DEFAULT_CHANNELS
@@ -339,6 +339,27 @@ class DVRClient(QObject):
 
     def stop_playback(self) -> None:
         self._stop_and_join()
+
+    # -- pausa / velocidad / cuadro a cuadro (ver playback_control.py) --------
+
+    def toggle_pause(self) -> bool:
+        paused = self.control.toggle_pause()
+        self._emit_control_status()
+        return paused
+
+    def set_speed(self, speed: float) -> None:
+        self.control.set_speed(speed)
+        self._emit_control_status()
+
+    def step_frame(self) -> None:
+        self.control.step()
+
+    def _emit_control_status(self) -> None:
+        """Actualiza la esquina de los canales que YA están mostrando video
+        (no pisa un "Descargando…" de un canal que aún espera)."""
+        text = self.control.status_text()
+        for channel in self.control.playing_channels():
+            self.recording_channel_status.emit(channel, text)
 
     def _stop_and_join(self, timeout: float = 2.0) -> None:
         for event in self._playback_stop_events.values():
@@ -593,6 +614,7 @@ class DVRClient(QObject):
         cualquier fallo durante la reproduccion es un archivo
         vacio/corrupto, no un corte transitorio de la conexion en vivo con
         el DVR."""
+        control = self.control
         if not future.done():
             # Si ya estaba lista (caso normal gracias a la pre-descarga) no
             # hace falta mostrar "Descargando" -- solo se nota cuando de
@@ -620,7 +642,8 @@ class DVRClient(QObject):
             # por bloque (antes se re-emitia la hora en CADA frame, ~30/s por
             # canal, para una etiqueta que repetia la hora que el DVR ya
             # imprime en el video).
-            self.recording_channel_status.emit(channel, PLAYBACK_SPEED_LABEL)
+            control.mark_playing(channel, True)
+            self.recording_channel_status.emit(channel, control.status_text())
 
             fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
             if fps <= 0 or not fps < float("inf"):
@@ -628,14 +651,26 @@ class DVRClient(QObject):
             frame_interval = 1.0 / fps
             next_frame_at = time.monotonic()
             frames_read = 0
+            seen_epoch = control.epoch
 
             try:
                 while True:
                     if stop_event.is_set() or session_id != self._playback_session:
                         return "stopped"
 
+                    # Pausa compartida: espera aquí (sin tocar el archivo ni el
+                    # DVR) hasta reanudar, o deja pasar un cuadro suelto.
+                    turn = control.wait_turn(
+                        channel, lambda: stop_event.is_set() or session_id != self._playback_session
+                    )
+                    if turn == "stop":
+                        return "stopped"
+                    if turn == "step" or control.epoch != seen_epoch:
+                        seen_epoch = control.epoch
+                        next_frame_at = time.monotonic()
+
                     now = time.monotonic()
-                    if now < next_frame_at:
+                    if turn != "step" and now < next_frame_at:
                         time.sleep(next_frame_at - now)
 
                     success, frame = capture.read()
@@ -657,9 +692,10 @@ class DVRClient(QObject):
                             return "stopped"
 
                     self.recording_frame_ready.emit(channel, frame)
-                    next_frame_at = max(next_frame_at + frame_interval, time.monotonic())
+                    next_frame_at = max(next_frame_at + frame_interval / control.speed, time.monotonic())
             finally:
                 capture.release()
+                control.mark_playing(channel, False)
 
             return "ended" if frames_read > 0 else "error"
         finally:

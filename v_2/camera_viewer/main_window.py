@@ -11,6 +11,7 @@ from .calendar_panel import CalendarPanel
 from .camera_grid import CameraGrid
 from .connection_panel import ConnectionPanel
 from .dvr_info_dialog import DvrInfoDialog
+from .playback_controls import JUMP_SECONDS, PlaybackControls
 from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient, LIVE_TO_RECORDINGS_SETTLE
 from .light_query_manager import LightPriority
 from .timeline_widget import TimelineWidget
@@ -44,6 +45,15 @@ class MainWindow(QMainWindow):
         self._maximized_before_fullscreen = False
         self._fullscreen_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F11), self)
         self._fullscreen_shortcut.activated.connect(self._toggle_fullscreen)
+
+        # Atajos de la reproducción: solo activos mientras hay una (así no le
+        # quitan las flechas al calendario ni el espacio a los campos de texto).
+        self._pause_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
+        self._pause_shortcut.activated.connect(self._toggle_pause)
+        self._back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
+        self._back_shortcut.activated.connect(lambda: self._jump(-JUMP_SECONDS))
+        self._forward_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
+        self._forward_shortcut.activated.connect(lambda: self._jump(JUMP_SECONDS))
 
         self._live_tools_timer = QTimer(self)
         self._live_tools_timer.setInterval(LIVE_TOOLS_REFRESH_MS)
@@ -104,6 +114,10 @@ class MainWindow(QMainWindow):
         top_splitter.setStretchFactor(1, 1)
         root_layout.addWidget(top_splitter, stretch=1)
 
+        self.playback_controls = PlaybackControls()
+        root_layout.addWidget(self.playback_controls)
+        self._set_playback_active(False)
+
         self.timeline = TimelineWidget()
         root_layout.addWidget(self.timeline)
 
@@ -115,6 +129,10 @@ class MainWindow(QMainWindow):
         self.calendar.month_changed.connect(self._on_calendar_month_changed)
         self.timeline.time_selected.connect(self._on_time_selected)
         self.connection_panel.info_clicked.connect(self._show_dvr_info)
+        self.playback_controls.pause_clicked.connect(self._toggle_pause)
+        self.playback_controls.jump_clicked.connect(self._jump)
+        self.playback_controls.step_clicked.connect(self.client.step_frame)
+        self.playback_controls.speed_selected.connect(self._set_speed)
 
         self.client.clips_ready.connect(self._on_clips_ready)
         self.client.search_failed.connect(self._on_search_failed)
@@ -174,6 +192,42 @@ class MainWindow(QMainWindow):
     def _show_dvr_info(self) -> None:
         DvrInfoDialog(self.client.host, self.client.username, self.client.password, self._is_live, self).exec()
 
+    def _set_playback_active(self, active: bool) -> None:
+        """Los controles de reproducción (barra y atajos) solo están activos
+        mientras hay una reproducción de grabaciones en curso."""
+        self.playback_controls.set_active(active)
+        self.playback_controls.set_paused(self.client.control.paused if active else False)
+        self.playback_controls.set_speed(self.client.control.speed)
+        for shortcut in (self._pause_shortcut, self._back_shortcut, self._forward_shortcut):
+            shortcut.setEnabled(active)
+
+    def _toggle_pause(self) -> None:
+        paused = self.client.toggle_pause()
+        if paused:
+            self.timeline.pause_playhead()
+        else:
+            self.timeline.resume_playhead()
+        self.playback_controls.set_paused(paused)
+
+    def _jump(self, seconds: int) -> None:
+        """Salta ±seconds desde donde va el cursor. Conserva la pausa: en
+        pausa se ve el primer cuadro del punto nuevo y sigue en pausa."""
+        current = self.timeline.playhead_time()
+        day = self.timeline.day
+        if current is None or day is None or self._is_live:
+            return
+        day_start = datetime.combine(day, dtime.min)
+        target = min(max(current + timedelta(seconds=seconds), day_start), day_start + timedelta(hours=23, minutes=59, seconds=59))
+        paused = self.client.control.paused
+        self._accept_recording_output = True
+        self.client.play_from(target, self._clips_by_channel, paused=paused)
+        self.timeline.start_playhead(target, paused=paused)
+
+    def _set_speed(self, speed: float) -> None:
+        self.client.set_speed(speed)
+        self.timeline.set_playhead_speed(speed)
+        self.playback_controls.set_speed(speed)
+
     def _reset_recordings_view(self) -> None:
         """Detiene cualquier reproduccion y deja los paneles de grabaciones
         como nuevos, con el aviso de elegir una hora."""
@@ -181,6 +235,7 @@ class MainWindow(QMainWindow):
         self.timeline.stop_playhead()
         self.timeline.clear_marker()
         self._accept_recording_output = False
+        self._set_playback_active(False)
         self.recordings_camera_grid.reset(RECORDINGS_HINT)
 
     def _on_clips_ready(self, clips: list[Clip]) -> None:
@@ -214,6 +269,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Reproduciendo desde {selected_time:%Y-%m-%d %H:%M:%S}...")
         self.client.play_from(selected_time, self._clips_by_channel, start_delay=start_delay)
         self.timeline.start_playhead(selected_time)
+        self._set_playback_active(True)
 
     def _on_playback_day_changed(self, day: date) -> None:
         """La reproduccion cruzo la medianoche: calendario y linea de tiempo
@@ -224,7 +280,7 @@ class MainWindow(QMainWindow):
             return
         self.calendar.select_date(day)
         self._load_day(day)
-        self.timeline.start_playhead(datetime.combine(day, dtime.min))
+        self.timeline.start_playhead(datetime.combine(day, dtime.min), paused=self.client.control.paused)
 
     def _on_recording_frame_ready(self, channel: int, frame) -> None:
         if not self._accept_recording_output:
@@ -268,6 +324,7 @@ class MainWindow(QMainWindow):
         self._reset_recordings_view()
         self._is_live = True
         self.camera_grid_stack.setCurrentWidget(self.live_camera_grid)
+        self.playback_controls.setVisible(False)
         self.connection_panel.set_live_mode(True)
         # Calendario y linea de tiempo NO se deshabilitan: acompañan a la
         # vista en vivo (hoy seleccionado, cursor avanzando con la hora
@@ -284,6 +341,7 @@ class MainWindow(QMainWindow):
         self.timeline.stop_playhead()
         self.timeline.clear_marker()
         self.camera_grid_stack.setCurrentWidget(self.recordings_camera_grid)
+        self.playback_controls.setVisible(True)
         self.connection_panel.set_live_mode(False)
         self.status_label.setText("Modo grabaciones.")
 
