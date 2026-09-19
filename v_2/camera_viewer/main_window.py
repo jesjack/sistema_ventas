@@ -11,6 +11,7 @@ from .calendar_panel import CalendarPanel
 from .camera_grid import CameraGrid
 from .connection_panel import ConnectionPanel
 from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient, LIVE_TO_RECORDINGS_SETTLE
+from .light_query_manager import LightPriority
 from .timeline_widget import TimelineWidget
 
 
@@ -161,12 +162,12 @@ class MainWindow(QMainWindow):
         self._clips_by_channel = {channel: [] for channel in DEFAULT_CHANNELS}
         self._request_clips(day)
 
-    def _request_clips(self, day: date) -> None:
+    def _request_clips(self, day: date, priority: int = LightPriority.USER) -> None:
         start_dt = datetime.combine(day, dtime.min)
         end_dt = start_dt + timedelta(hours=23, minutes=59, seconds=59)
         if not self._is_live:
             self.status_label.setText(f"Buscando grabaciones del {day}...")
-        self.client.search(start_dt, end_dt)
+        self.client.search(start_dt, end_dt, priority)
 
     def _reset_recordings_view(self) -> None:
         """Detiene cualquier reproduccion y deja los paneles de grabaciones
@@ -281,7 +282,7 @@ class MainWindow(QMainWindow):
         self.connection_panel.set_live_mode(False)
         self.status_label.setText("Modo grabaciones.")
 
-    def _sync_tools_to_live_clock(self) -> None:
+    def _sync_tools_to_live_clock(self, priority: int = LightPriority.USER) -> None:
         """Calendario en hoy y cursor de la línea de tiempo en la hora real
         (los frames en vivo son "lo último disponible"), avanzando segundo a
         segundo. Si la línea de tiempo ya muestra hoy solo se refrescan sus
@@ -298,7 +299,7 @@ class MainWindow(QMainWindow):
             if self.calendar.current_page() == page_before:
                 self.client.find_recorded_days(today.year, today.month)
         else:
-            self._request_clips(today)
+            self._request_clips(today, priority)
         self.timeline.start_playhead(now)
 
     def _refresh_live_tools(self) -> None:
@@ -306,7 +307,7 @@ class MainWindow(QMainWindow):
             self._live_tools_timer.stop()
             return
         # Tambien cubre el cambio de dia (medianoche) estando en vivo.
-        self._sync_tools_to_live_clock()
+        self._sync_tools_to_live_clock(LightPriority.PERIODIC)
 
     def closeEvent(self, event) -> None:
         self.client.stop_playback()

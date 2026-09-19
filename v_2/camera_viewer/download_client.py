@@ -82,10 +82,7 @@ def _ensure_service_reachable() -> None:
             # lo que evita que otro proceso (o este mismo, en una llamada
             # futura) crea que el puesto sigue libre.
             _hosting_lock_file = lock_file
-            manager = download_service.RecordingDownloadManager()
-            threading.Thread(
-                target=download_service.serve_forever, args=(manager,), name="DownloadService", daemon=True
-            ).start()
+            threading.Thread(target=download_service.serve_forever, name="DownloadService", daemon=True).start()
             deadline = time.monotonic() + CONNECT_RETRY_TIMEOUT
             while time.monotonic() < deadline:
                 conn = _try_connect()
@@ -120,53 +117,104 @@ def submit(
     """Misma forma que RecordingDownloadManager.submit() -- ver ese
     docstring. Aqui la diferencia es toda interna: el pedido viaja por un
     socket a download_service.py en vez de encolarse directo."""
-    future: Future = Future()
-    threading.Thread(
-        target=_run_request,
-        args=(host, username, password, channel, start, end, priority, stop_event, future),
-        daemon=True,
-    ).start()
-    return future
+    message = {
+        "action": "submit",
+        "host": host,
+        "username": username,
+        "password": password,
+        "channel": channel,
+        "start": start,
+        "end": end,
+        "priority": priority,
+    }
+    return _start_request(message, stop_event, lambda response: Path(response["path"]) if response.get("path") else None)
 
 
-def _run_request(
+def find_files(
     host: str,
     username: str,
     password: str,
     channel: int,
     start: datetime,
     end: datetime,
+    max_pages: int,
     priority: int,
     stop_event: threading.Event,
-    future: Future,
-) -> None:
+) -> Future:
+    """Búsqueda de grabaciones de un canal por el carril de consultas
+    ligeras (ver LightQueryManager.submit_find_files). El Future se
+    resuelve con la lista de diccionarios de cada archivo, o con una
+    excepción si la consulta falló tras sus reintentos."""
+    message = {
+        "action": "query",
+        "kind": "find_files",
+        "host": host,
+        "username": username,
+        "password": password,
+        "channel": channel,
+        "start": start,
+        "end": end,
+        "max_pages": max_pages,
+        "priority": priority,
+    }
+    return _start_request(message, stop_event, _decode_query_response)
+
+
+def get(host: str, username: str, password: str, path: str, priority: int, stop_event: threading.Event) -> Future:
+    """GET suelto de un CGI (p. ej. "cgi-bin/magicBox.cgi?action=getSystemInfo")
+    por el carril de consultas ligeras; el Future trae el texto de la respuesta."""
+    message = {
+        "action": "query",
+        "kind": "get",
+        "host": host,
+        "username": username,
+        "password": password,
+        "path": path,
+        "priority": priority,
+    }
+    return _start_request(message, stop_event, _decode_query_response)
+
+
+def _decode_query_response(response: dict):
+    if "error" in response:
+        raise RuntimeError(response["error"])
+    return response["result"]
+
+
+def _start_request(message: dict, stop_event: threading.Event, decode) -> Future:
+    future: Future = Future()
+    threading.Thread(target=_run_request, args=(message, stop_event, decode, future), daemon=True).start()
+    return future
+
+
+def _run_request(message: dict, stop_event: threading.Event, decode, future: Future) -> None:
+    """Manda el pedido y espera la respuesta. Descargas: un fallo de conexión
+    con el servicio resuelve el Future con None (así lo espera la
+    reproducción); consultas: lanza la excepción (decode la levanta)."""
+    is_query = message["action"] == "query"
+
+    def fail(reason: str) -> None:
+        if is_query:
+            future.set_exception(RuntimeError(reason))
+        else:
+            future.set_result(None)
+
     if stop_event.is_set():
-        future.set_result(None)
+        fail("cancelado")
         return
     conn = _connect_or_bootstrap()
     if conn is None:
-        future.set_result(None)
+        fail("no se pudo conectar con el servicio de descargas")
         return
 
+    response = None
     try:
-        conn.send(
-            {
-                "action": "submit",
-                "host": host,
-                "username": username,
-                "password": password,
-                "channel": channel,
-                "start": start,
-                "end": end,
-                "priority": priority,
-            }
-        )
-        result = None
+        conn.send(message)
         while True:
             if stop_event.is_set():
                 # Cerrar la conexion es la señal de cancelacion: el
                 # servicio la detecta como una desconexion (ver
-                # download_service._handle_submit) y corta la descarga en
+                # download_service._wait_and_reply) y corta el trabajo en
                 # curso -- sin necesidad de un segundo mensaje ni de tocar
                 # esta misma conexion desde otro hilo.
                 break
@@ -175,12 +223,17 @@ def _run_request(
                     response = conn.recv()
                 except EOFError:
                     break
-                result = response.get("path")
                 break
     finally:
         conn.close()
 
-    future.set_result(Path(result) if result else None)
+    if response is None:
+        fail("cancelado o sin respuesta del servicio")
+        return
+    try:
+        future.set_result(decode(response))
+    except Exception as exc:
+        future.set_exception(exc)
 
 
 def drain() -> None:

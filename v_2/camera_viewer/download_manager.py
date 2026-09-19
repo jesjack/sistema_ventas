@@ -39,6 +39,11 @@ DOWNLOAD_DIR = Path(__file__).resolve().parent.parent / "runtime" / "camera_view
 # concurrencia se ofrezca al siguiente pedido en cola -- el DVR puede
 # tardar un instante en liberar los recursos de una sesion.
 POST_DOWNLOAD_GAP = 1.0
+
+# Un ConnectionError ANTES del primer byte (visto en las pruebas de
+# 2026-09-18, al final de un atasco del DVR) se reintenta una vez tras esta
+# pausa; después del primer byte ya no se reintenta (el archivo está a medias).
+DOWNLOAD_RETRY_DELAY = 1.0
 MAX_CONCURRENT_DOWNLOADS = 2
 
 
@@ -211,18 +216,26 @@ class RecordingDownloadManager:
     def _download(self, url: str, auth: HTTPDigestAuth, job: _Job) -> Path | None:
         self._download_dir.mkdir(parents=True, exist_ok=True)
         local_path = self._download_dir / f"ch{job.channel}_{uuid.uuid4().hex}.dav"
-        try:
-            with requests.get(url, auth=auth, stream=True, timeout=30) as response:
-                response.raise_for_status()
-                with local_path.open("wb") as fh:
-                    for block in response.iter_content(chunk_size=65536):
-                        if job.stop_event.is_set():
-                            break
-                        if block:
-                            fh.write(block)
-        except Exception:
-            local_path.unlink(missing_ok=True)
-            return None
+        for attempt in range(2):
+            wrote_bytes = False
+            try:
+                with requests.get(url, auth=auth, stream=True, timeout=30) as response:
+                    response.raise_for_status()
+                    with local_path.open("wb") as fh:
+                        for block in response.iter_content(chunk_size=65536):
+                            if job.stop_event.is_set():
+                                break
+                            if block:
+                                wrote_bytes = True
+                                fh.write(block)
+                break
+            except requests.exceptions.ConnectionError:
+                local_path.unlink(missing_ok=True)
+                if wrote_bytes or attempt == 1 or job.stop_event.wait(DOWNLOAD_RETRY_DELAY):
+                    return None
+            except Exception:
+                local_path.unlink(missing_ok=True)
+                return None
 
         if job.stop_event.is_set() or local_path.stat().st_size == 0:
             local_path.unlink(missing_ok=True)

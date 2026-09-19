@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import os
-import re
 import threading
 import time
 from calendar import monthrange
+from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 import cv2
-import requests
 from PySide6.QtCore import QObject, Signal
-from requests.auth import HTTPDigestAuth
 
 from . import download_client
 from .download_manager import DownloadPriority, purge_download_dir
+from .light_query_manager import LightPriority
 
 DEFAULT_CHANNELS = (1, 2, 3, 4)
 # Puerto del endpoint 'realmonitor' (igual que cameras/vivo.py) -- 554 es
@@ -216,71 +215,58 @@ class DVRClient(QObject):
 
     # -- busqueda de grabaciones ------------------------------------------
 
-    def search(self, start_dt: datetime, end_dt: datetime) -> None:
-        threading.Thread(target=self._search_worker, args=(start_dt, end_dt), daemon=True).start()
+    def search(self, start_dt: datetime, end_dt: datetime, priority: int = LightPriority.USER) -> None:
+        threading.Thread(target=self._search_worker, args=(start_dt, end_dt, priority), daemon=True).start()
 
-    def _search_worker(self, start_dt: datetime, end_dt: datetime) -> None:
+    def _search_worker(self, start_dt: datetime, end_dt: datetime, priority: int) -> None:
         try:
+            futures = {channel: self._submit_find(channel, start_dt, end_dt, 1, priority) for channel in DEFAULT_CHANNELS}
             clips: list[Clip] = []
-            for channel in DEFAULT_CHANNELS:
-                clips.extend(self._fetch_clips(channel, start_dt, end_dt))
+            for channel, future in futures.items():
+                clips.extend(self._clips_from_items(channel, future.result()))
         except Exception as exc:
             self.search_failed.emit(str(exc))
             return
 
         self.clips_ready.emit(clips)
 
-    def _fetch_clips(self, channel: int, start_dt: datetime, end_dt: datetime) -> list[Clip]:
-        auth = HTTPDigestAuth(self.username, self.password)
-        base = f"http://{self.host}/cgi-bin/mediaFileFind.cgi"
+    def _submit_find(self, channel: int, start_dt: datetime, end_dt: datetime, max_pages: int, priority: int) -> Future:
+        """Toda consulta de grabaciones pasa por el carril de consultas
+        ligeras del servicio (ver light_query_manager.py), que impone
+        prioridades, hilos fijos, timeouts y reintentos."""
+        return download_client.find_files(
+            self.host,
+            self.username,
+            self.password,
+            channel,
+            start_dt,
+            end_dt,
+            max_pages,
+            priority,
+            threading.Event(),
+        )
 
-        response = requests.get(f"{base}?action=factory.create", auth=auth, timeout=15)
-        match = re.search(r"result=(\d+)", response.text)
-        if not match:
-            raise RuntimeError("No se pudo iniciar la sesión de búsqueda en el DVR.")
-        object_id = match.group(1).strip()
-
-        clips: list[Clip] = []
-        try:
-            start_query = start_dt.strftime("%Y-%m-%d%%20%H:%M:%S")
-            end_query = end_dt.strftime("%Y-%m-%d%%20%H:%M:%S")
-            requests.get(
-                f"{base}?action=findFile&object={object_id}&condition.Channel={channel}"
-                f"&condition.StartTime={start_query}&condition.EndTime={end_query}",
-                auth=auth,
-                timeout=15,
-            )
-
-            results = requests.get(f"{base}?action=findNextFile&object={object_id}&count=200", auth=auth, timeout=15)
-            for item in self._parse_items(results.text).values():
-                start = item.get("StartTime")
-                end = item.get("EndTime")
-                if start and end:
-                    clips.append(
-                        Clip(
-                            channel=channel,
-                            start=datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S"),
-                            end=datetime.strptime(end.strip(), "%Y-%m-%d %H:%M:%S"),
-                        )
-                    )
-        finally:
-            try:
-                requests.get(f"{base}?action=destroy&object={object_id}", auth=auth, timeout=10)
-            except Exception:
-                pass
-
-        return clips
+    def _fetch_clips(
+        self, channel: int, start_dt: datetime, end_dt: datetime, priority: int = LightPriority.USER
+    ) -> list[Clip]:
+        items = self._submit_find(channel, start_dt, end_dt, 1, priority).result()
+        return self._clips_from_items(channel, items)
 
     @staticmethod
-    def _parse_items(payload: str) -> dict[int, dict[str, str]]:
-        items: dict[int, dict[str, str]] = {}
-        pattern = re.compile(r"items\[(\d+)\]\.([A-Za-z0-9_]+)=(.*)")
-        for line in payload.splitlines():
-            match = pattern.match(line.strip())
-            if not match:
-                continue
-            items.setdefault(int(match.group(1)), {})[match.group(2)] = match.group(3).strip()
-        return items
+    def _clips_from_items(channel: int, items: list[dict[str, str]]) -> list[Clip]:
+        clips: list[Clip] = []
+        for item in items:
+            start = item.get("StartTime")
+            end = item.get("EndTime")
+            if start and end:
+                clips.append(
+                    Clip(
+                        channel=channel,
+                        start=datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S"),
+                        end=datetime.strptime(end.strip(), "%Y-%m-%d %H:%M:%S"),
+                    )
+                )
+        return clips
 
     # -- dias con grabacion (para pintarlos en el calendario) ---------------
 
@@ -293,64 +279,24 @@ class DVRClient(QObject):
         end_dt = datetime(year, month, last_day, 23, 59, 59)
 
         try:
+            # Se piden todas las paginas hasta que una venga vacia -- ver la
+            # nota en MAX_RECORDED_DAYS_PAGES sobre por que no basta con
+            # revisar si la pagina trajo menos de lo pedido.
+            futures = [
+                self._submit_find(channel, start_dt, end_dt, MAX_RECORDED_DAYS_PAGES, LightPriority.USER)
+                for channel in DEFAULT_CHANNELS
+            ]
             recorded_days: set[date] = set()
-            for channel in DEFAULT_CHANNELS:
-                recorded_days |= self._fetch_recorded_dates(channel, start_dt, end_dt)
+            for future in futures:
+                for item in future.result():
+                    start = item.get("StartTime")
+                    if start:
+                        recorded_days.add(datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S").date())
         except Exception as exc:
             self.recorded_days_failed.emit(str(exc))
             return
 
         self.recorded_days_ready.emit(year, month, recorded_days)
-
-    def _fetch_recorded_dates(self, channel: int, start_dt: datetime, end_dt: datetime) -> set[date]:
-        """Como _fetch_clips, pero solo junta las fechas (sin horarios) de
-        inicio de cada clip, pidiendo pagina tras pagina de la MISMA sesion
-        hasta que una llamada a findNextFile venga vacia -- ver la nota en
-        MAX_RECORDED_DAYS_PAGES sobre por que no basta con revisar si la
-        pagina trajo menos de lo pedido."""
-        auth = HTTPDigestAuth(self.username, self.password)
-        base = f"http://{self.host}/cgi-bin/mediaFileFind.cgi"
-
-        response = requests.get(f"{base}?action=factory.create", auth=auth, timeout=15)
-        match = re.search(r"result=(\d+)", response.text)
-        if not match:
-            raise RuntimeError("No se pudo iniciar la sesión de búsqueda en el DVR.")
-        object_id = match.group(1).strip()
-
-        dates: set[date] = set()
-        try:
-            start_query = start_dt.strftime("%Y-%m-%d%%20%H:%M:%S")
-            end_query = end_dt.strftime("%Y-%m-%d%%20%H:%M:%S")
-            requests.get(
-                f"{base}?action=findFile&object={object_id}&condition.Channel={channel}"
-                f"&condition.StartTime={start_query}&condition.EndTime={end_query}",
-                auth=auth,
-                timeout=15,
-            )
-
-            for _ in range(MAX_RECORDED_DAYS_PAGES):
-                results = requests.get(
-                    f"{base}?action=findNextFile&object={object_id}&count=200", auth=auth, timeout=15
-                )
-                items = self._parse_items(results.text)
-                if not items:
-                    # Unica señal confiable de que ya no queda nada: el DVR
-                    # limita cada llamada a 100 resultados sin importar el
-                    # "count" pedido, asi que "menos de lo pedido" NO
-                    # significa "es la ultima pagina" -- hay que seguir
-                    # pidiendo hasta que de verdad venga vacia.
-                    break
-                for item in items.values():
-                    start = item.get("StartTime")
-                    if start:
-                        dates.add(datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S").date())
-        finally:
-            try:
-                requests.get(f"{base}?action=destroy&object={object_id}", auth=auth, timeout=10)
-            except Exception:
-                pass
-
-        return dates
 
     # -- reproduccion -------------------------------------------------------
 
@@ -473,7 +419,7 @@ class DVRClient(QObject):
             if stop_event.is_set():
                 return
             try:
-                fetched = self._fetch_clips(channel, day_start, day_end)
+                fetched = self._fetch_clips(channel, day_start, day_end, LightPriority.PERIODIC)
             except Exception:
                 return  # sin clips del dia siguiente: se cae al "Fin de segmento" de siempre
         if stop_event.is_set():

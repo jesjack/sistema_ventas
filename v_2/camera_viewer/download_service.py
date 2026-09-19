@@ -33,6 +33,7 @@ from multiprocessing.connection import Listener, answer_challenge, deliver_chall
 from pathlib import Path
 
 from .download_manager import RecordingDownloadManager
+from .light_query_manager import LightQueryManager
 
 SERVICE_HOST = "localhost"
 SERVICE_PORT = int(os.environ.get("DOWNLOAD_SERVICE_PORT", "51820"))
@@ -74,12 +75,17 @@ def get_or_create_authkey() -> bytes:
         return AUTHKEY_PATH.read_bytes()
 
 
-def serve_forever(manager: RecordingDownloadManager | None = None) -> None:
+def serve_forever(
+    manager: RecordingDownloadManager | None = None, light_manager: LightQueryManager | None = None
+) -> None:
     """Punto de entrada del servicio -- bloquea para siempre aceptando
     conexiones. Quien lo llama ya deberia ser dueño de SERVICE_LOCK_PATH
     (ver download_client.py._ensure_service_reachable); este modulo no
-    vuelve a chequear el candado, solo sirve."""
+    vuelve a chequear el candado, solo sirve. Hay DOS carriles
+    independientes hacia el DVR: descargas de clips (manager) y consultas
+    ligeras (light_manager, ver light_query_manager.py)."""
     manager = manager or RecordingDownloadManager()
+    light_manager = light_manager or LightQueryManager()
     authkey = get_or_create_authkey()
     # Sin authkey aqui a proposito: Listener.accept() haria el saludo de
     # autenticacion EN LINEA, dentro de este mismo hilo -- un solo cliente
@@ -89,10 +95,10 @@ def serve_forever(manager: RecordingDownloadManager | None = None) -> None:
     listener = Listener(SERVICE_ADDRESS, backlog=LISTEN_BACKLOG)
     while True:
         conn = listener.accept()
-        threading.Thread(target=_handle_connection, args=(manager, conn, authkey), daemon=True).start()
+        threading.Thread(target=_handle_connection, args=(manager, light_manager, conn, authkey), daemon=True).start()
 
 
-def _handle_connection(manager: RecordingDownloadManager, conn, authkey: bytes) -> None:
+def _handle_connection(manager: RecordingDownloadManager, light_manager: LightQueryManager, conn, authkey: bytes) -> None:
     try:
         deliver_challenge(conn, authkey)
         answer_challenge(conn, authkey)
@@ -105,6 +111,8 @@ def _handle_connection(manager: RecordingDownloadManager, conn, authkey: bytes) 
         action = request.get("action")
         if action == "submit":
             _handle_submit(manager, conn, request)
+        elif action == "query":
+            _handle_query(light_manager, conn, request)
         elif action == "drain":
             manager.drain()
             _safe_send(conn, {"ok": True})
@@ -116,12 +124,12 @@ def _handle_connection(manager: RecordingDownloadManager, conn, authkey: bytes) 
 
 def _handle_submit(manager: RecordingDownloadManager, conn, request: dict) -> None:
     # Un Event LOCAL a este proceso (el servicio) -- no cruza el socket.
-    # Si el cliente se desconecta antes de que termine la descarga (ver
+    # Si el cliente se desconecta antes de que termine el trabajo (ver
     # download_client.py: cierra la conexion cuando su propio stop_event
-    # local se activa), este bucle lo detecta y activa ESTE Event, que es
-    # el que de verdad hace que _play_chunk/_download corte la descarga a
-    # medias -- el mismo mecanismo de siempre, solo que ahora el "cliente
-    # que cancela" puede estar en otro proceso.
+    # local se activa), _wait_and_reply lo detecta y activa ESTE Event, que
+    # es el que de verdad hace que _download corte la descarga a medias --
+    # el mismo mecanismo de siempre, solo que ahora el "cliente que
+    # cancela" puede estar en otro proceso.
     stop_event = threading.Event()
     future = manager.submit(
         request["host"],
@@ -133,7 +141,36 @@ def _handle_submit(manager: RecordingDownloadManager, conn, request: dict) -> No
         request["priority"],
         stop_event,
     )
+    _wait_and_reply(conn, future, stop_event, lambda result: {"path": str(result) if result is not None else None})
 
+
+def _handle_query(light_manager: LightQueryManager, conn, request: dict) -> None:
+    """Consultas ligeras. `kind`: "get" (un GET suelto, responde su texto) o
+    "find_files" (búsqueda completa de mediaFileFind, responde la lista de
+    archivos). Un fallo (agotados los reintentos) se responde como
+    {"error": mensaje} y el cliente lo convierte en excepción."""
+    stop_event = threading.Event()
+    kind = request.get("kind")
+    common = (request["host"], request["username"], request["password"])
+    if kind == "get":
+        future = light_manager.submit_get(*common, request["path"], request["priority"], stop_event)
+    elif kind == "find_files":
+        future = light_manager.submit_find_files(
+            *common,
+            request["channel"],
+            request["start"],
+            request["end"],
+            request["max_pages"],
+            request["priority"],
+            stop_event,
+        )
+    else:
+        _safe_send(conn, {"error": f"consulta desconocida: {kind!r}"})
+        return
+    _wait_and_reply(conn, future, stop_event, lambda result: {"result": result})
+
+
+def _wait_and_reply(conn, future, stop_event: threading.Event, encode) -> None:
     while not future.done():
         if conn.poll(POLL_INTERVAL):
             try:
@@ -142,10 +179,10 @@ def _handle_submit(manager: RecordingDownloadManager, conn, request: dict) -> No
                 stop_event.set()
                 return
             # Cualquier otro mensaje (no deberia llegar en este protocolo)
-            # se ignora y se sigue esperando a que la descarga termine.
+            # se ignora y se sigue esperando a que el trabajo termine.
 
-    result = future.result()
-    _safe_send(conn, {"path": str(result) if result is not None else None})
+    error = future.exception()
+    _safe_send(conn, {"error": str(error) or type(error).__name__} if error else encode(future.result()))
 
 
 def _safe_send(conn, message: dict) -> None:
