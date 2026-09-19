@@ -23,18 +23,6 @@ set "TPV_PRIMERA_VUELTA=0"
 :: LibreOffice y este venv (tambien usado por camera_viewer).
 ".venv\Scripts\python.exe" prebake_ventas.py
 
-:: Si soffice murio sin cerrar bien, queda "share\.~lock.main.ods#" huerfano y
-:: LibreOffice abre main.ods como "copia". El lock no guarda PID, asi que solo
-:: se borra si NO hay ningun soffice vivo (si lo hay, puede ser una instancia
-:: real y se deja intacto). Sin parentesis a proposito, ver nota de arriba.
-if not exist "share\.~lock.main.ods#" goto lock_listo
-tasklist /FI "IMAGENAME eq soffice.bin" 2>nul | find /I "soffice.bin" >nul
-if not errorlevel 1 echo [lock] Hay una instancia de LibreOffice activa; se conserva el lock
-if not errorlevel 1 goto lock_listo
-echo [lock] share\.~lock.main.ods# es huerfano; eliminandolo
-del /F /Q "share\.~lock.main.ods#"
-:lock_listo
-
 :: Abre LibreOffice y ESPERA a que cierre por completo (sin "start"): esta
 :: espera bloqueante es la senal de "ya cerro" para el siguiente prebake, y
 :: evita que este mismo proceso herede un PATH modificado por el Python

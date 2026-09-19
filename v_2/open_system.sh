@@ -3,27 +3,7 @@ cd "$(dirname "$0")"
 
 MODO_JSON="share/logs/modo_sistema.json"
 RELANZAR_FLAG="share/logs/relanzar.flag"
-LOCK_MAIN_ODS="share/.~lock.main.ods#"
 primera_vuelta=1
-
-# LibreOffice deja "share/.~lock.main.ods#" mientras el documento esta abierto
-# y, si soffice muere sin cerrar bien (corte de luz, kill, crash), el archivo
-# queda huerfano: la siguiente apertura muestra el aviso y abre main.ods como
-# "copia" (solo lectura / sin poder guardar). El lock no guarda PID, asi que
-# la unica forma de saber si es un falso positivo es ver si hay algun
-# soffice.bin de ESTE usuario vivo (el perfil, y por tanto el lock, es por
-# usuario). Si lo hay, se deja el lock intacto: puede ser una instancia real.
-limpiar_lock_huerfano() {
-    [[ -e "$LOCK_MAIN_ODS" ]] || return 0
-
-    if pgrep -u "$(id -u)" -x soffice.bin >/dev/null 2>&1; then
-        echo "[lock] Hay una instancia de LibreOffice activa; se conserva $LOCK_MAIN_ODS"
-        return 0
-    fi
-
-    echo "[lock] $LOCK_MAIN_ODS es huerfano (no hay instancia de LibreOffice); eliminandolo"
-    rm -f "$LOCK_MAIN_ODS"
-}
 
 while true; do
     if [[ "$primera_vuelta" == "1" ]]; then
@@ -42,8 +22,6 @@ while true; do
     # solo haga falta administrar dos interpretes en total: el embebido de
     # LibreOffice y este venv (tambien usado por camera_viewer).
     .venv/bin/python3 prebake_ventas.py
-
-    limpiar_lock_huerfano
 
     # Abre LibreOffice y ESPERA a que cierre por completo (sin "&" en segundo
     # plano): esta espera bloqueante es la senal de "ya cerro" para el
