@@ -284,3 +284,19 @@ el `RecordingDownloadManager` (pausa de 1 s), con consultas de salud cada 0.5 s.
   No se puede separar si lo causaron las pruebas o coincidió con un problema propio del DVR; queda pendiente ver si se recupera solo o con reinicio.
 - **Conclusión para el diseño**: mezclar descargas con el vivo **no derriba el vivo, pero no es fiable para las descargas**, y con dos a la vez
   degrada el servicio de grabaciones. Se mantiene la regla de pausar las exportaciones durante la vista en vivo.
+
+### Continuación de la Adenda 6: concesión de vista en vivo (2026-09-19, tras reiniciar el DVR)
+
+Con el DVR recuperado (descarga de 5 s: 0.43 s), se implementó en el servicio de descargas la regla "nunca descargas junto al vivo":
+`download_service` acepta una **concesión de vivo** (`live_lease`) atada a una conexión abierta (se libera sola si el proceso muere); al pedirla,
+`RecordingDownloadManager.acquire_live` deja de arrancar trabajos (siguen en cola, con su orden de prioridad) y espera a los que corrían, incluida su
+pausa de cortesía. `DVRClient.start_live` ya no bloquea la interfaz (antes esperaba hasta 35 s en el hilo de la ventana): un hilo aparte toma la
+concesión y solo entonces abre los 4 RTSP; al salir del vivo la concesión se suelta tras `LIVE_TO_RECORDINGS_SETTLE` (1.5 s). `download_client.stats()`
+informa activas / en cola / concesiones. Reemplaza al antiguo `drain()`.
+
+Validado con el DVR real y la ventana completa (3 ciclos grabaciones → vivo → grabaciones, dos veces):
+- `_enter_live()` vuelve en 18-34 ms.
+- **0 solapes** entre cualquier descarga y una concesión de vivo, en 62 descargas registradas (6 canceladas por entrar en vivo, 0 fallos reales).
+- Una descarga enviada a propósito con el vivo abierto quedó retenida (`terminó = False`, `stats`: en cola 1, concesiones 1) y terminó al volver a grabaciones.
+- Los 4 canales tardan ~15 s en estar en vivo (aperturas serializadas con 1.5 s de cortesía + la negociación de cada RTSP); no se cambió aquí. En la Adenda 1 de
+  la investigación original, 4 aperturas simultáneas pasaron limpias: la serialización podría relajarse, pendiente de medir.

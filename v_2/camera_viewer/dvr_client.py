@@ -152,6 +152,8 @@ class DVRClient(QObject):
         self.chunk_store = ChunkStore()
 
         self._live_stop_event: threading.Event | None = None
+        self._live_lease: download_client.LiveLease | None = None
+        self._live_lock = threading.Lock()
         self._live_threads: list[threading.Thread] = []
         self._live_ready_events: dict[int, threading.Event] = {}
 
@@ -384,21 +386,33 @@ class DVRClient(QObject):
     # -- vista en vivo (RTSP realmonitor, igual protocolo que cameras/vivo.py) --
 
     def start_live(self) -> None:
-        # Margen amplio (timeout=35: el request de descarga de grabacion
-        # tiene su propio timeout de 30s, +5s de sobra) para asegurar de
-        # verdad que ningun hilo de reproduccion sigue vivo -- y despues,
-        # como garantia final, se confirma que ninguna descarga de
-        # grabacion sigue en curso EN NINGUN PROCESO (drena el servicio de
-        # descargas por completo) antes de la primera conexion en vivo.
-        # Nunca debe haber una sesion de grabacion abierta al mismo tiempo
-        # que una de vivo.
+        """Arranca la vista en vivo sin bloquear a quien llama (la interfaz): un hilo
+        aparte toma del servicio de descargas una CONCESIÓN de vivo -- mientras
+        dure, ninguna descarga de grabación arranca en ningún proceso, y antes de
+        darla espera a que terminen las que ya corren (ver
+        download_service._handle_live_lease) -- y solo entonces abre los canales.
+        Nunca debe haber una descarga al mismo tiempo que las conexiones en vivo
+        (informes/DVR_STRESS_TEST_RESULTS.md, Adenda 6)."""
+        # Los hilos de la reproduccion de grabaciones ya deben haber terminado (join,
+        # no un sleep fijo); sus descargas pendientes se cancelan al salir.
         self._stop_and_join(timeout=35.0)
-        download_client.drain()
         self.stop_live()
 
         stop_event = threading.Event()
         self._live_stop_event = stop_event
-        self._live_threads = []
+        starter = threading.Thread(target=self._live_starter, args=(stop_event,), name="LiveStarter", daemon=True)
+        self._live_threads = [starter]
+        starter.start()
+
+    def _live_starter(self, stop_event: threading.Event) -> None:
+        lease = download_client.acquire_live_lease(stop_event)
+        with self._live_lock:
+            if stop_event.is_set():
+                if lease is not None:
+                    lease.release()
+                return
+            self._live_lease = lease  # None si el servicio no respondió: se sigue como antes, sin la garantía
+
         # Un Event de backpressure por canal (ver _live_channel_worker):
         # arranca "set" (listo para el primer frame).
         self._live_ready_events = {channel: threading.Event() for channel in DEFAULT_CHANNELS}
@@ -412,16 +426,29 @@ class DVRClient(QObject):
                 args=(channel, bare_host, stop_event, self._live_ready_events[channel]),
                 daemon=True,
             )
-            self._live_threads.append(thread)
+            with self._live_lock:
+                if stop_event.is_set():
+                    return
+                self._live_threads.append(thread)
             thread.start()
 
     def stop_live(self, timeout: float = 2.0) -> None:
         if self._live_stop_event is not None:
             self._live_stop_event.set()
-        for thread in self._live_threads:
+        with self._live_lock:
+            threads = list(self._live_threads)
+        for thread in threads:
             thread.join(timeout=timeout)
-        self._live_stop_event = None
-        self._live_threads = []
+        with self._live_lock:
+            lease, self._live_lease = self._live_lease, None
+            self._live_stop_event = None
+            self._live_threads = []
+        if lease is not None:
+            # Las descargas reanudan tras un margen de cortesía: el DVR tarda un
+            # instante en liberar las sesiones RTSP recién cerradas.
+            timer = threading.Timer(LIVE_TO_RECORDINGS_SETTLE, lease.release)
+            timer.daemon = True
+            timer.start()
 
     def notify_frame_consumed(self, channel: int) -> None:
         """La GUI llama esto (desde el hilo principal) justo despues de

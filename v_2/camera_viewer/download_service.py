@@ -59,6 +59,10 @@ POLL_INTERVAL = 0.2
 # terminaban en 60s (2026-09-18, "algunas grabaciones nunca se descargan").
 LISTEN_BACKLOG = 128
 
+# Cuánto espera el servicio, al pedirle una concesión de vivo, a que terminen las
+# descargas en curso: el timeout de una descarga es 30 s (+ su pausa de cortesía).
+LIVE_LEASE_WAIT = 60.0
+
 
 def get_or_create_authkey() -> bytes:
     AUTHKEY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -113,9 +117,10 @@ def _handle_connection(manager: RecordingDownloadManager, light_manager: LightQu
             _handle_submit(manager, conn, request)
         elif action == "query":
             _handle_query(light_manager, conn, request)
-        elif action == "drain":
-            manager.drain()
-            _safe_send(conn, {"ok": True})
+        elif action == "live_lease":
+            _handle_live_lease(manager, conn, request)
+        elif action == "stats":
+            _safe_send(conn, {"stats": manager.stats()})
         else:
             _safe_send(conn, {"error": f"accion desconocida: {action!r}"})
     finally:
@@ -168,6 +173,28 @@ def _handle_query(light_manager: LightQueryManager, conn, request: dict) -> None
         _safe_send(conn, {"error": f"consulta desconocida: {kind!r}"})
         return
     _wait_and_reply(conn, future, stop_event, lambda result: {"result": result})
+
+
+def _handle_live_lease(manager: RecordingDownloadManager, conn, request: dict) -> None:
+    """Concesión de vista en vivo (ver RecordingDownloadManager.acquire_live):
+    mientras esta conexión siga abierta, no arranca ninguna descarga de
+    grabación. Responde {"granted": True} cuando ya no queda ninguna en curso
+    (o False si venció el tiempo). La concesión se suelta cuando el cliente
+    cierra la conexión -- también si su proceso muere, sin necesidad de
+    latidos ni temporizadores."""
+    granted = manager.acquire_live(timeout=request.get("timeout", LIVE_LEASE_WAIT))
+    _safe_send(conn, {"granted": granted})
+    if not granted:
+        return
+    try:
+        while True:
+            try:
+                if conn.poll(POLL_INTERVAL):
+                    conn.recv()  # no debería llegar nada; EOF = el cliente soltó la concesión
+            except (EOFError, OSError):
+                return
+    finally:
+        manager.release_live()
 
 
 def _wait_and_reply(conn, future, stop_event: threading.Event, encode) -> None:

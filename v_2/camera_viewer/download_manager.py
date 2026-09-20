@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import threading
+import time
 import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ POST_DOWNLOAD_GAP = 1.0
 # 2026-09-18, al final de un atasco del DVR) se reintenta una vez tras esta
 # pausa; después del primer byte ya no se reintenta (el archivo está a medias).
 DOWNLOAD_RETRY_DELAY = 1.0
+ADMISSION_POLL = 0.5  # cada cuánto un hilo detenido por una concesión de vivo revisa si lo cancelaron
 MAX_CONCURRENT_DOWNLOADS = 2
 
 
@@ -112,11 +114,15 @@ class RecordingDownloadManager:
         self._queue: PriorityQueue[_QueueItem] = PriorityQueue()
         self._seq_counter = itertools.count()
 
-        # Sirve unicamente para drain() (ver mas abajo) -- NO controla la
-        # concurrencia en si, eso ya lo garantiza que solo existan
-        # max_concurrent hilos. Se adquiere solo mientras un hilo esta
-        # transfiriendo bytes de verdad (no mientras espera en la cola).
-        self._active_gate = threading.Semaphore(max_concurrent)
+        # Concesiones de vista en vivo (ver acquire_live): mientras haya al menos
+        # una, ningun trabajo nuevo arranca, y quien la pide espera a que los que
+        # ya corren terminen (incluida su pausa de cortesia). Esto NO controla la
+        # concurrencia en si (eso ya lo garantiza que solo existan max_concurrent
+        # hilos): solo separa las descargas de las conexiones RTSP en vivo.
+        self._admission = threading.Condition()
+        self._live_holders = 0
+        self._held = 0  # trabajos ya tomados por un hilo pero detenidos por una concesión de vivo
+        self._active = 0  # trabajos en curso (de que se admiten hasta que termina su pausa de cortesia)
 
         self._workers = [
             threading.Thread(target=self._worker_loop, name=f"RecordingDownloader-{i}", daemon=True)
@@ -156,18 +162,35 @@ class RecordingDownloadManager:
         self._queue.put(_QueueItem(priority=priority, seq=next(self._seq_counter), job=job))
         return future
 
-    def drain(self) -> None:
-        """Bloquea hasta confirmar que NINGUNA descarga sigue en curso
-        (adquiere el cupo completo de _active_gate y lo libera de
-        inmediato). Uso: garantia final antes de la primera conexion en
-        vivo (ver DVRClient.start_live) -- nunca debe haber una descarga
-        de grabacion en curso al mismo tiempo que una sesion en vivo,
-        ni siquiera en el peor caso de un stop_event que no se atendio a
-        tiempo (p. ej. bloqueado en una lectura de red)."""
-        for _ in range(self._max_concurrent):
-            self._active_gate.acquire()
-        for _ in range(self._max_concurrent):
-            self._active_gate.release()
+    def acquire_live(self, timeout: float | None = None) -> bool:
+        """Concesión de vista en vivo: desde que se pide, NINGÚN trabajo nuevo
+        arranca (siguen en cola, con su orden de prioridad) hasta release_live();
+        y espera a que terminen los que ya corrían. True = ya no hay ninguna
+        descarga en curso, se puede abrir el RTSP. False = venció el tiempo con
+        alguna aún en curso (la concesión NO queda tomada). Nunca debe haber una
+        descarga de grabación al mismo tiempo que las conexiones en vivo (ver
+        informes/DVR_STRESS_TEST_RESULTS.md, Adenda 6: con el vivo abierto las
+        descargas fallan y degradan al DVR)."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._admission:
+            self._live_holders += 1
+            while self._active > 0:
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    self._live_holders -= 1
+                    self._admission.notify_all()
+                    return False
+                self._admission.wait(remaining)
+            return True
+
+    def release_live(self) -> None:
+        with self._admission:
+            self._live_holders = max(0, self._live_holders - 1)
+            self._admission.notify_all()
+
+    def stats(self) -> dict:
+        with self._admission:
+            return {"active": self._active, "queued": self._queue.qsize() + self._held, "live_holders": self._live_holders}
 
     def shutdown(self) -> None:
         """Detiene los hilos descargadores (un centinela None por hilo).
@@ -185,10 +208,29 @@ class RecordingDownloadManager:
 
     def _worker_loop(self) -> None:
         while True:
+            self._wait_no_live()  # con una concesión de vivo activa, los trabajos se quedan en la cola
             item = self._queue.get()
             if item.job is None:
                 return
-            self._run_job(item.job)
+            job = item.job
+            with self._admission:
+                # Pudo llegar una concesión mientras este hilo esperaba en get().
+                self._held += 1
+                while self._live_holders > 0 and not job.stop_event.is_set():
+                    self._admission.wait(ADMISSION_POLL)
+                self._held -= 1
+                self._active += 1
+            try:
+                self._run_job(job)
+            finally:
+                with self._admission:
+                    self._active -= 1
+                    self._admission.notify_all()
+
+    def _wait_no_live(self) -> None:
+        with self._admission:
+            while self._live_holders > 0:
+                self._admission.wait(ADMISSION_POLL)
 
     def _run_job(self, job: _Job) -> None:
         if job.stop_event.is_set():
@@ -203,15 +245,14 @@ class RecordingDownloadManager:
         )
         auth = HTTPDigestAuth(job.username, job.password)
 
-        self._active_gate.acquire()
         try:
             local_path = self._download(url, auth, job)
             job.future.set_result(local_path)
         finally:
-            # Mismo margen de cortesia que antes de este modulo: no
-            # reabrir un cupo apenas se libera uno.
+            # Margen de cortesia: no reabrir un cupo (ni abrir el vivo, ver
+            # acquire_live) apenas termina una descarga -- el DVR puede tardar
+            # un instante en liberar los recursos de la sesion.
             job.stop_event.wait(self._post_download_gap)
-            self._active_gate.release()
 
     def _download(self, url: str, auth: HTTPDigestAuth, job: _Job) -> Path | None:
         self._download_dir.mkdir(parents=True, exist_ok=True)

@@ -236,17 +236,57 @@ def _run_request(message: dict, stop_event: threading.Event, decode, future: Fut
         future.set_exception(exc)
 
 
-def drain() -> None:
-    """Bloquea hasta que el servicio confirme que no hay ninguna descarga
-    en curso -- ver DVRClient.start_live. Si no hay servicio corriendo (ni
-    nada que drenar), no hay nada que hacer."""
+class LiveLease:
+    """Concesión de vista en vivo tomada al servicio (ver acquire_live_lease). La
+    mantiene una conexión abierta: soltarla (release) o morir el proceso la libera."""
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def release(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+
+def acquire_live_lease(stop_event: threading.Event | None = None, timeout: float | None = None) -> LiveLease | None:
+    """Pide al servicio que pause las descargas de grabaciones mientras dure la vista
+    en vivo, y espera a que no quede ninguna en curso (ver
+    download_service._handle_live_lease). Bloquea: llamarla desde un hilo aparte,
+    no desde la interfaz. Devuelve None si el servicio no es alcanzable, si venció
+    el tiempo con alguna descarga aún en curso, o si stop_event se activó."""
+    wait = download_service.LIVE_LEASE_WAIT if timeout is None else timeout
     conn = _connect_or_bootstrap()
     if conn is None:
-        return
+        return None
     try:
-        conn.send({"action": "drain"})
-        conn.recv()
+        conn.send({"action": "live_lease", "timeout": wait})
+        deadline = time.monotonic() + wait + 5.0
+        while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                break
+            if conn.poll(download_service.POLL_INTERVAL):
+                if conn.recv().get("granted"):
+                    return LiveLease(conn)
+                break
     except (EOFError, OSError):
         pass
+    conn.close()
+    return None
+
+
+def stats() -> dict | None:
+    """Estado del carril de descargas del servicio: activas, en cola y concesiones de vivo."""
+    conn = _connect_or_bootstrap()
+    if conn is None:
+        return None
+    try:
+        conn.send({"action": "stats"})
+        return conn.recv().get("stats")
+    except (EOFError, OSError):
+        return None
     finally:
         conn.close()
