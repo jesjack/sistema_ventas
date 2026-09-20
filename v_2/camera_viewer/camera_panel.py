@@ -5,7 +5,7 @@ import re
 import numpy as np
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPixmap, QWheelEvent
-from PySide6.QtWidgets import QGraphicsPixmapItem, QLabel
+from PySide6.QtWidgets import QGraphicsPixmapItem, QLabel, QWidget
 
 from .playback_control import PAUSED_STATUS, REVERSE_STATUS_PREFIX
 from .zoom_canvas import ZoomPanGraphicsView
@@ -46,6 +46,19 @@ class CameraPanel(ZoomPanGraphicsView):
     # ticks sueltos de un scroll rapido.
     ZOOM_SMOOTH_IDLE_MS = 150
 
+    # Casilla que la ventana de guardado pone en la esquina, a la izquierda del label de estado.
+    CORNER_CHECK_STYLE = (
+        "QCheckBox { background-color: rgba(15, 23, 42, 170); color: #E5E7EB; padding: 2px 6px;"
+        " border-radius: 3px; font-weight: bold; }"
+        " QCheckBox:disabled { color: #6B7280; }"
+        " QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #9CA3AF;"
+        " border-radius: 2px; background-color: #0F172A; }"
+        " QCheckBox::indicator:checked { background-color: #3B82F6; border-color: #93C5FD; }"
+        " QCheckBox::indicator:disabled { border-color: #4B5563; background-color: #1F2937; }"
+        " QCheckBox::indicator:checked:disabled { border-color: #4B5563; background-color: #1E40AF; }"
+    )
+    CORNER_GAP = 6
+
     def __init__(self, channel: int, initial_status: str = "Sin reproducción", parent=None) -> None:
         super().__init__(parent)
         self.channel = channel
@@ -80,6 +93,18 @@ class CameraPanel(ZoomPanGraphicsView):
         self._zoom_smooth_idle_timer.setSingleShot(True)
         self._zoom_smooth_idle_timer.timeout.connect(self._restore_smooth_pixmap_transform)
 
+        # Apagado (ventana de guardado): el panel se ve negro con un aviso en vez del video, para
+        # indicar que ese canal se ignora. El estado real se sigue guardando para devolverlo al
+        # volver a encenderlo.
+        self._blackout = QWidget(self)
+        self._blackout.setStyleSheet("background-color: #000000;")
+        self._blackout.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._blackout.hide()
+        self._excluded = False
+        self._excluded_message = ""
+        self._corner_widget: QWidget | None = None
+
+        self._status_text = initial_status
         self._status_label = QLabel(initial_status, self)
         self._status_label.setStyleSheet(self.LABEL_STYLE)
         self._status_is_live = False
@@ -112,6 +137,7 @@ class CameraPanel(ZoomPanGraphicsView):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_transform()
+        self._blackout.setGeometry(self.viewport().geometry())
         self._reposition_status_label()
 
     def showEvent(self, event) -> None:
@@ -148,6 +174,39 @@ class CameraPanel(ZoomPanGraphicsView):
         self.reset_zoom()
 
     def set_status(self, text: str) -> None:
+        self._status_text = text
+        self._show_status(self._excluded_message if self._excluded else text)
+
+    def set_corner_widget(self, widget: QWidget) -> None:
+        """Un widget (la casilla de la ventana de guardado) en la esquina superior izquierda;
+        el label de estado de esquina se corre a su derecha."""
+        self._corner_widget = widget
+        widget.setParent(self)
+        widget.setStyleSheet(self.CORNER_CHECK_STYLE)
+        widget.adjustSize()
+        widget.show()
+        self._reposition_status_label()
+        self._raise_overlays()
+
+    def set_excluded(self, excluded: bool, message: str = "") -> None:
+        """Panel apagado: negro y con `message` al centro (el video sigue llegando por debajo)."""
+        self._excluded, self._excluded_message = excluded, message
+        self._blackout.setGeometry(self.viewport().geometry())
+        self._blackout.setVisible(excluded)
+        self._show_status(message if excluded else self._status_text)
+        self._raise_overlays()
+
+    def is_excluded(self) -> bool:
+        return self._excluded
+
+    def _raise_overlays(self) -> None:
+        if self._excluded:
+            self._blackout.raise_()
+        if self._corner_widget is not None:
+            self._corner_widget.raise_()
+        self._status_label.raise_()
+
+    def _show_status(self, text: str) -> None:
         # El modo en vivo lo llama por cada frame (~30/s por canal): sin
         # este corte, cada llamada repintaba el estilo y recalculaba el
         # tamaño de un label que no cambio.
@@ -174,8 +233,15 @@ class CameraPanel(ZoomPanGraphicsView):
 
     def _reposition_status_label(self) -> None:
         if self._is_corner_status(self._status_label.text()):
-            self._status_label.move(self.CORNER_MARGIN, self.CORNER_MARGIN)
+            x, top = self.CORNER_MARGIN, self.CORNER_MARGIN
+            if self._corner_widget is not None:
+                self._corner_widget.move(x, top)
+                x += self._corner_widget.width() + self.CORNER_GAP
+                top += (self._corner_widget.height() - self._status_label.height()) // 2
+            self._status_label.move(x, top)
             return
+        if self._corner_widget is not None:
+            self._corner_widget.move(self.CORNER_MARGIN, self.CORNER_MARGIN)
 
         x = (self.width() - self._status_label.width()) // 2
         y = (self.height() - self._status_label.height()) // 2

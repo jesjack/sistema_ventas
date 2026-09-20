@@ -245,6 +245,60 @@ class RecordingRetryTests(unittest.TestCase):
         self.assertEqual(list(self.tmp.iterdir()), [])
 
 
+class DownloadProgressTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.dvr = FakeDVR()
+        patcher = mock.patch.object(requests, "get", self.dvr)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.manager = RecordingDownloadManager(max_concurrent=2, download_dir=self.tmp, post_download_gap=0)
+        self.addCleanup(self.manager.shutdown)
+
+    def test_progress_starts_at_zero_when_the_job_leaves_the_queue_then_counts_bytes(self) -> None:
+        self.dvr.handler = lambda url: FakeResponse(chunks=[b"abc", b"defg", b"h"])
+        seen: list[int] = []
+        self.manager.submit("dvr", "u", "p", 1, START, END, 0, threading.Event(), progress=seen.append).result(timeout=5)
+        self.assertEqual(seen, [0, 3, 7, 8])
+
+    def test_a_queued_job_reports_nothing_until_it_starts(self) -> None:
+        release = threading.Event()
+        self.dvr.handler = lambda url: (release.wait(5), FakeResponse(chunks=[b"x"]))[1]
+        for _ in range(2):  # ocupan los dos hilos
+            self.manager.submit("dvr", "u", "p", 1, START, END, 0, threading.Event())
+        seen: list[int] = []
+        future = self.manager.submit("dvr", "u", "p", 2, START, END, 0, threading.Event(), progress=seen.append)
+        time.sleep(0.3)
+        self.assertEqual(seen, [])  # sigue en cola
+        release.set()
+        future.result(timeout=5)
+        self.assertEqual(seen[0], 0)
+
+    def test_a_failing_progress_callback_does_not_break_the_download(self) -> None:
+        self.dvr.handler = lambda url: FakeResponse(chunks=[b"abc"])
+
+        def boom(_received: int) -> None:
+            raise RuntimeError("callback roto")
+
+        path = self.manager.submit("dvr", "u", "p", 1, START, END, 0, threading.Event(), progress=boom).result(timeout=5)
+        self.assertEqual(path.read_bytes(), b"abc")
+
+    def test_a_retry_after_a_connection_error_starts_counting_again_from_zero(self) -> None:
+        attempts: list[str] = []
+
+        def handler(url: str):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise requests.exceptions.ConnectionError("reset")
+            return FakeResponse(chunks=[b"abc"])
+
+        self.dvr.handler = handler
+        seen: list[int] = []
+        with mock.patch("camera_viewer.download_manager.DOWNLOAD_RETRY_DELAY", 0.01):
+            self.manager.submit("dvr", "u", "p", 1, START, END, 0, threading.Event(), progress=seen.append).result(timeout=5)
+        self.assertEqual(seen, [0, 0, 3])
+
+
 class LanesAreIndependentTests(unittest.TestCase):
     def test_saturated_downloads_do_not_delay_light_queries(self) -> None:
         release = threading.Event()
@@ -343,6 +397,37 @@ class ServiceEndToEndTests(unittest.TestCase):
         self.dvr.handler = lambda url: FakeResponse(chunks=[b"video"])
         path = download_client.submit("dvr", "u", "p", 1, START, END, 0, threading.Event()).result(timeout=10)
         self.assertEqual(path.read_bytes(), b"video")
+        path.unlink()
+
+    def test_download_through_service_reports_progress_to_whoever_asks(self) -> None:
+        gate = threading.Event()
+
+        def chunks():
+            yield b"aaaa"
+            gate.wait(5)  # da tiempo a que el avance cruce el socket antes de terminar
+            yield b"bb"
+
+        class Slow(FakeResponse):
+            def iter_content(self, chunk_size: int = 0):
+                return chunks()
+
+        self.dvr.handler = lambda url: Slow()
+        seen: list[int] = []
+        future = download_client.submit("dvr", "u", "p", 1, START, END, 0, threading.Event(), progress=seen.append)
+        deadline = time.monotonic() + 5
+        while 4 not in seen and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertIn(4, seen)
+        gate.set()
+        path = future.result(timeout=10)
+        self.assertEqual(path.read_bytes(), b"aaaabb")
+        self.assertEqual(seen, sorted(seen))  # el servicio manda el último valor: se saltan algunos, nunca retrocede
+        path.unlink()
+
+    def test_a_client_that_did_not_ask_for_progress_gets_only_the_final_answer(self) -> None:
+        self.dvr.handler = lambda url: FakeResponse(chunks=[b"a", b"b", b"c"])
+        path = download_client.submit("dvr", "u", "p", 1, START, END, 0, threading.Event()).result(timeout=10)
+        self.assertEqual(path.read_bytes(), b"abc")
         path.unlink()
 
     def test_cancelling_a_query_frees_the_client(self) -> None:

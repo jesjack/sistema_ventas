@@ -13,7 +13,7 @@ from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from camera_viewer.clip import Clip  # noqa: E402
-from camera_viewer.clip_timeline import ClipTimeline  # noqa: E402
+from camera_viewer.clip_timeline import ClipTimeline, label_positions  # noqa: E402
 
 T0 = datetime(2026, 9, 19, 10, 0, 0)
 
@@ -116,6 +116,45 @@ class ClipTimelineTests(unittest.TestCase):
         self.assertFalse(self.tl.grab().isNull())
         empty = ClipTimeline()
         self.assertFalse(empty.grab().isNull())  # sin contexto: no revienta
+
+
+class RangeLabelTests(unittest.TestCase):
+    def width(self, text: str) -> float:
+        return 7.0 * len(text)
+
+    def positions(self, left: float, right: float, total: float = 1000.0):
+        return label_positions(self.width, left, right, total, "08:16:20", "08:29:57", "13 min 37 s")
+
+    def test_a_wide_band_shows_start_duration_and_end_in_that_order_inside_it(self) -> None:
+        labels = self.positions(100, 900)
+        self.assertEqual([text for text, _x in labels], ["08:16:20", "13 min 37 s", "08:29:57"])
+        self.assertEqual(labels[0][1], 108)  # pegada al asa izquierda
+        self.assertEqual(labels[2][1] + self.width("08:29:57"), 892)  # y la de fin al asa derecha
+        self.assertEqual(labels[1][1] + self.width("13 min 37 s") / 2, 500)  # duración al centro
+
+    def test_a_narrower_band_drops_the_duration_first(self) -> None:
+        labels = self.positions(100, 290)
+        self.assertEqual([text for text, _x in labels], ["08:16:20", "08:29:57"])
+
+    def test_a_tiny_band_puts_each_time_outside_its_handle_without_leaving_the_widget(self) -> None:
+        (start_text, start_x), (end_text, end_x) = self.positions(500, 520)
+        self.assertLessEqual(start_x + self.width(start_text), 500)
+        self.assertGreaterEqual(end_x, 520)
+        (_t, start_x), (_t2, end_x) = self.positions(0, 10, total=200)
+        self.assertGreaterEqual(start_x, 0)
+        (_t, start_x), (_t2, end_x) = self.positions(190, 200, total=200)
+        self.assertLessEqual(end_x + self.width("08:29:57"), 200)
+
+    def test_the_labels_follow_the_handle_while_dragging(self) -> None:
+        tl = ClipTimeline()
+        tl.set_context(datetime(2026, 9, 19, 10, 0), datetime(2026, 9, 19, 10, 10))
+        tl.set_export_range(datetime(2026, 9, 19, 10, 2), datetime(2026, 9, 19, 10, 5))
+        self.assertEqual(tl.range_texts(), ("10:02:00", "10:05:00", "3 min 00 s"))
+        tl._drag_range = (datetime(2026, 9, 19, 10, 1), datetime(2026, 9, 19, 10, 5))
+        self.assertEqual(tl.range_texts(), ("10:01:00", "10:05:00", "4 min 00 s"))
+        tl.clear_export_range()
+        tl._drag_range = None
+        self.assertIsNone(tl.range_texts())
 
 
 if __name__ == "__main__":

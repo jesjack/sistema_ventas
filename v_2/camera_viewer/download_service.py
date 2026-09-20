@@ -127,6 +127,26 @@ def _handle_connection(manager: RecordingDownloadManager, light_manager: LightQu
         conn.close()
 
 
+class _ProgressTracker:
+    """Último avance (bytes) que informó el hilo descargador; el hilo de la conexión lo
+    reenvía al cliente. Solo se guarda un número (sin bloqueos): si el cliente no lo
+    pide a tiempo, simplemente se salta valores intermedios."""
+
+    def __init__(self) -> None:
+        self._value: int | None = None  # None: el trabajo sigue en cola
+        self._sent: int | None = None
+
+    def update(self, received: int) -> None:
+        self._value = received
+
+    def take_new(self) -> int | None:
+        value = self._value
+        if value is None or value == self._sent:
+            return None
+        self._sent = value
+        return value
+
+
 def _handle_submit(manager: RecordingDownloadManager, conn, request: dict) -> None:
     # Un Event LOCAL a este proceso (el servicio) -- no cruza el socket.
     # Si el cliente se desconecta antes de que termine el trabajo (ver
@@ -136,6 +156,9 @@ def _handle_submit(manager: RecordingDownloadManager, conn, request: dict) -> No
     # el mismo mecanismo de siempre, solo que ahora el "cliente que
     # cancela" puede estar en otro proceso.
     stop_event = threading.Event()
+    # El avance solo se informa a quien lo pidió (`progress`): un cliente que no lo
+    # entiende tomaría el primer mensaje como la respuesta final.
+    tracker = _ProgressTracker() if request.get("progress") else None
     future = manager.submit(
         request["host"],
         request["username"],
@@ -145,8 +168,9 @@ def _handle_submit(manager: RecordingDownloadManager, conn, request: dict) -> No
         request["end"],
         request["priority"],
         stop_event,
+        progress=tracker.update if tracker else None,
     )
-    _wait_and_reply(conn, future, stop_event, lambda result: {"path": str(result) if result is not None else None})
+    _wait_and_reply(conn, future, stop_event, lambda result: {"path": str(result) if result is not None else None}, tracker)
 
 
 def _handle_query(light_manager: LightQueryManager, conn, request: dict) -> None:
@@ -197,8 +221,12 @@ def _handle_live_lease(manager: RecordingDownloadManager, conn, request: dict) -
         manager.release_live()
 
 
-def _wait_and_reply(conn, future, stop_event: threading.Event, encode) -> None:
+def _wait_and_reply(conn, future, stop_event: threading.Event, encode, tracker: _ProgressTracker | None = None) -> None:
     while not future.done():
+        if tracker is not None:
+            received = tracker.take_new()
+            if received is not None:
+                _safe_send(conn, {"progress": received})  # {"progress": bytes} y nada más
         if conn.poll(POLL_INTERVAL):
             try:
                 conn.recv()

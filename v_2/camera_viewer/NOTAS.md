@@ -8,10 +8,10 @@ Visor PySide6 de un DVR Dahua (4 canales) dentro del POS. Historial y mediciones
 - **Reproducción:** `dvr_client.py` (fachada Qt) → un `channel_player.py` por canal (bloques locales en `chunk_store.py`, reversa, saltos).
   `playback_control.py` = reloj compartido + barrera de arranque + límites de rango; sin él los canales se desfasan.
 - **UI:** `main_window.py`, `playback_controls.py`, `timeline_widget.py`. **Exportar:** `export_clip.py` (lógica), `export_flow.py`,
-  `export_bar.py`, `clip_export_dialog.py` + `clip_timeline.py` (ventana propia). **Info del DVR:** `dvr_info.py` + `dvr_info_dialog.py`.
+  `export_bar.py`, `clip_export_dialog.py` + `clip_timeline.py` (ventana propia: `ExportBar(window_mode=True)` es su fila superior; las casillas de canal viven en los paneles). **Avance del guardado:** `export_progress.py` (modelo: fases, bytes, velocidad, tiempo restante) + `save_progress_dialog.py` (ventana modal con tarjeta por canal y Cancelar); los bytes salen del servicio con `submit(..., progress=)` y solo se envían a quien los pide. **Info del DVR:** `dvr_info.py` + `dvr_info_dialog.py`.
 
 ## Pruebas (no tocan el DVR real)
-- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 2 min (232 pruebas), Qt en `offscreen`.
+- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 2 min (288 pruebas), Qt en `offscreen`.
 - Los DVR falsos generan video sintético; OpenCV no puede ESCRIBIR `.dav` (crear `.avi` y renombrar).
 
 ## Validar con el DVR real (IP 192.168.1.108)

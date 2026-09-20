@@ -36,6 +36,14 @@ FFMPEG_TIMEOUT = 300.0
 DURATION_TOLERANCE_SECONDS = 1.5
 WAIT_POLL = 0.2
 
+# Fases de un canal durante la exportación (cuarto elemento de los avisos "state").
+PHASE_QUEUED = "queued"  # esperando turno en el embudo del DVR
+PHASE_DOWNLOADING = "downloading"  # llegan bytes del DVR (aviso "progress")
+PHASE_RETRYING = "retrying"
+PHASE_CONVERTING = "converting"  # remux a MP4 (o mover el .dav)
+PHASE_VERIFYING = "verifying"
+CANCELLED_TEXT = "Cancelado"
+
 
 class ExportError(Exception):
     pass
@@ -90,6 +98,27 @@ def _invoking_ids() -> tuple[int, int] | None:
         return int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"])
     except (KeyError, ValueError):
         return None
+
+
+def parse_folder(text: str) -> Path | None:
+    """La carpeta que describe el texto escrito por el usuario, o None si no sirve: vacío, ruta
+    relativa, o que pasa por algo que no es una carpeta. Puede no existir aún (`make_folder`
+    la crea) mientras la primera carpeta existente hacia arriba sea, de hecho, una carpeta.
+    "~" es la carpeta personal del usuario real (ver `user_home`)."""
+    text = text.strip()
+    if not text:
+        return None
+    if text == "~" or text.startswith("~/"):
+        text = str(user_home() / text[2:])
+    path = Path(text)
+    if not path.is_absolute():
+        return None
+    probe = path
+    while not probe.exists():
+        if probe == probe.parent:
+            return None
+        probe = probe.parent
+    return path if probe.is_dir() else None
 
 
 def make_folder(folder: Path) -> None:
@@ -221,7 +250,8 @@ class ClipExport:
     """Exportación en curso: `events` (cola) y `cancel()`.
 
     Avisos en `events`, siempre tuplas:
-      ("state", canal, texto)            progreso de un canal
+      ("state", canal, texto[, fase])    progreso de un canal (fase: PHASE_*, o ausente si no cambia)
+      ("progress", canal, bytes)         bytes recibidos del DVR hasta ahora (0 = ya arrancó)
       ("done", canal, ruta, aviso|None)  ese canal quedó guardado
       ("failed", canal, mensaje)         ese canal no se pudo
       ("finished", {canal: ruta|None})   terminó todo (nunca falta este aviso)"""
@@ -276,7 +306,10 @@ def _run_export(
     events = handle.events
 
     def request(channel: int) -> Future:
-        return submit(host, username, password, channel, clip_range.start, clip_range.end, DownloadPriority.EXPORT, handle.stop)
+        return submit(
+            host, username, password, channel, clip_range.start, clip_range.end, DownloadPriority.EXPORT, handle.stop,
+            progress=lambda received: events.put(("progress", channel, received)),
+        )
 
     def wait(future: Future) -> Path | None:
         while True:
@@ -293,22 +326,22 @@ def _run_export(
         # Se piden todos de una vez: el embudo los sirve de a dos, por prioridad.
         futures = {channel: request(channel) for channel in channels}
         for channel in channels:
-            events.put(("state", channel, "En cola…"))
+            events.put(("state", channel, "En cola…", PHASE_QUEUED))
         for channel in channels:
             if handle.stop.is_set():
-                events.put(("failed", channel, "Cancelado"))
+                events.put(("failed", channel, CANCELLED_TEXT))
                 continue
             events.put(("state", channel, "Descargando…"))
             source = wait(futures[channel])
             if source is None and not handle.stop.is_set():
-                events.put(("state", channel, "Reintentando la descarga…"))
+                events.put(("state", channel, "Reintentando la descarga…", PHASE_RETRYING))
                 time.sleep(DOWNLOAD_RETRY_DELAY)
                 source = wait(request(channel))
             if source is None:
-                events.put(("failed", channel, "Cancelado" if handle.stop.is_set() else "No se pudo descargar del DVR"))
+                events.put(("failed", channel, CANCELLED_TEXT if handle.stop.is_set() else "No se pudo descargar del DVR"))
                 continue
             try:
-                events.put(("state", channel, "Convirtiendo…" if ffmpeg else "Guardando…"))
+                events.put(("state", channel, "Convirtiendo…" if ffmpeg else "Guardando…", PHASE_CONVERTING))
                 extension = ".mp4" if ffmpeg else ".dav"
                 final = unique_path(folder, clip_filename(channel, clip_range, extension))
                 partial = final.with_name(f"{final.stem}.part{extension}")
@@ -317,7 +350,7 @@ def _run_export(
                         remux_to_mp4(source, partial, ffmpeg)
                     else:
                         shutil.move(str(source), str(partial))
-                    events.put(("state", channel, "Verificando…"))
+                    events.put(("state", channel, "Verificando…", PHASE_VERIFYING))
                     warning = verify_clip(partial, clip_range.duration)
                     partial.replace(final)
                     own_as_user(final)

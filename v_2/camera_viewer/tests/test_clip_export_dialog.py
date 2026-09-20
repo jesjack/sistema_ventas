@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from camera_viewer.clip import Clip  # noqa: E402
-from camera_viewer.clip_export_dialog import ClipExportDialog  # noqa: E402
+from camera_viewer.clip_export_dialog import NO_RECORDING_MESSAGE, NOT_SAVED_MESSAGE, ClipExportDialog  # noqa: E402
 from camera_viewer.export_bar import EXPORTING, FINISHED, PREVIEW  # noqa: E402
 from camera_viewer.export_clip import ClipRange  # noqa: E402
 from camera_viewer.playback_control import PlaybackControl  # noqa: E402
@@ -110,7 +110,7 @@ class DialogTestCase(unittest.TestCase):
 
         dialog = ClipExportDialog(
             self.client, clips or self.clips, clip_range or ClipRange(at(10, 5, 30), at(10, 6, 10)),
-            settings=None, now=lambda: NOW, starter=starter,
+            settings=None, now=lambda: NOW, starter=starter, confirm_cancel=lambda downloaded: True,
         )
         dialog.flow._folder = self.folder
         dialog.show()
@@ -214,7 +214,7 @@ class RangeAdjustmentTests(DialogTestCase):
         dialog.timeline.range_changed.emit(at(10, 5, 20), at(10, 6, 10))  # alargar 10 s hacia atrás
         self.assertEqual(self.client.control.bounds(), (at(10, 5, 20), at(10, 6, 10)))
         self.assertEqual(dialog.timeline.export_range(), (at(10, 5, 20), at(10, 6, 10)))
-        self.assertIn("50 s", dialog.bar._range_label.text())
+        self.assertEqual(dialog.timeline.range_texts(), ("10:05:20", "10:06:10", "50 s"))
         self.assertNotEqual(dialog.bar._size_label.text(), before)
 
     def test_a_range_beyond_the_context_is_clamped(self) -> None:
@@ -223,12 +223,20 @@ class RangeAdjustmentTests(DialogTestCase):
         start, end = self.client.control.bounds()
         self.assertEqual((start, end), dialog.timeline.context())
 
-    def test_the_mark_buttons_adjust_from_the_current_position(self) -> None:
+    def test_there_are_no_mark_buttons_the_handles_are_the_only_way_to_adjust(self) -> None:
         dialog = self.open()
-        self.client.control.reset(True, at(10, 5, 50))
-        self.client.control.set_bounds(at(10, 5, 30), at(10, 6, 10))
-        dialog.bar._mark_start.click()
-        self.assertEqual(self.client.control.bounds(), (at(10, 5, 50), at(10, 6, 10)))
+        for button in (dialog.bar._mark_start, dialog.bar._mark_end, dialog.bar._restart):
+            self.assertIsNone(button.parent())  # sueltos: nunca se muestran
+        self.assertFalse(dialog.bar._range_label.isVisible())
+        self.assertEqual(dialog.timeline.range_texts(), ("10:05:30", "10:06:10", "40 s"))
+
+    def test_the_restart_button_lives_with_the_playback_controls_and_replays_the_clip(self) -> None:
+        dialog = self.open()
+        self.assertTrue(dialog.controls.isAncestorOf(dialog.controls._restart))
+        self.assertTrue(dialog.controls._restart.isEnabled())
+        self.client.control.reset(True, at(10, 5, 55))
+        dialog.controls._restart.click()
+        self.assertEqual(self.client.calls[-1], ("seek", at(10, 5, 30), True))
 
     def test_less_than_one_second_is_refused_and_the_band_snaps_back(self) -> None:
         dialog = self.open()
@@ -265,8 +273,8 @@ class SavingAndClosingTests(DialogTestCase):
         self.export.push("finished", {})
         dialog.flow._poll()
         self.assertEqual(dialog.bar.state, FINISHED)
-        self.assertTrue(dialog.isVisible())  # la ventana sigue abierta mostrando el resultado
-        dialog.bar._dismiss.click()
+        self.assertTrue(dialog.isVisible())  # la ventana del clip sigue abierta detrás del resultado
+        dialog.progress_window._close.click()  # "Cerrar" en la ventana de avance
         self.assertFalse(dialog.isVisible())
 
     def test_closing_while_saving_cancels_the_export(self) -> None:
@@ -275,12 +283,212 @@ class SavingAndClosingTests(DialogTestCase):
         dialog.close()
         self.assertTrue(self.export.cancelled)
 
-    def test_the_folder_button_asks_for_a_folder_through_the_dialog(self) -> None:
+    def test_the_browse_button_asks_for_a_folder_through_the_dialog_and_fills_the_field(self) -> None:
         dialog = self.open()
         chosen = Path(tempfile.mkdtemp())
         with mock.patch("camera_viewer.clip_export_dialog.QFileDialog.getExistingDirectory", return_value=str(chosen)):
-            dialog.bar._folder_button.click()
-        self.assertIn(str(chosen), dialog.bar._folder_button.text())
+            dialog.bar._browse.click()
+        self.assertEqual(dialog.bar._folder_edit.text(), str(chosen))
+        self.assertEqual(dialog.flow._folder, chosen)
+
+
+class SaveProgressWindowTests(DialogTestCase):
+    def save(self, dialog: ClipExportDialog) -> None:
+        dialog.bar._confirm.click()
+        self.app.processEvents()
+
+    def test_saving_opens_the_progress_window_and_stops_the_clips_own_playback(self) -> None:
+        dialog = self.open()
+        self.save(dialog)
+        window = dialog.progress_window
+        self.assertIsNotNone(window)
+        self.assertTrue(window.isVisible() and window.isModal())
+        self.assertIs(window.parent(), dialog)
+        self.assertEqual(sorted(window.cards), [1, 2, 3, 4])
+        self.assertEqual(self.client.calls[-1], ("stop",))  # las descargas del clip no compiten con la reproducción
+        self.assertIs(window._progress, dialog.flow.progress)
+
+    def test_the_top_row_no_longer_shows_progress_text_or_buttons_while_saving(self) -> None:
+        dialog = self.open()
+        self.save(dialog)
+        for widget in (dialog.bar._message, dialog.bar._cancel_export, dialog.bar._confirm, dialog.bar._folder_edit):
+            self.assertFalse(widget.isVisible())
+
+    def test_export_events_reach_the_cards(self) -> None:
+        dialog = self.open()
+        self.save(dialog)
+        window = dialog.progress_window
+        self.export.push("state", 1, "En cola…", "queued")
+        self.export.push("progress", 1, 0)
+        self.export.push("progress", 1, 4 * 1024 * 1024)
+        self.export.push("state", 3, "Convirtiendo…", "converting")
+        dialog.flow._poll()
+        self.assertEqual(window.cards[1]._phase.text(), "Descargando del DVR")
+        self.assertIn("4.0 MB", window.cards[1]._detail.text())
+        self.assertEqual(window.cards[3]._phase.text(), "Convirtiendo a MP4")
+        self.assertEqual(window.cards[2]._phase.text(), "En cola")
+
+    def test_done_events_show_the_saved_file_with_its_size(self) -> None:
+        dialog = self.open()
+        self.save(dialog)
+        saved = self.folder / "CAM1_x.mp4"
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_bytes(b"x" * 2048)
+        self.export.push("done", 1, str(saved), None)
+        dialog.flow._poll()
+        self.assertEqual(dialog.progress_window.cards[1]._phase.text(), "Guardado")
+        self.assertIn("CAM1_x.mp4 · 2.0 KB", dialog.progress_window.cards[1]._detail.text())
+
+    def test_cancel_asks_the_flow_to_cancel_and_with_nothing_saved_returns_to_the_preview(self) -> None:
+        dialog = self.open()
+        self.save(dialog)
+        window = dialog.progress_window
+        window._cancel.click()
+        self.assertTrue(self.export.cancelled)
+        for channel in (1, 2, 3, 4):
+            self.export.push("failed", channel, "Cancelado")
+        self.export.push("finished", {})
+        dialog.flow._poll()
+        self.app.processEvents()
+        self.assertIsNone(dialog.progress_window)
+        self.assertTrue(dialog.isVisible())  # sigue la ventana del clip
+        self.assertEqual(dialog.bar.state, PREVIEW)
+        self.assertEqual(self.client.calls[-1], ("play_from", at(10, 5, 30)))  # vuelve a reproducir su clip
+        self.assertEqual(self.client.control.bounds(), (at(10, 5, 30), at(10, 6, 10)))
+        self.assertTrue(dialog.bar._confirm.isEnabled())
+        self.assertEqual(dialog.timeline.export_range(), (at(10, 5, 30), at(10, 6, 10)))
+
+    def test_after_going_back_the_same_clip_can_be_saved_again(self) -> None:
+        dialog = self.open()
+        self.save(dialog)
+        for channel in (1, 2, 3, 4):
+            self.export.push("failed", channel, "No se pudo descargar del DVR")
+        self.export.push("finished", {})
+        dialog.flow._poll()
+        self.assertTrue(dialog.progress_window._back.isVisible())
+        dialog.progress_window._back.click()
+        self.assertEqual(dialog.bar.state, PREVIEW)
+        self.export = FakeExport()
+        self.save(dialog)
+        self.assertEqual(len(self.started), 2)
+        self.assertIsNotNone(dialog.progress_window)
+
+    def test_closing_the_clip_window_while_saving_cancels_without_asking_and_closes_the_progress_window(self) -> None:
+        asked: list[str] = []
+        dialog = self.open()
+        self.save(dialog)
+        window = dialog.progress_window
+        window._confirm_cancel = lambda downloaded: asked.append(downloaded) or True
+        dialog.close()
+        self.assertTrue(self.export.cancelled)
+        self.assertEqual(asked, [])
+        self.assertFalse(window.isVisible())
+        self.assertIsNone(dialog.progress_window)
+
+    def test_the_open_folder_button_opens_the_chosen_folder(self) -> None:
+        dialog = self.open()
+        self.save(dialog)
+        self.export.push("done", 1, str(self.folder / "a.mp4"), None)
+        self.export.push("finished", {})
+        dialog.flow._poll()
+        with mock.patch("camera_viewer.clip_export_dialog.QDesktopServices.openUrl") as opener:
+            dialog.progress_window._open_folder.click()
+        self.assertEqual(opener.call_args[0][0].toLocalFile(), str(self.folder))
+
+
+class FolderFieldTests(DialogTestCase):
+    def test_the_field_shows_the_current_folder(self) -> None:
+        dialog = self.open()
+        self.assertEqual(dialog.bar._folder_edit.text(), str(self.folder))
+        self.assertTrue(dialog.bar._folder_edit.isVisible() and dialog.bar._browse.isVisible())
+
+    def test_typing_a_valid_path_is_used_for_saving_even_if_it_does_not_exist_yet(self) -> None:
+        dialog = self.open()
+        target = self.folder / "nueva" / "subcarpeta"
+        dialog.bar._folder_edit.setText(str(target))
+        dialog.bar._folder_edit.textEdited.emit(str(target))
+        self.assertTrue(dialog.bar._confirm.isEnabled())
+        dialog.bar._confirm.click()
+        self.assertEqual(self.started[0][2], target)
+
+    def test_an_invalid_path_is_flagged_and_cannot_be_saved(self) -> None:
+        dialog = self.open()
+        dialog.bar._folder_edit.textEdited.emit("carpeta/relativa")
+        self.assertFalse(dialog.bar._confirm.isEnabled())
+        self.assertIn("EF4444", dialog.bar._folder_edit.styleSheet())
+        dialog.bar._folder_edit.textEdited.emit(str(self.folder))
+        self.assertTrue(dialog.bar._confirm.isEnabled())
+        self.assertEqual(dialog.bar._folder_edit.styleSheet(), "")
+
+    def test_committing_an_invalid_path_goes_back_to_the_last_good_folder_and_says_so(self) -> None:
+        dialog = self.open()
+        dialog.bar._folder_edit.setText("relativa")
+        dialog.bar._folder_edit.textEdited.emit("relativa")
+        dialog.bar._folder_edit.editingFinished.emit()
+        self.assertEqual(dialog.bar._folder_edit.text(), str(self.folder))
+        self.assertTrue(dialog.bar._confirm.isEnabled())
+        self.assertIn("no es una carpeta válida", dialog._status.text())
+
+    def test_the_field_does_not_grab_the_focus_on_opening_so_space_still_pauses(self) -> None:
+        dialog = self.open()
+        self.assertFalse(dialog.bar._folder_edit.hasFocus())
+
+
+class ChannelCheckboxTests(DialogTestCase):
+    def test_each_checkbox_sits_on_its_own_camera_panel(self) -> None:
+        dialog = self.open()
+        for channel, panel in dialog.grid.panels.items():
+            check = dialog.bar.channel_check(channel)
+            self.assertIs(check.parent(), panel)
+            self.assertTrue(check.isVisible())
+
+    def test_unchecking_a_channel_blacks_out_its_panel_with_a_notice_and_checking_restores_it(self) -> None:
+        dialog = self.open()
+        self.client.recording_channel_status.emit(2, "x1")
+        panel = dialog.grid.panels[2]
+        dialog.bar.channel_check(2).setChecked(False)
+        self.assertTrue(panel.is_excluded())
+        self.assertTrue(panel._blackout.isVisible())
+        self.assertEqual(panel._status_label.text(), NOT_SAVED_MESSAGE)
+        self.assertFalse(dialog.grid.panels[1].is_excluded())
+        self.client.recording_channel_status.emit(2, "x2")  # el estado real se guarda, no se ve
+        self.assertEqual(panel._status_label.text(), NOT_SAVED_MESSAGE)
+        dialog.bar.channel_check(2).setChecked(True)
+        self.assertFalse(panel.is_excluded())
+        self.assertFalse(panel._blackout.isVisible())
+        self.assertEqual(panel._status_label.text(), "x2")
+
+    def test_the_estimate_and_the_saved_channels_follow_the_checkboxes(self) -> None:
+        dialog = self.open()
+        dialog.bar.channel_check(1).setChecked(False)
+        self.assertIn("3 canales", dialog.bar._size_label.text())
+        dialog.bar._confirm.click()
+        self.assertEqual(self.started[0][0], [2, 3, 4])
+
+    def test_a_channel_without_recording_in_the_range_says_so_instead_of_will_not_download(self) -> None:
+        clips = dict(self.clips)
+        clips[3] = [Clip(3, at(9), at(10))]  # nada en 10:05–10:06
+        dialog = self.open(clips=clips)
+        panel = dialog.grid.panels[3]
+        self.assertTrue(panel.is_excluded())
+        self.assertEqual(panel._status_label.text(), NO_RECORDING_MESSAGE)
+        self.assertFalse(dialog.bar.channel_check(3).isEnabled())
+
+    def test_moving_a_handle_over_a_range_without_recording_updates_the_notices(self) -> None:
+        clips = dict(self.clips)
+        clips[3] = [Clip(3, at(10, 5, 0), at(10, 5, 45))]  # termina antes del fin del clip pero lo cubre en parte
+        dialog = self.open(clips=clips)
+        self.assertFalse(dialog.grid.panels[3].is_excluded())
+        dialog.timeline.range_changed.emit(at(10, 5, 50), at(10, 6, 10))  # ya no toca su grabación
+        self.assertEqual(dialog.grid.panels[3]._status_label.text(), NO_RECORDING_MESSAGE)
+
+    def test_while_saving_the_checkboxes_are_locked_but_the_notices_stay(self) -> None:
+        dialog = self.open()
+        dialog.bar.channel_check(4).setChecked(False)
+        dialog.bar._confirm.click()
+        self.assertEqual(dialog.bar.state, EXPORTING)
+        self.assertFalse(dialog.bar.channel_check(1).isEnabled())
+        self.assertTrue(dialog.grid.panels[4].is_excluded())
 
 
 if __name__ == "__main__":

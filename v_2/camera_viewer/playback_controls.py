@@ -24,8 +24,9 @@ class PlaybackControls(QWidget):
     jump_clicked = Signal(int)
     reverse_toggled = Signal(bool)
     speed_selected = Signal(float)
+    restart_clicked = Signal()  # solo con `with_restart`
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, with_restart: bool = False) -> None:
         super().__init__(parent)
         self._speed = NORMAL_SPEED
         self._paused = False
@@ -41,7 +42,10 @@ class PlaybackControls(QWidget):
         self._slower = QPushButton("−")
         self._speed_button = QPushButton()  # muestra la velocidad; al pulsarla vuelve a x1
         self._faster = QPushButton("+")
+        self._restart = QPushButton("Inicio del clip") if with_restart else None  # ventana de guardado
         self._buttons = (self._back, self._pause, self._forward, self._direction, self._slower, self._speed_button, self._faster)
+        if self._restart is not None:
+            self._buttons += (self._restart,)
         for button in self._buttons:
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.setFixedHeight(BUTTON_HEIGHT)
@@ -58,6 +62,8 @@ class PlaybackControls(QWidget):
         self._slower.clicked.connect(lambda: self._shift_speed(-1))
         self._faster.clicked.connect(lambda: self._shift_speed(+1))
         self._speed_button.clicked.connect(lambda: self.speed_selected.emit(NORMAL_SPEED))
+        if self._restart is not None:
+            self._restart.clicked.connect(self.restart_clicked)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -69,6 +75,9 @@ class PlaybackControls(QWidget):
         layout.addSpacing(16)
         for widget in (self._slower, self._speed_button, self._faster):
             layout.addWidget(widget)
+        if self._restart is not None:
+            layout.addSpacing(16)
+            layout.addWidget(self._restart)
         layout.addStretch(1)
 
         self.set_speed(NORMAL_SPEED)

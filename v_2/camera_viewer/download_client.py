@@ -19,6 +19,7 @@ from datetime import datetime
 from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client
 from pathlib import Path
+from typing import Callable
 
 from . import download_service
 from .singleton_lock import acquire_singleton_lock
@@ -113,9 +114,11 @@ def submit(
     end: datetime,
     priority: int,
     stop_event: threading.Event,
+    progress: Callable[[int], None] | None = None,
 ) -> Future:
     """Misma forma que RecordingDownloadManager.submit() -- ver ese
-    docstring. Aqui la diferencia es toda interna: el pedido viaja por un
+    docstring (incluido `progress`, que aquí se llama desde el hilo del pedido).
+    Aqui la diferencia es toda interna: el pedido viaja por un
     socket a download_service.py en vez de encolarse directo."""
     message = {
         "action": "submit",
@@ -127,7 +130,11 @@ def submit(
         "end": end,
         "priority": priority,
     }
-    return _start_request(message, stop_event, lambda response: Path(response["path"]) if response.get("path") else None)
+    if progress is not None:
+        message["progress"] = True
+    return _start_request(
+        message, stop_event, lambda response: Path(response["path"]) if response.get("path") else None, progress
+    )
 
 
 def find_files(
@@ -181,13 +188,13 @@ def _decode_query_response(response: dict):
     return response["result"]
 
 
-def _start_request(message: dict, stop_event: threading.Event, decode) -> Future:
+def _start_request(message: dict, stop_event: threading.Event, decode, progress=None) -> Future:
     future: Future = Future()
-    threading.Thread(target=_run_request, args=(message, stop_event, decode, future), daemon=True).start()
+    threading.Thread(target=_run_request, args=(message, stop_event, decode, future, progress), daemon=True).start()
     return future
 
 
-def _run_request(message: dict, stop_event: threading.Event, decode, future: Future) -> None:
+def _run_request(message: dict, stop_event: threading.Event, decode, future: Future, progress=None) -> None:
     """Manda el pedido y espera la respuesta. Descargas: un fallo de conexión
     con el servicio resuelve el Future con None (así lo espera la
     reproducción); consultas: lanza la excepción (decode la levanta)."""
@@ -222,7 +229,17 @@ def _run_request(message: dict, stop_event: threading.Event, decode, future: Fut
                 try:
                     response = conn.recv()
                 except EOFError:
+                    response = None
                     break
+                if isinstance(response, dict) and response.keys() == {"progress"}:
+                    # Aviso de avance (solo si se pidió): no es la respuesta, se sigue esperando.
+                    if progress is not None:
+                        try:
+                            progress(int(response["progress"]))
+                        except Exception:
+                            pass
+                    response = None
+                    continue
                 break
     finally:
         conn.close()

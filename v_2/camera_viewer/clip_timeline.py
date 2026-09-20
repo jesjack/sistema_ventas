@@ -7,12 +7,14 @@ from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from .clip import Clip
+from .export_flow import format_duration
 
 # Línea de tiempo propia de la ventana de guardado: muestra SOLO el clip elegido
 # con un poco de contexto a cada lado (para poder alargarlo), el cursor de la
 # reproducción, y dos asas para ajustar el inicio y el fin. Misma interfaz
 # (set_export_range / clear_export_range) que la línea de tiempo del día, así que
-# ExportFlow funciona con las dos.
+# ExportFlow funciona con las dos. Sobre la banda azul del clip se rotulan la hora de
+# inicio y la de fin (junto a cada asa) y, al centro, la duración.
 
 HEIGHT = 74
 AXIS_HEIGHT = 22
@@ -30,6 +32,28 @@ COLOR_HANDLE = QColor("#60A5FA")
 COLOR_PLAYHEAD = QColor("#F8FAFC")
 COLOR_AXIS = QColor("#94A3B8")
 COLOR_TICK = QColor("#475569")
+COLOR_LABEL = QColor("#F8FAFC")
+LABEL_PAD = 8  # píxeles entre un asa y su hora, y entre rótulos vecinos
+
+
+def label_positions(
+    width_of, left: float, right: float, total_width: float, start_text: str, end_text: str, duration_text: str
+) -> list[tuple[str, float]]:
+    """(texto, x) de los rótulos de la banda entre las asas `left` y `right`. Caben dentro: hora de
+    inicio pegada al asa izquierda, hora de fin al asa derecha y la duración al centro. Si la
+    duración ya no cabe se omite; si ni las dos horas caben (clip muy corto), salen de la banda,
+    cada una por fuera de su asa y sin salirse del widget de ancho `total_width`."""
+    start_w, end_w, duration_w = width_of(start_text), width_of(end_text), width_of(duration_text)
+    start_x, end_x = left + LABEL_PAD, right - LABEL_PAD - end_w
+    if start_x + start_w + LABEL_PAD <= end_x:
+        labels = [(start_text, start_x), (end_text, end_x)]
+        center_x = (left + right) / 2 - duration_w / 2
+        if center_x >= start_x + start_w + LABEL_PAD and center_x + duration_w + LABEL_PAD <= end_x:
+            labels.insert(1, (duration_text, center_x))
+        return labels
+    start_x = max(2.0, left - LABEL_PAD - start_w)
+    end_x = min(total_width - 2.0 - end_w, right + LABEL_PAD)
+    return [(start_text, start_x), (end_text, end_x)]
 
 
 class ClipTimeline(QWidget):
@@ -80,6 +104,13 @@ class ClipTimeline(QWidget):
 
     def export_range(self) -> tuple[datetime, datetime] | None:
         return self._range
+
+    def range_texts(self) -> tuple[str, str, str] | None:
+        """(hora de inicio, hora de fin, duración) tal como se rotulan sobre la banda."""
+        current = self._drag_range or self._range
+        if current is None:
+            return None
+        return f"{current[0]:%H:%M:%S}", f"{current[1]:%H:%M:%S}", format_duration((current[1] - current[0]).total_seconds())
 
     def draw_playhead(self, moment: datetime) -> None:
         self._playhead = moment
@@ -148,11 +179,22 @@ class ClipTimeline(QWidget):
             painter.drawRect(QRectF(left, BAR_TOP, right - left, BAR_HEIGHT - 1))
             for x in (left, right):
                 painter.fillRect(QRectF(x - 2, BAR_TOP - 4, 4, BAR_HEIGHT + 8), COLOR_HANDLE)
+            self._paint_range_labels(painter, left, right)
 
         if self._playhead is not None and start <= self._playhead <= end:
             x = self.time_to_x(self._playhead)
             painter.setPen(QPen(COLOR_PLAYHEAD, 2))
             painter.drawLine(QPointF(x, BAR_TOP - 2), QPointF(x, BAR_TOP + BAR_HEIGHT + 2))
+
+    def _paint_range_labels(self, painter: QPainter, left: float, right: float) -> None:
+        texts = self.range_texts()
+        if texts is None:
+            return
+        metrics = painter.fontMetrics()
+        baseline = BAR_TOP + (BAR_HEIGHT + metrics.ascent() - metrics.descent()) / 2
+        painter.setPen(QPen(COLOR_LABEL, 1))
+        for text, x in label_positions(metrics.horizontalAdvance, left, right, float(self.width()), *texts):
+            painter.drawText(QPointF(x, baseline), text)
 
     def _paint_axis(self, painter: QPainter) -> None:
         start, end = self._context  # type: ignore[misc]

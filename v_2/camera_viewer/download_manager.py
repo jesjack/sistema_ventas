@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from queue import PriorityQueue
+from typing import Callable
 
 import requests
 from requests.auth import HTTPDigestAuth
@@ -82,6 +83,7 @@ class _Job:
     end: datetime
     stop_event: threading.Event
     future: Future  # se resuelve con Path (exito) o None (cancelado/error)
+    progress: Callable[[int], None] | None = None  # bytes recibidos hasta ahora (0 = ya arrancó)
 
 
 class RecordingDownloadManager:
@@ -141,13 +143,18 @@ class RecordingDownloadManager:
         end: datetime,
         priority: int,
         stop_event: threading.Event,
+        progress: Callable[[int], None] | None = None,
     ) -> Future:
         """Encola un pedido de descarga de [start, end) del canal dado y
         devuelve de inmediato un Future -- no bloquea al llamador. El
         Future se resuelve con la ruta local del archivo descargado, o con
         None si stop_event se activo (antes o durante) o hubo un error de
         red. El llamador decide si reintentar (mismo criterio que antes de
-        este modulo: la reproduccion reintenta el mismo bloque)."""
+        este modulo: la reproduccion reintenta el mismo bloque).
+
+        `progress` (opcional) se llama desde el hilo descargador con los bytes
+        recibidos: primero con 0 cuando el trabajo YA salió de la cola y arrancó, y
+        luego tras cada bloque. Nunca debe bloquear ni lanzar (si lanza se ignora)."""
         future: Future = Future()
         job = _Job(
             host=host,
@@ -158,6 +165,7 @@ class RecordingDownloadManager:
             end=end,
             stop_event=stop_event,
             future=future,
+            progress=progress,
         )
         self._queue.put(_QueueItem(priority=priority, seq=next(self._seq_counter), job=job))
         return future
@@ -257,8 +265,11 @@ class RecordingDownloadManager:
     def _download(self, url: str, auth: HTTPDigestAuth, job: _Job) -> Path | None:
         self._download_dir.mkdir(parents=True, exist_ok=True)
         local_path = self._download_dir / f"ch{job.channel}_{uuid.uuid4().hex}.dav"
+        report = _safe_progress(job.progress)
         for attempt in range(2):
             wrote_bytes = False
+            received = 0
+            report(0)
             try:
                 with requests.get(url, auth=auth, stream=True, timeout=30) as response:
                     response.raise_for_status()
@@ -269,6 +280,8 @@ class RecordingDownloadManager:
                             if block:
                                 wrote_bytes = True
                                 fh.write(block)
+                                received += len(block)
+                                report(received)
                 break
             except requests.exceptions.ConnectionError:
                 local_path.unlink(missing_ok=True)
@@ -282,6 +295,20 @@ class RecordingDownloadManager:
             local_path.unlink(missing_ok=True)
             return None
         return local_path
+
+
+def _safe_progress(callback: Callable[[int], None] | None) -> Callable[[int], None]:
+    """El aviso de avance nunca debe romper (ni frenar) una descarga."""
+    if callback is None:
+        return lambda _received: None
+
+    def report(received: int) -> None:
+        try:
+            callback(received)
+        except Exception:
+            pass
+
+    return report
 
 
 PURGE_MIN_AGE = 600.0  # segundos: no se toca lo reciente (puede ser una descarga en curso de otro consumidor)

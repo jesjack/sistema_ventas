@@ -42,7 +42,7 @@ class FakeDVR:
         self.calls: list[tuple] = []
         self.delay, self.fail_first, self.seconds_delta = delay, fail_first, seconds_delta
 
-    def __call__(self, host, user, password, channel, start, end, priority, stop) -> Future:
+    def __call__(self, host, user, password, channel, start, end, priority, stop, progress=None) -> Future:
         self.calls.append((channel, start, end, priority))
         future: Future = Future()
         if self.fail_first > 0:
@@ -51,12 +51,17 @@ class FakeDVR:
             return future
 
         def work() -> None:
+            if progress is not None:
+                progress(0)  # ya salió de la cola
             if self.delay:
                 stop.wait(self.delay)
             if stop.is_set():
                 future.set_result(None)
                 return
-            future.set_result(make_video((end - start).total_seconds() + self.seconds_delta))
+            video = make_video((end - start).total_seconds() + self.seconds_delta)
+            if progress is not None:
+                progress(video.stat().st_size)
+            future.set_result(video)
 
         threading.Thread(target=work, daemon=True).start()
         return future
@@ -160,7 +165,7 @@ class ExportRunTests(unittest.TestCase):
             _, events = self.run_export(dvr, (1,), ffmpeg=None)
         self.assertEqual([e[0] for e in events if e[0] in ("done", "failed")], ["done"])
         self.assertEqual(len(dvr.calls), 2)
-        self.assertIn(("state", 1, "Reintentando la descarga…"), events)
+        self.assertIn(("state", 1, "Reintentando la descarga…", export_clip.PHASE_RETRYING), events)
 
     def test_two_failures_report_the_channel_and_leave_nothing_behind(self) -> None:
         with unittest.mock.patch.object(export_clip, "DOWNLOAD_RETRY_DELAY", 0.05):
@@ -173,13 +178,13 @@ class ExportRunTests(unittest.TestCase):
 
     def test_one_channel_failing_does_not_stop_the_others(self) -> None:
         class OneBad(FakeDVR):
-            def __call__(self, host, user, password, channel, start, end, priority, stop):
+            def __call__(self, host, user, password, channel, start, end, priority, stop, progress=None):
                 if channel == 2:
                     future: Future = Future()
                     future.set_result(None)
                     self.calls.append((channel,))
                     return future
-                return super().__call__(host, user, password, channel, start, end, priority, stop)
+                return super().__call__(host, user, password, channel, start, end, priority, stop, progress)
 
         with unittest.mock.patch.object(export_clip, "DOWNLOAD_RETRY_DELAY", 0.05):
             _, events = self.run_export(OneBad(), (1, 2, 3), ffmpeg=None)
@@ -195,6 +200,15 @@ class ExportRunTests(unittest.TestCase):
         self.assertTrue(all(e[2] == "Cancelado" for e in events if e[0] == "failed"))
         self.assertEqual(self.files(), [])
 
+    def test_it_forwards_the_download_progress_and_reports_each_phase(self) -> None:
+        _, events = self.run_export(FakeDVR(), (1,), ffmpeg=None)
+        progress = [e for e in events if e[0] == "progress"]
+        self.assertEqual([e[1] for e in progress], [1, 1])
+        self.assertEqual(progress[0][2], 0)
+        self.assertGreater(progress[1][2], 0)
+        phases = [e[3] for e in events if e[0] == "state" and len(e) > 3]
+        self.assertEqual(phases, [export_clip.PHASE_QUEUED, export_clip.PHASE_CONVERTING, export_clip.PHASE_VERIFYING])
+
     def test_an_existing_file_is_never_overwritten(self) -> None:
         self.run_export(FakeDVR(), (1,), ffmpeg=None)
         _, events = self.run_export(FakeDVR(), (1,), ffmpeg=None)
@@ -205,8 +219,8 @@ class ExportRunTests(unittest.TestCase):
         made: list[Path] = []
 
         class Recording(FakeDVR):
-            def __call__(self, *args):
-                future = super().__call__(*args)
+            def __call__(self, *args, **kwargs):
+                future = super().__call__(*args, **kwargs)
                 future.add_done_callback(lambda f: f.result() and made.append(f.result()))
                 return future
 

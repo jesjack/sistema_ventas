@@ -112,5 +112,24 @@ class LauncherEnvTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["HOME"], "/home/jesjack")
 
 
+class ParseFolderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.base = Path(tempfile.mkdtemp())
+
+    def test_an_existing_folder_and_one_that_can_still_be_created_are_valid(self) -> None:
+        self.assertEqual(export_clip.parse_folder(str(self.base)), self.base)
+        self.assertEqual(export_clip.parse_folder(f"  {self.base}/a/b  "), self.base / "a" / "b")
+
+    def test_empty_relative_or_through_a_file_are_not(self) -> None:
+        (self.base / "archivo").write_text("x")
+        for text in ("", "   ", "relativa/carpeta", str(self.base / "archivo"), str(self.base / "archivo" / "sub")):
+            self.assertIsNone(export_clip.parse_folder(text), text)
+
+    def test_tilde_is_the_real_users_home_not_dollar_home(self) -> None:
+        with mock.patch.object(export_clip, "user_home", return_value=self.base):
+            self.assertEqual(export_clip.parse_folder("~/Vídeos"), self.base / "Vídeos")
+            self.assertEqual(export_clip.parse_folder("~"), self.base)
+
+
 if __name__ == "__main__":
     unittest.main()
