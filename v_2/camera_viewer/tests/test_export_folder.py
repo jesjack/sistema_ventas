@@ -1,0 +1,116 @@
+"""La carpeta de guardado debe ser la de vídeos del usuario REAL (no /root). Correr desde v_2/:
+.venv/bin/python -m unittest camera_viewer.tests.test_export_folder -v"""
+from __future__ import annotations
+
+import os
+import pwd
+import subprocess
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from camera_viewer import export_clip, launcher
+
+
+def write_dirs(home: Path, videos: str) -> None:
+    (home / ".config").mkdir(parents=True, exist_ok=True)
+    (home / ".config" / "user-dirs.dirs").write_text(f'XDG_DESKTOP_DIR="$HOME/Escritorio"\nXDG_VIDEOS_DIR="{videos}"\n', encoding="utf-8")
+
+
+class VideosFolderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.home = Path(tempfile.mkdtemp())
+
+    def test_uses_the_folder_declared_by_xdg_even_if_it_has_an_accent(self) -> None:
+        write_dirs(self.home, "$HOME/Vídeos")
+        self.assertEqual(export_clip.videos_folder(self.home), self.home / "Vídeos")
+
+    def test_english_systems(self) -> None:
+        write_dirs(self.home, "$HOME/Videos")
+        self.assertEqual(export_clip.videos_folder(self.home), self.home / "Videos")
+
+    def test_without_config_it_uses_whichever_folder_exists(self) -> None:
+        (self.home / "Vídeos").mkdir()
+        self.assertEqual(export_clip.videos_folder(self.home), self.home / "Vídeos")
+        other = Path(tempfile.mkdtemp())
+        (other / "Videos").mkdir()
+        self.assertEqual(export_clip.videos_folder(other), other / "Videos")
+
+    def test_with_nothing_at_all_it_falls_back_to_videos(self) -> None:
+        self.assertEqual(export_clip.videos_folder(self.home), self.home / "Videos")
+
+    def test_a_config_that_points_to_the_home_itself_is_ignored(self) -> None:
+        write_dirs(self.home, "$HOME/")  # XDG lo usa cuando el usuario "desactiva" la carpeta
+        self.assertEqual(export_clip.videos_folder(self.home), self.home / "Videos")
+
+
+class UserHomeTests(unittest.TestCase):
+    def test_it_ignores_a_wrong_HOME_like_the_one_inherited_from_root(self) -> None:
+        with mock.patch.dict(os.environ, {"HOME": "/root"}):
+            self.assertEqual(export_clip.user_home(), Path(pwd.getpwuid(os.geteuid()).pw_dir))
+            self.assertNotEqual(export_clip.default_export_folder().parts[:2], ("/", "root"))
+
+    def test_as_root_through_sudo_it_uses_the_invoking_users_home(self) -> None:
+        fake = types.SimpleNamespace(pw_dir="/home/alguien")
+        with mock.patch.object(os, "geteuid", return_value=0), mock.patch.dict(os.environ, {"SUDO_USER": "alguien"}), mock.patch.object(
+            pwd, "getpwnam", return_value=fake
+        ):
+            self.assertEqual(export_clip.user_home(), Path("/home/alguien"))
+
+    def test_an_unknown_user_falls_back_to_path_home(self) -> None:
+        with mock.patch.object(os, "geteuid", return_value=0), mock.patch.dict(os.environ, {"SUDO_USER": "nadie"}), mock.patch.object(
+            pwd, "getpwnam", side_effect=KeyError
+        ):
+            self.assertEqual(export_clip.user_home(), Path.home())
+
+
+class OwnershipTests(unittest.TestCase):
+    def test_new_folders_and_files_go_to_the_invoking_user_when_running_as_root(self) -> None:
+        base = Path(tempfile.mkdtemp())
+        target = base / "a" / "b"
+        with mock.patch.object(os, "geteuid", return_value=0), mock.patch.dict(os.environ, {"SUDO_UID": "1000", "SUDO_GID": "1001"}), mock.patch.object(
+            os, "chown"
+        ) as chown:
+            export_clip.make_folder(target)
+            export_clip.own_as_user(target / "x.mp4")
+        chowned = [call.args[0] for call in chown.call_args_list]
+        self.assertEqual(chowned, [base / "a", base / "a" / "b", target / "x.mp4"])
+        self.assertTrue(all(call.args[1:] == (1000, 1001) for call in chown.call_args_list))
+        self.assertTrue(target.is_dir())
+
+    def test_nothing_is_changed_when_not_root(self) -> None:
+        base = Path(tempfile.mkdtemp())
+        with mock.patch.object(os, "chown") as chown:
+            export_clip.make_folder(base / "x")
+            export_clip.own_as_user(base / "x")
+        chown.assert_not_called()
+
+
+class LauncherEnvTests(unittest.TestCase):
+    def launch(self, environ: dict, euid: int) -> dict:
+        base = Path(tempfile.mkdtemp())
+        with mock.patch.dict(os.environ, environ, clear=False), mock.patch.object(os, "geteuid", return_value=euid), mock.patch.object(
+            launcher, "find_python_executable", return_value=Path("/usr/bin/python3")
+        ), mock.patch.object(subprocess, "Popen") as popen, mock.patch.object(
+            pwd, "getpwnam", return_value=types.SimpleNamespace(pw_dir="/home/jesjack", pw_name="jesjack")
+        ):
+            launcher.launch_detached(base)
+        return popen.call_args.kwargs
+
+    def test_the_child_gets_the_real_users_home_when_privileges_are_dropped(self) -> None:
+        kwargs = self.launch({"SUDO_USER": "jesjack", "SUDO_GID": "1000", "HOME": "/root", "USER": "root", "XDG_CONFIG_HOME": "/root/.config"}, euid=0)
+        self.assertEqual(kwargs["user"], "jesjack")
+        env = kwargs["env"]
+        self.assertEqual((env["HOME"], env["USER"], env["LOGNAME"]), ("/home/jesjack", "jesjack", "jesjack"))
+        self.assertNotIn("XDG_CONFIG_HOME", env)
+
+    def test_nothing_changes_when_not_running_as_root(self) -> None:
+        kwargs = self.launch({"HOME": "/home/jesjack"}, euid=1000)
+        self.assertNotIn("user", kwargs)
+        self.assertEqual(kwargs["env"]["HOME"], "/home/jesjack")
+
+
+if __name__ == "__main__":
+    unittest.main()

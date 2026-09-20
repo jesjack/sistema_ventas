@@ -30,6 +30,7 @@ _VENV_PYTHON_CANDIDATES = (
 )
 
 LOG_RUNS_TO_KEEP = 20
+_ROOT_XDG_VARS = ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")
 
 # Variables que un Python embebido (LibreOffice, y en general cualquier
 # app que embeba su propio interprete) usa para apuntar A SU PROPIA
@@ -72,6 +73,22 @@ def _drop_privileges_kwargs() -> dict:
         return {"user": sudo_user, "group": int(sudo_gid)}
     except ValueError:
         return {}
+
+
+def _target_user_env() -> dict[str, str]:
+    """Variables de entorno del usuario al que se baja el proceso (ver _drop_privileges_kwargs).
+    Bajar el uid/gid NO cambia el entorno: el hijo seguía con HOME=/root, USER=root, y toda
+    ruta "del usuario" (la carpeta de vídeos, la configuración de Qt) apuntaba a /root."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if not sudo_user:
+        return {}
+    try:
+        import pwd
+
+        entry = pwd.getpwnam(sudo_user)
+    except (ImportError, KeyError):
+        return {}
+    return {"HOME": entry.pw_dir, "USER": entry.pw_name, "LOGNAME": entry.pw_name}
 
 
 def find_python_executable(base_dir: Path) -> Path | None:
@@ -124,6 +141,10 @@ def launch_detached(base_dir: Path) -> subprocess.Popen:
     log_path = _prepare_log_file(base_dir)
     popen_kwargs: dict = {"cwd": str(base_dir), "stdin": subprocess.DEVNULL, "env": _clean_child_env()}
     popen_kwargs.update(_drop_privileges_kwargs())
+    if "user" in popen_kwargs:
+        popen_kwargs["env"].update(_target_user_env())
+        for var in _ROOT_XDG_VARS:  # rutas XDG heredadas de root: que las derive de su HOME
+            popen_kwargs["env"].pop(var, None)
     if sys.platform == "win32":
         popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 

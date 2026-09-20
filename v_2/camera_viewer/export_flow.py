@@ -10,11 +10,12 @@ from PySide6.QtCore import QObject, QTimer
 from .clip import Clip
 from .export_bar import EXPORTING, FINISHED, IDLE, PREVIEW, ExportBar
 from .export_clip import (
-    DEFAULT_FOLDER,
     ClipExport,
     ClipRange,
+    default_export_folder,
     estimate_bytes,
     format_size,
+    make_folder,
     start_export,
 )
 
@@ -101,7 +102,7 @@ class ExportFlow(QObject):
             saved = self._settings.value(SETTINGS_FOLDER_KEY)
             if saved:
                 return Path(str(saved))
-        return DEFAULT_FOLDER
+        return default_export_folder()
 
     def choose_folder(self) -> None:
         chosen = self._choose_folder(self._folder)
@@ -287,7 +288,7 @@ class ExportFlow(QObject):
             self._notify("Elige al menos un canal.")
             return
         try:
-            self._folder.mkdir(parents=True, exist_ok=True)
+            make_folder(self._folder)
             probe = self._folder / ".camera_viewer_write_test"
             probe.write_bytes(b"")
             probe.unlink()

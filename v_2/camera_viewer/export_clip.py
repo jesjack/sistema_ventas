@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -28,7 +30,7 @@ from .download_manager import DownloadPriority
 # Antes de dar un archivo por bueno se abre y se comprueba su duración.
 
 ESTIMATED_MBPS_PER_CHANNEL = 2.1  # medido en el DVR real (CBR 2048 kbps + sobrecarga)
-DEFAULT_FOLDER = Path.home() / "Videos" / "Cámaras"
+SUBFOLDER = "Cámaras"
 DOWNLOAD_RETRY_DELAY = 1.0
 FFMPEG_TIMEOUT = 300.0
 DURATION_TOLERANCE_SECONDS = 1.5
@@ -37,6 +39,83 @@ WAIT_POLL = 0.2
 
 class ExportError(Exception):
     pass
+
+
+def user_home() -> Path:
+    """Carpeta personal del usuario REAL. No se fía de $HOME: cuando la app la lanza el
+    POS (que corre como root por sudo), el proceso baja a tu usuario pero hereda
+    HOME=/root, y `Path.home()` devolvía /root. Se lee del registro de usuarios
+    (passwd) por el uid efectivo, o por SUDO_USER si de verdad se corre como root."""
+    if os.name == "posix":
+        try:
+            import pwd
+
+            uid = os.geteuid()
+            sudo_user = os.environ.get("SUDO_USER")
+            entry = pwd.getpwnam(sudo_user) if uid == 0 and sudo_user else pwd.getpwuid(uid)
+            return Path(entry.pw_dir)
+        except (KeyError, ImportError, OSError):
+            pass
+    return Path.home()
+
+
+def videos_folder(home: Path) -> Path:
+    """La carpeta de vídeos de ese usuario: la que declara XDG (`user-dirs.dirs`, que en un
+    sistema en español es "Vídeos", con tilde), o la que exista, o "Videos"."""
+    config = home / ".config" / "user-dirs.dirs"
+    try:
+        match = re.search(r'^XDG_VIDEOS_DIR="([^"]+)"', config.read_text(encoding="utf-8"), re.MULTILINE)
+    except OSError:
+        match = None
+    if match:
+        declared = Path(match.group(1).replace("$HOME", str(home)))
+        if declared.is_absolute() and declared != home:
+            return declared
+    for name in ("Vídeos", "Videos"):
+        if (home / name).is_dir():
+            return home / name
+    return home / "Videos"
+
+
+def default_export_folder() -> Path:
+    return videos_folder(user_home()) / SUBFOLDER
+
+
+def _invoking_ids() -> tuple[int, int] | None:
+    """(uid, gid) del usuario real si este proceso corre como root por sudo (los archivos
+    guardados deben ser de ese usuario, no de root)."""
+    if os.name != "posix" or os.geteuid() != 0:
+        return None
+    try:
+        return int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"])
+    except (KeyError, ValueError):
+        return None
+
+
+def make_folder(folder: Path) -> None:
+    """Crea la carpeta (y las que falten arriba); las nuevas quedan a nombre del usuario real."""
+    missing = []
+    probe = folder
+    while not probe.exists() and probe != probe.parent:
+        missing.append(probe)
+        probe = probe.parent
+    folder.mkdir(parents=True, exist_ok=True)
+    ids = _invoking_ids()
+    if ids:
+        for created in reversed(missing):  # de la de arriba a la de abajo
+            try:
+                os.chown(created, *ids)
+            except OSError:
+                pass
+
+
+def own_as_user(path: Path) -> None:
+    ids = _invoking_ids()
+    if ids:
+        try:
+            os.chown(path, *ids)
+        except OSError:
+            pass
 
 
 @dataclass(frozen=True)
@@ -210,7 +289,7 @@ def _run_export(
                 return None
 
     try:
-        folder.mkdir(parents=True, exist_ok=True)
+        make_folder(folder)
         # Se piden todos de una vez: el embudo los sirve de a dos, por prioridad.
         futures = {channel: request(channel) for channel in channels}
         for channel in channels:
@@ -241,6 +320,7 @@ def _run_export(
                     events.put(("state", channel, "Verificando…"))
                     warning = verify_clip(partial, clip_range.duration)
                     partial.replace(final)
+                    own_as_user(final)
                 except BaseException:
                     partial.unlink(missing_ok=True)
                     raise
