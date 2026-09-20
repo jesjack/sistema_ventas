@@ -149,3 +149,23 @@ Comprobado con el DVR real y la ventana completa: clip de 20 s (10:05:33-10:05:5
 "Inicio del clip" reinicia, y exportar CAM 1 y CAM 2 tardó **2.0 s**: MP4 de 5.3 MB, 600 cuadros a 30 fps = 20.2 s (CAM 1 960x1080, CAM 2 1280x720), primer cuadro
 decodifica, sin temporales. Tamaño estimado por canal: 2.1 Mbps × duración (real: 5.3 MB en 20 s). `purge_download_dir` ya no borra descargas de menos de 10 min
 (podía llevarse una exportación en curso).
+
+## Adenda 5 (2026-09-20): ventana propia para guardar un clip
+
+Guardar un clip ya no satura la ventana principal: `Guardar clip…` y `Guardar últimos 30 s` abren una **ventana aparte** (`clip_export_dialog.py`) con
+- los **4 canales**, con su propia reproducción (cliente de reproducción, reloj y almacén de bloques propios; la ventana principal queda en pausa y se
+  restaura al volver);
+- una **línea de tiempo propia** (`clip_timeline.py`) con el segmento resaltado y un margen a cada lado (25 % del clip, entre 10 s y 2 min, recortado a lo
+  grabado y a "ahora"), la cobertura de grabación, el cursor, **asas arrastrables** para alargar o acortar el clip, y clic/arrastre para moverse;
+- **controles propios** (pausa, ±10 s, sentido, velocidad, "Inicio del clip", `[ Inicio` / `Fin ]`, y Espacio/←/→);
+- las opciones de guardado (canales, carpeta, tamaño estimado, Guardar/Cancelar) y el avance/resultado.
+La barra de la ventana principal queda mínima (marcas, "Guardar clip…", "Guardar últimos 30 s") y al cerrar la ventana recibe el rango con que quedó el clip.
+Cerrar la app durante una exportación ahora espera (hasta 3 s) a que el hilo borre sus `.part` antes del `os._exit` de `closeEvent`.
+
+**Error corregido: la carpeta de guardado apuntaba a `/root/Videos/Cámaras`.** El POS corre como root (sudo) y lanza `camera_viewer` bajando solo el uid/gid, así que el
+proceso conservaba `HOME=/root`. El lanzador ahora también fija HOME/USER/LOGNAME del usuario real (y quita las XDG_* de root), y la carpeta se calcula
+desde el registro de usuarios (no desde `$HOME`) y desde `user-dirs.dirs` (en español es `Vídeos`, con tilde). Verificado arrancando el proceso con
+`HOME=/root`: propone `/home/jesjack/Vídeos/Cámaras`. Como root por sudo, las carpetas y archivos nuevos se entregan al usuario real.
+
+Verificado con el DVR real: la ventana se abre con el clip, se detiene al final con las 4 cámaras en la misma hora, arrastrar los asas ajusta los límites y el
+tamaño, y guardar CAM 1 y CAM 2 (clip de 32 s) tardó 2.9 s (MP4 de 8.4 MB, sin `.part`). 232 pruebas.

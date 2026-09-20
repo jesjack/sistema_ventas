@@ -21,8 +21,10 @@ from PySide6.QtWidgets import (
 from .calendar_panel import CalendarPanel
 from .camera_grid import CameraGrid
 from .connection_panel import ConnectionPanel
+from .clip_export_dialog import ClipExportDialog
 from .dvr_info_dialog import DvrInfoDialog
 from .export_bar import ExportBar
+from .export_clip import ClipRange
 from .export_flow import LAST_SECONDS, ExportFlow
 from .playback_controls import JUMP_SECONDS, PlaybackControls
 from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient, LIVE_TO_RECORDINGS_SETTLE
@@ -47,6 +49,7 @@ class MainWindow(QMainWindow):
 
         self.client = DVRClient(self)
         self.export_flow: ExportFlow | None = None
+        self._clip_client: DVRClient | None = None  # reproducción propia de la ventana de guardado
         self._clips_by_channel: dict[int, list[Clip]] = {channel: [] for channel in DEFAULT_CHANNELS}
         self._is_live = False
         # Mientras es False se descartan los frames/estados de grabaciones que
@@ -92,6 +95,7 @@ class MainWindow(QMainWindow):
             open_folder=self._open_export_folder,
             settings=QSettings("camera_viewer", "camera_viewer"),
             parent=self,
+            preview_opener=self._open_clip_dialog,
         )
         self._wire_signals()
 
@@ -225,6 +229,32 @@ class MainWindow(QMainWindow):
         self.client.search(start_dt, end_dt, priority)
 
     # -- diálogos del flujo de exportación (ver export_flow.py) --------------------------------
+
+    def _open_clip_dialog(self, clip_range: ClipRange) -> ClipRange | None:
+        """Abre la ventana de guardado del clip (vista previa con sus propios controles y las
+        opciones de guardado). La reproducción de esta ventana se pausa mientras tanto y se
+        deja como estaba al volver. Devuelve el rango con que quedó el clip."""
+        if self._clip_client is None:
+            # Un cliente de reproducción aparte y que dura toda la sesión (nunca se destruye
+            # mientras sus hilos puedan emitir señales: ver ChannelPlayer).
+            self._clip_client = DVRClient(self)
+        client = self._clip_client
+        client.host, client.username, client.password = self.client.host, self.client.username, self.client.password
+        was_paused = self.client.control.paused
+        if not was_paused:
+            self.playback_controls.set_paused(self.client.toggle_pause())
+        dialog = ClipExportDialog(
+            client,
+            {channel: list(clips) for channel, clips in self._clips_by_channel.items()},
+            clip_range,
+            settings=QSettings("camera_viewer", "camera_viewer"),
+            parent=self,
+        )
+        dialog.exec()
+        final = dialog.final_range()
+        if not was_paused and self.client.control.paused:
+            self.playback_controls.set_paused(self.client.toggle_pause())
+        return final
 
     def _ask_after_seconds(self) -> float | None:
         """Pregunta si el clip "últimos 30 s" incluye también los 30 s siguientes.
@@ -461,8 +491,13 @@ class MainWindow(QMainWindow):
         self._sync_tools_to_live_clock(LightPriority.PERIODIC)
 
     def closeEvent(self, event) -> None:
-        if self.export_flow is not None and self.export_flow.export is not None:
-            self.export_flow.export.cancel()  # los .part parciales se borran al cancelar
+        export = self.export_flow.export if self.export_flow is not None else None
+        if export is not None and not export.finished():
+            # Al cancelar, el hilo de la exportación borra sus archivos parciales (.part); hay que
+            # dejarle terminar antes del os._exit de abajo o quedarían en la carpeta del usuario.
+            export.cancel()
+            if export.thread is not None:
+                export.thread.join(timeout=3.0)
         self.client.stop_playback()
         self.client.stop_live()
         self.timeline.stop_playhead()

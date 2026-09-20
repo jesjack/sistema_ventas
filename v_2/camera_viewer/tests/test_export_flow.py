@@ -45,6 +45,12 @@ class FakeClient:
     def set_reverse(self, reverse: bool) -> None:
         self.control.set_reverse(reverse)
 
+    playback_active = True
+
+    def play_from(self, start: datetime, clips) -> None:
+        self.seeks.append((start, "play_from"))
+        self.playback_active = True
+
 
 class FakeTimeline:
     def __init__(self) -> None:
@@ -406,6 +412,74 @@ class ConfirmAndProgressTests(FlowTestCase):
         self.flow._poll()
         self.bar._open_folder.click()
         self.assertEqual(self.opened, [self.folder])
+
+
+class OpenerModeTests(FlowTestCase):
+    """En la ventana principal, la vista previa y el guardado viven en otra ventana."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.opened: list[ClipRange] = []
+        self.opener_returns: ClipRange | None = None
+
+        def opener(clip_range: ClipRange):
+            self.opened.append(clip_range)
+            return self.opener_returns
+
+        self.flow._preview_opener = opener
+
+    def test_saving_a_marked_clip_opens_the_window_instead_of_a_local_preview(self) -> None:
+        self.mark(at(10, 5, 30), at(10, 6, 10))
+        self.flow.save_clip()
+        self.assertEqual(self.opened, [ClipRange(at(10, 5, 30), at(10, 6, 10))])
+        self.assertEqual(self.bar.state, IDLE)  # la barra principal no cambia de estado
+        self.assertIsNone(self.client.control.bounds())  # y la reproducción principal no se acota
+        self.assertEqual(self.client.seeks, [])
+
+    def test_the_range_the_window_returns_becomes_the_new_marks_and_band(self) -> None:
+        self.mark(at(10, 5, 30), at(10, 6, 10))
+        self.opener_returns = ClipRange(at(10, 5, 20), at(10, 6, 30))
+        self.flow.save_clip()
+        self.assertEqual(self.flow.marks, [at(10, 5, 20), at(10, 6, 30)])
+        self.assertEqual(self.timeline.range, (at(10, 5, 20), at(10, 6, 30)))
+        self.assertIn("10:05:20 – 10:06:30 (1 min 10 s)", self.bar._range_label.text())
+
+    def test_closing_the_window_without_a_result_keeps_the_marks(self) -> None:
+        self.mark(at(10, 5, 30), at(10, 6, 10))
+        self.flow.save_clip()
+        self.assertEqual(self.flow.marks, [at(10, 5, 30), at(10, 6, 10)])
+
+    def test_last_30_seconds_also_goes_through_the_window(self) -> None:
+        self.answer_after = 30.0
+        self.set_clock(at(10, 30))
+        self.flow.save_last()
+        self.assertEqual(self.opened, [ClipRange(at(10, 29, 30), at(10, 30, 30))])
+
+    def test_the_window_is_not_opened_when_nothing_was_recorded_there(self) -> None:
+        self.clips = {c: [] for c in CHANNELS}
+        self.mark(at(10, 5, 30), at(10, 6, 10))
+        self.flow.save_clip()
+        self.assertEqual(self.opened, [])
+        self.assertIn("No hay grabación", self.messages[-1])
+
+
+class InsideTheWindowTests(FlowTestCase):
+    def test_without_an_active_playback_the_preview_starts_its_own(self) -> None:
+        self.client.playback_active = False
+        self.mark(at(10, 5, 30), at(10, 6, 10))
+        self.flow.save_clip()
+        self.assertEqual(self.client.seeks[-1], (at(10, 5, 30), "play_from"))
+
+    def test_adjust_range_updates_everything_and_refuses_less_than_a_second(self) -> None:
+        self.mark(at(10, 5, 30), at(10, 6, 10))
+        self.flow.save_clip()
+        self.flow.adjust_range(at(10, 5, 20), at(10, 6, 20))
+        self.assertEqual(self.client.control.bounds(), (at(10, 5, 20), at(10, 6, 20)))
+        self.assertEqual(self.flow.final_range(), ClipRange(at(10, 5, 20), at(10, 6, 20)))
+        self.flow.adjust_range(at(10, 6, 0), at(10, 6, 0) + timedelta(milliseconds=200))
+        self.assertEqual(self.client.control.bounds(), (at(10, 5, 20), at(10, 6, 20)))
+        self.assertIn("al menos 1 segundo", self.messages[-1])
+        self.assertEqual(self.timeline.range, (at(10, 5, 20), at(10, 6, 20)))  # la banda vuelve a su sitio
 
 
 class HelpersAndBarTests(unittest.TestCase):

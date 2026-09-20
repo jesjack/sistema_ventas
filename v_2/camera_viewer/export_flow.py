@@ -62,12 +62,16 @@ class ExportFlow(QObject):
         starter=start_export,
         now: Callable[[], datetime] = datetime.now,
         parent: QObject | None = None,
+        preview_opener: Callable[[ClipRange], ClipRange | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.client, self.timeline, self.bar = client, timeline, bar
         self._clips_provider, self._notify = clips_provider, notify
         self._ask_after_seconds, self._choose_folder, self._open_folder = ask_after_seconds, choose_folder, open_folder
         self._settings, self._starter, self._now = settings, starter, now
+        # En la ventana principal la vista previa y el guardado viven en OTRA ventana (ver
+        # clip_export_dialog.py): `preview_opener` la abre y devuelve el rango con que quedó.
+        self._preview_opener = preview_opener
 
         self.marks: list[datetime | None] = [None, None]
         self.preview_range: ClipRange | None = None
@@ -208,16 +212,41 @@ class ExportFlow(QObject):
             self._notify("No hay grabación en ese tramo.")
             return
         self.marks = [clip_range.start, clip_range.end]
+        if self._preview_opener is not None:
+            final = self._preview_opener(clip_range)
+            if final is not None:
+                self.marks = [final.start, final.end]
+            self._refresh_marks()
+            return
         self.preview_range = clip_range
         control = self.client.control
         control.set_bounds(clip_range.start, clip_range.end)
         self.client.set_reverse(False)
-        self.client.seek(clip_range.start, resume=True)
+        if self.client.playback_active:
+            self.client.seek(clip_range.start, resume=True)
+        else:  # ventana de guardado: su propia reproducción, que arranca aquí
+            self.client.play_from(clip_range.start, self._clips_provider())
         self.timeline.set_export_range(clip_range.start, clip_range.end)
         if self.export is None or self.export.finished():
             self.bar.set_state(PREVIEW)
         self._refresh_preview_info()
         self._notify("Vista previa del clip: revísalo y confirma para guardarlo.")
+
+    def adjust_range(self, start: datetime, end: datetime) -> None:
+        """Cambia el rango de la vista previa (asas de la línea de tiempo). Mínimo 1 s."""
+        if self.preview_range is None:
+            return
+        if end - start < timedelta(seconds=MIN_CLIP_SECONDS):
+            self._notify("El clip debe durar al menos 1 segundo.")
+            self.timeline.set_export_range(self.preview_range.start, self.preview_range.end)
+            return
+        self._set_preview_range(ClipRange(start, end))
+
+    def final_range(self) -> ClipRange | None:
+        """El rango con que quedó el clip (para que la ventana principal actualice sus marcas)."""
+        if self.preview_range is not None:
+            return self.preview_range
+        return self._marked_range()
 
     def _set_preview_range(self, clip_range: ClipRange) -> None:
         self.marks = [clip_range.start, clip_range.end]
