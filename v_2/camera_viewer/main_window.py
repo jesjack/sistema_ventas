@@ -3,14 +3,27 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time as dtime, timedelta
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QStackedWidget, QVBoxLayout, QWidget
+from pathlib import Path
+
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QSplitter,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .calendar_panel import CalendarPanel
 from .camera_grid import CameraGrid
 from .connection_panel import ConnectionPanel
 from .dvr_info_dialog import DvrInfoDialog
+from .export_bar import ExportBar
+from .export_flow import LAST_SECONDS, ExportFlow
 from .playback_controls import JUMP_SECONDS, PlaybackControls
 from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient, LIVE_TO_RECORDINGS_SETTLE
 from .light_query_manager import LightPriority
@@ -33,6 +46,7 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         self.client = DVRClient(self)
+        self.export_flow: ExportFlow | None = None
         self._clips_by_channel: dict[int, list[Clip]] = {channel: [] for channel in DEFAULT_CHANNELS}
         self._is_live = False
         # Mientras es False se descartan los frames/estados de grabaciones que
@@ -67,6 +81,18 @@ class MainWindow(QMainWindow):
         self._live_tools_timer.timeout.connect(self._refresh_live_tools)
 
         self._build_ui()
+        self.export_flow = ExportFlow(
+            self.client,
+            self.timeline,
+            self.export_bar,
+            clips_provider=lambda: self._clips_by_channel,
+            notify=self.status_label.setText,
+            ask_after_seconds=self._ask_after_seconds,
+            choose_folder=self._choose_export_folder,
+            open_folder=self._open_export_folder,
+            settings=QSettings("camera_viewer", "camera_viewer"),
+            parent=self,
+        )
         self._wire_signals()
 
         # El calendario ya arranca con hoy seleccionado (pastilla azul) pero
@@ -123,6 +149,8 @@ class MainWindow(QMainWindow):
 
         self.playback_controls = PlaybackControls()
         root_layout.addWidget(self.playback_controls)
+        self.export_bar = ExportBar(DEFAULT_CHANNELS)
+        root_layout.addWidget(self.export_bar)
         self._set_playback_active(False)
 
         self.timeline = TimelineWidget()
@@ -196,6 +224,33 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Buscando grabaciones del {day}...")
         self.client.search(start_dt, end_dt, priority)
 
+    # -- diálogos del flujo de exportación (ver export_flow.py) --------------------------------
+
+    def _ask_after_seconds(self) -> float | None:
+        """Pregunta si el clip "últimos 30 s" incluye también los 30 s siguientes.
+        Devuelve 0 (solo los anteriores), 30 (también los siguientes) o None (cancelar)."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Guardar los últimos 30 s")
+        box.setText("¿Incluir también los 30 segundos posteriores?")
+        box.setInformativeText("Verás una vista previa del clip antes de guardarlo, y ahí podrás ajustar el inicio y el fin.")
+        only_before = box.addButton("Solo los 30 s anteriores", QMessageBox.ButtonRole.AcceptRole)
+        both = box.addButton("30 s antes y 30 s después", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(only_before)
+        box.exec()
+        if box.clickedButton() is only_before:
+            return 0.0
+        if box.clickedButton() is both:
+            return LAST_SECONDS
+        return None
+
+    def _choose_export_folder(self, current: Path) -> Path | None:
+        chosen = QFileDialog.getExistingDirectory(self, "Carpeta donde guardar los clips", str(current))
+        return Path(chosen) if chosen else None
+
+    def _open_export_folder(self, folder: Path) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
     def _show_dvr_info(self) -> None:
         DvrInfoDialog(self.client.host, self.client.username, self.client.password, self._is_live, self).exec()
 
@@ -203,6 +258,10 @@ class MainWindow(QMainWindow):
         """Los controles de reproducción (barra y atajos) solo están activos
         mientras hay una reproducción de grabaciones en curso."""
         self.playback_controls.set_active(active)
+        if self.export_flow is not None:
+            self.export_flow.set_playback_active(active)
+        else:
+            self.export_bar.set_active(active)
         self.playback_controls.set_paused(self.client.control.paused if active else False)
         self.playback_controls.set_reverse(self.client.control.reverse if active else False)
         self.playback_controls.set_speed(self.client.control.speed)
@@ -210,6 +269,9 @@ class MainWindow(QMainWindow):
             shortcut.setEnabled(active)
 
     def _toggle_pause(self) -> None:
+        if self.export_flow is not None and self.export_flow.at_bound_action():
+            self.playback_controls.set_paused(False)  # detenido en un extremo del clip: reanudar = volver a empezar
+            return
         paused = self.client.toggle_pause()
         self.playback_controls.set_paused(paused)
 
@@ -233,6 +295,10 @@ class MainWindow(QMainWindow):
         moment = self.client.control.media_now()
         if moment is not None:
             self.timeline.draw_playhead(moment)
+        # La reproducción puede pausarse sola (al llegar al extremo de la vista previa del clip).
+        paused = self.client.control.paused
+        if paused != self.playback_controls.is_paused():
+            self.playback_controls.set_paused(paused)
 
     def _set_speed(self, speed: float) -> None:
         self.client.set_speed(speed)
@@ -345,6 +411,7 @@ class MainWindow(QMainWindow):
         self._is_live = True
         self.camera_grid_stack.setCurrentWidget(self.live_camera_grid)
         self.playback_controls.setVisible(False)
+        self.export_bar.setVisible(False)
         self.connection_panel.set_live_mode(True)
         # Calendario y linea de tiempo NO se deshabilitan: acompañan a la
         # vista en vivo (hoy seleccionado, cursor avanzando con la hora
@@ -362,6 +429,7 @@ class MainWindow(QMainWindow):
         self.timeline.clear_marker()
         self.camera_grid_stack.setCurrentWidget(self.recordings_camera_grid)
         self.playback_controls.setVisible(True)
+        self.export_bar.setVisible(True)
         self.connection_panel.set_live_mode(False)
         self.status_label.setText("Modo grabaciones.")
 
@@ -393,6 +461,8 @@ class MainWindow(QMainWindow):
         self._sync_tools_to_live_clock(LightPriority.PERIODIC)
 
     def closeEvent(self, event) -> None:
+        if self.export_flow is not None and self.export_flow.export is not None:
+            self.export_flow.export.cancel()  # los .part parciales se borran al cancelar
         self.client.stop_playback()
         self.client.stop_live()
         self.timeline.stop_playhead()

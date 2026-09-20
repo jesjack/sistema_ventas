@@ -645,6 +645,67 @@ class Group:
         return frames[0][0] if frames else None
 
 
+class BoundedPlaybackTests(PlayerTestCase):
+    def test_forward_playback_stops_and_pauses_at_the_end_of_the_range(self) -> None:
+        h = self.harness()
+        h.control.set_bounds(T0 + timedelta(seconds=2), T0 + timedelta(seconds=4))
+        h.start(2.0)
+        deadline = time.monotonic() + 8
+        while h.control.bound_reached() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(h.control.bound_reached(), "end")
+        time.sleep(0.4)
+        frames = list(h.frames)
+        self.assertAlmostEqual(frames[0], 2.0, delta=0.1)
+        self.assertLess(max(frames), 4.0)  # ningún cuadro del fin ni de después
+        self.assertGreater(max(frames), 3.9)  # pero sí hasta el último
+        self.assertEqual(len(frames), len(h.frames))  # y ya no llegan más
+        self.assertTrue(h.control.paused)
+
+    def test_reverse_playback_stops_at_the_start_of_the_range(self) -> None:
+        h = self.harness()
+        h.control.set_bounds(T0 + timedelta(seconds=2), T0 + timedelta(seconds=5))
+        h.control.set_reverse(True)
+        h.start(3.0)
+        deadline = time.monotonic() + 8
+        while h.control.bound_reached() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(h.control.bound_reached(), "start")
+        self.assertGreaterEqual(min(h.frames), 2.0 - 0.001)
+        self.assertLess(min(h.frames), 2.1)
+
+    def test_a_seek_past_the_end_lands_on_the_last_frame_of_the_range(self) -> None:
+        h = self.harness()
+        h.control.set_bounds(T0 + timedelta(seconds=2), T0 + timedelta(seconds=6))
+        h.start(2.0)
+        h.wait_frames(3)
+        h.seek(300.0)
+        self.assertIsNotNone(h.wait_for_time(5.9, tolerance=0.15))
+        self.assertTrue(all(t < 6.0 for t in h.frames))
+
+    def test_restarting_from_the_beginning_after_reaching_the_end_plays_again(self) -> None:
+        h = self.harness()
+        h.control.set_bounds(T0 + timedelta(seconds=2), T0 + timedelta(seconds=3.5))
+        h.start(2.0)
+        deadline = time.monotonic() + 8
+        while h.control.bound_reached() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        first_run = len(h.frames)
+        h.control.request_seek(T0 + timedelta(seconds=2))
+        h.control.set_paused(False)
+        h.wait_frames(first_run + 20)
+        self.assertGreater(len(h.frames), first_run + 15)
+        self.assertAlmostEqual(h.frames[first_run], 2.0, delta=0.2)
+
+    def test_no_prefetch_is_requested_outside_the_range(self) -> None:
+        h = self.harness()
+        h.control.set_bounds(T0 + timedelta(seconds=2), T0 + timedelta(seconds=4))
+        h.start(2.0)
+        time.sleep(1.0)
+        starts = [s[0] for s in h.submits]
+        self.assertFalse(any(start >= T0 + timedelta(seconds=4) for start in starts))
+
+
 class SynchronizedChannelsTests(PlayerTestCase):
     def sample_walls(self, group: Group, count: int = 6, span: float = 3.0) -> list[float]:
         now = time.monotonic()

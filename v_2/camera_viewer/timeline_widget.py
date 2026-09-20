@@ -50,6 +50,7 @@ GAP_COLOR = QColor(220, 38, 38, 110)
 Z_BACKGROUND = 0
 Z_GAP = 0.5
 Z_MINUTE_TICK = 1
+Z_RANGE = 5  # banda del clip a exportar: sobre los huecos y las marcas de minuto, bajo el cursor
 Z_MARKER = 10
 
 PLAYHEAD_REFRESH_MS = 200
@@ -90,6 +91,8 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._minute_label_width: float | None = None
         self._clips_by_channel: dict[int, list[Clip]] = {}
         self._gap_items: list[QGraphicsRectItem] = []
+        self._export_range: tuple[datetime, datetime] | None = None
+        self._range_item: QGraphicsRectItem | None = None
         self._playhead_started_at: float | None = None
         self._playhead_started_time: datetime | None = None
 
@@ -190,6 +193,7 @@ class TimelineWidget(ZoomPanGraphicsView):
         scene = self.scene()
         scene.clear()
         self._marker_item = None
+        self._range_item = None
         self._minute_tick_items = []
         self._minute_label_items = []
         self._gap_items = []
@@ -228,6 +232,40 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._refresh_minute_ticks()
         self._refresh_minute_labels()
         self._refresh_gaps()
+        self._draw_export_range()
+
+    # -- banda del clip a exportar ------------------------------------------------------
+
+    def set_export_range(self, start: datetime, end: datetime) -> None:
+        """Pinta la banda del rango marcado para exportar (solo el tramo que cae en el día mostrado)."""
+        self._export_range = (start, end)
+        self._draw_export_range()
+
+    def clear_export_range(self) -> None:
+        self._export_range = None
+        self._draw_export_range()
+
+    def _draw_export_range(self) -> None:
+        scene = self.scene()
+        if self._range_item is not None:
+            try:
+                scene.removeItem(self._range_item)
+            except RuntimeError:  # la escena ya lo borró (scene.clear en _redraw)
+                pass
+            self._range_item = None
+        if self._export_range is None or self._day is None:
+            return
+        midnight = datetime.combine(self._day, dtime.min)
+        start = max(0.0, (self._export_range[0] - midnight).total_seconds())
+        end = min(float(SECONDS_PER_DAY), (self._export_range[1] - midnight).total_seconds())
+        if end <= start:
+            return
+        band = QGraphicsRectItem(start, AXIS_HEIGHT, end - start, BODY_HEIGHT)
+        band.setBrush(QBrush(QColor(59, 130, 246, 110)))
+        band.setPen(_cosmetic_pen(QColor("#3B82F6")))
+        band.setZValue(Z_RANGE)
+        scene.addItem(band)
+        self._range_item = band
 
     def _refresh_gaps(self) -> None:
         """Tramos del dia sin grabacion en NINGUN canal -- el complemento

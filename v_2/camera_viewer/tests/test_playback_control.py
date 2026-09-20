@@ -222,6 +222,75 @@ class ClockTests(unittest.TestCase):
         self.assertAlmostEqual((self.control.media_now() - T0).total_seconds(), 0.0, delta=0.05)
 
 
+class BoundsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.control = PlaybackControl(CHANNELS)
+        self.start, self.end = T0 + timedelta(seconds=10), T0 + timedelta(seconds=40)
+
+    def start_clock(self, target: datetime) -> None:
+        self.control.set_bounds(self.start, self.end)
+        self.control.reset(False, target)
+        for channel in CHANNELS:
+            self.control.announce_ready(channel)
+
+    def test_no_bounds_by_default_and_nothing_is_out_of_range(self) -> None:
+        self.assertIsNone(self.control.bounds())
+        self.assertFalse(self.control.out_of_bounds(T0 + timedelta(days=1)))
+
+    def test_out_of_bounds_depends_on_the_direction(self) -> None:
+        self.control.set_bounds(self.start, self.end)
+        self.assertFalse(self.control.out_of_bounds(self.end - timedelta(milliseconds=33)))
+        self.assertTrue(self.control.out_of_bounds(self.end))  # el fin es exclusivo
+        self.assertFalse(self.control.out_of_bounds(self.start - timedelta(seconds=5)))  # antes del inicio, en avance, no molesta
+        self.control.set_reverse(True)
+        self.assertTrue(self.control.out_of_bounds(self.start - timedelta(milliseconds=33)))
+        self.assertFalse(self.control.out_of_bounds(self.start))
+
+    def test_seek_and_start_are_clamped_into_the_range(self) -> None:
+        self.control.set_bounds(self.start, self.end)
+        self.control.reset(False, T0)  # antes del inicio
+        self.assertEqual(self.control.media_now(), self.start)
+        self.control.request_seek(T0 + timedelta(seconds=500))
+        self.assertLess(self.control.media_now(), self.end)
+        self.assertGreater(self.control.media_now(), self.end - timedelta(seconds=1))
+
+    def test_the_clock_never_leaves_the_range(self) -> None:
+        self.control.set_speed(2.0)
+        self.start_clock(self.end - timedelta(seconds=0.2))
+        time.sleep(0.6)  # a x2 se pasaría del fin
+        self.assertEqual(self.control.media_now(), self.end)
+
+    def test_reach_bound_pauses_everything_at_the_end_once(self) -> None:
+        self.start_clock(self.start)
+        self.control.reach_bound()
+        self.assertTrue(self.control.paused)
+        self.assertEqual(self.control.bound_reached(), "end")
+        self.assertEqual(self.control.media_now(), self.end)
+        self.control.reach_bound()  # varios canales lo llaman: idempotente
+        self.assertEqual(self.control.bound_reached(), "end")
+
+    def test_reverse_stops_at_the_start(self) -> None:
+        self.control.set_reverse(True)
+        self.start_clock(self.start + timedelta(seconds=1))
+        self.control.reach_bound()
+        self.assertEqual((self.control.bound_reached(), self.control.media_now()), ("start", self.start))
+
+    def test_resuming_or_seeking_clears_the_bound_flag(self) -> None:
+        self.start_clock(self.start)
+        self.control.reach_bound()
+        self.control.set_paused(False)
+        self.assertIsNone(self.control.bound_reached())
+        self.control.reach_bound()
+        self.control.request_seek(self.start)
+        self.assertIsNone(self.control.bound_reached())
+
+    def test_clear_bounds(self) -> None:
+        self.control.set_bounds(self.start, self.end)
+        self.control.clear_bounds()
+        self.assertIsNone(self.control.bounds())
+        self.assertFalse(self.control.out_of_bounds(self.end + timedelta(days=1)))
+
+
 class PlaybackControlsWidgetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

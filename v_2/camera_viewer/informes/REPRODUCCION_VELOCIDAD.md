@@ -132,3 +132,20 @@ grabación no frena a los demás; un salto los reúne; pausa/reanudar los mantie
 
 **Pendiente/observación:** tras varios saltos seguidos o a x2, algunos canales muestran "Descargando…" mientras el resto sigue: el adelanto solo pide
 el siguiente bloque y a velocidad alta se consume más rápido de lo que llega. Un adelanto más profundo a velocidades altas lo mejoraría.
+
+## Adenda 4 (2026-09-19): exportar un clip corto (marcas, vista previa acotada, guardado)
+
+Flujo (`export_bar.py`, `export_flow.py`, `export_clip.py`; reloj acotado en `playback_control.py`):
+1. **Marcas** `[ Inicio` / `Fin ]` que toman la hora del reloj compartido (banda en la línea de tiempo), o **"Guardar últimos 30 s"**, que pregunta si se
+   incluyen también los 30 s siguientes (recorta a lo grabado y a "ahora", y lo avisa).
+2. **Vista previa acotada al rango:** la reproducción normal con los mismos controles y "Inicio del clip"; el reloj no sale del rango y al llegar
+   al final (o al inicio, en reversa) se pausa; "Reanudar" allí vuelve a empezar. Las marcas se pueden ajustar dentro de la vista previa.
+3. **Confirmación:** casillas de canal (solo los que grabaron en el rango), carpeta (por defecto `~/Videos/Cámaras`, se recuerda) y tamaño estimado.
+4. **Guardado en segundo plano** por el embudo con prioridad `EXPORT`: una descarga por canal del rango EXACTO, reempaquetado a MP4 sin recodificar con
+   `ffmpeg` (si no hay, se deja el `.dav`), verificación (se abre el archivo, tiene imagen y su duración coincide ±1.5 s; si no coincide se guarda con aviso),
+   un reintento por canal, cancelación, nunca se pisa un archivo (`(2)`), sin `.part` residuales.
+
+Comprobado con el DVR real y la ventana completa: clip de 20 s (10:05:33-10:05:53) → vista previa se detiene sola al final con las 4 cámaras en `10:05:53`,
+"Inicio del clip" reinicia, y exportar CAM 1 y CAM 2 tardó **2.0 s**: MP4 de 5.3 MB, 600 cuadros a 30 fps = 20.2 s (CAM 1 960x1080, CAM 2 1280x720), primer cuadro
+decodifica, sin temporales. Tamaño estimado por canal: 2.1 Mbps × duración (real: 5.3 MB en 20 s). `purge_download_dir` ya no borra descargas de menos de 10 min
+(podía llevarse una exportación en curso).

@@ -574,6 +574,9 @@ class ChannelPlayer:
                 late = 0.0
                 if turn != "step" and control.has_clock():
                     media = entry.start + timedelta(seconds=reader.next_index / fps)
+                    if control.out_of_bounds(media):
+                        control.reach_bound()  # vista previa de un clip: al llegar al extremo se pausa todo
+                        continue
                     resync = False
                     while True:
                         if self._should_stop():
@@ -673,6 +676,9 @@ class ChannelPlayer:
                 return
             else:
                 return
+        bounds = self.control.bounds()
+        if bounds is not None and start >= bounds[1]:
+            return  # fuera del rango de la vista previa: no vale la pena descargarlo
         if self.store.find(self.channel, start) is None and self._request_covering(start) is None:
             self._submit(start, end, priority)
 
@@ -692,6 +698,9 @@ class ChannelPlayer:
             if boundary == entry.start:
                 boundary -= timedelta(minutes=1)
             start, end = max(clip.start, boundary), entry.start
+        bounds = self.control.bounds()
+        if bounds is not None and end <= bounds[0]:
+            return
         probe = end - timedelta(seconds=1)
         if self.store.find(self.channel, probe) is None and self._request_covering(probe) is None:
             self._submit(start, end, priority)

@@ -284,10 +284,21 @@ class RecordingDownloadManager:
         return local_path
 
 
-def purge_download_dir(download_dir: Path = DOWNLOAD_DIR) -> None:
-    """Borra archivos temporales de descargas de una corrida anterior
-    (p. ej. si la app se cerro de golpe a medio descargar un bloque)."""
+PURGE_MIN_AGE = 600.0  # segundos: no se toca lo reciente (puede ser una descarga en curso de otro consumidor)
+
+
+def purge_download_dir(download_dir: Path = DOWNLOAD_DIR, min_age: float = PURGE_MIN_AGE) -> None:
+    """Borra archivos temporales de descargas de una corrida anterior (p. ej. si
+    la app se cerró de golpe a medio descargar un bloque). Solo los de más de
+    `min_age` segundos: los recientes pueden ser una descarga en curso de una
+    exportación o de otro proceso, y la reproducción ya limpia sus propios
+    bloques (ver ChunkStore.clear)."""
     if not download_dir.exists():
         return
+    now = time.time()
     for path in download_dir.glob("*.dav"):
-        path.unlink(missing_ok=True)
+        try:
+            if now - path.stat().st_mtime >= min_age:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass

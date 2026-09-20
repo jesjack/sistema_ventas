@@ -23,6 +23,7 @@ REVERSE_STATUS_PREFIX = "Reversa"
 SYNC_STATUS = "Sincronizando..."
 GATE_POLL = 0.1  # cada cuánto un hilo en pausa revisa si lo cancelaron
 BARRIER_TIMEOUT = 6.0  # arranque: todos los canales tienen que descargar su primer bloque
+SEEK_END_MARGIN = timedelta(milliseconds=40)
 SEEK_BARRIER_TIMEOUT = 2.0  # tras un salto: casi siempre está todo en disco; si uno debe descargar, no frena a los demás
 
 
@@ -47,6 +48,10 @@ class PlaybackControl:
         self._ready: set[int] = set()
         self._absent: set[int] = set()
         self._deadline = 0.0
+        # Rango [inicio, fin) al que se limita la reproducción (vista previa de un clip
+        # a exportar): el reloj nunca sale de él y al llegar a un extremo se pausa.
+        self._bounds: tuple[datetime, datetime] | None = None
+        self._at_bound: str | None = None  # "end" | "start" mientras esté pausado en un extremo
 
     # -- estado simple -------------------------------------------------------------
 
@@ -102,7 +107,62 @@ class PlaybackControl:
         if self._media is None or not self._running:
             return self._media
         direction = -1.0 if self._reverse else 1.0
-        return self._media + timedelta(seconds=direction * self._speed * (now - self._wall))
+        return self._clamp(self._media + timedelta(seconds=direction * self._speed * (now - self._wall)))
+
+    def _clamp(self, moment: datetime) -> datetime:
+        if self._bounds is None:
+            return moment
+        start, end = self._bounds
+        return min(max(moment, start), end)
+
+    # -- límites de la reproducción (vista previa de un clip) --------------------------
+
+    def set_bounds(self, start: datetime, end: datetime) -> None:
+        """Limita la reproducción a [start, end): el reloj no sale de ahí y, al llegar
+        a un extremo, se pausa (ver reach_bound)."""
+        with self._cond:
+            self._bounds = (start, end)
+            self._at_bound = None
+            if self._media is not None:
+                self._media = self._clamp(self._media)
+            self._cond.notify_all()
+
+    def clear_bounds(self) -> None:
+        with self._cond:
+            self._bounds = None
+            self._at_bound = None
+
+    def bounds(self) -> tuple[datetime, datetime] | None:
+        with self._cond:
+            return self._bounds
+
+    def bound_reached(self) -> str | None:
+        """"end" o "start" si la reproducción se pausó al llegar a un extremo del rango."""
+        with self._cond:
+            return self._at_bound
+
+    def out_of_bounds(self, media: datetime) -> bool:
+        """¿El cuadro con esta hora de video ya queda fuera del rango, en el sentido en que se reproduce?"""
+        with self._cond:
+            if self._bounds is None:
+                return False
+            start, end = self._bounds
+            return media < start if self._reverse else media >= end
+
+    def reach_bound(self) -> None:
+        """Un canal llegó al extremo del rango: se pausa TODO en ese extremo (varios
+        canales pueden llamarlo a la vez; solo el primero cuenta)."""
+        with self._cond:
+            if self._bounds is None or self._paused:
+                return
+            self._at_bound = "start" if self._reverse else "end"
+            start, end = self._bounds
+            self._media = start if self._reverse else end
+            self._running = False
+            self._paused = True
+            self._steps = {channel: 0 for channel in self._channels}
+            self._epoch += 1
+            self._cond.notify_all()
 
     def _rebase(self, now: float) -> None:
         """Fija la hora actual como punto de partida (antes de cambiar velocidad/sentido)."""
@@ -152,10 +212,11 @@ class PlaybackControl:
             self._playing.clear()
             self._seeks.clear()
             self._epoch += 1
+            self._at_bound = None
             if target is None:
                 self._media, self._running = None, False
             else:
-                self._arm(target, time.monotonic(), BARRIER_TIMEOUT)
+                self._arm(self._clamp_seek(target), time.monotonic(), BARRIER_TIMEOUT)
             self._cond.notify_all()
 
     def set_paused(self, paused: bool) -> None:
@@ -169,6 +230,7 @@ class PlaybackControl:
             else:
                 self._steps = {channel: 0 for channel in self._channels}
                 self._epoch += 1
+                self._at_bound = None
                 if self._media is not None:
                     self._running = True
                     self._wall = now
@@ -207,12 +269,22 @@ class PlaybackControl:
         para que vuelvan a salir juntos). En pausa, cada uno deja pasar un cuadro para
         mostrar la imagen del punto nuevo y sigue en pausa."""
         with self._cond:
+            target = self._clamp_seek(target)
+            self._at_bound = None
             self._arm(target, time.monotonic(), SEEK_BARRIER_TIMEOUT)
             for channel in self._channels:
                 self._seeks[channel] = target
                 if self._paused:
                     self._steps[channel] += 1
             self._cond.notify_all()
+
+    def _clamp_seek(self, target: datetime) -> datetime:
+        """Dentro del rango. El fin no tiene cuadro (es exclusivo) y 1 ms antes redondearía a
+        ese mismo cuadro inexistente: se deja un cuadro completo antes (40 ms = 1 cuadro a 25 fps)."""
+        if self._bounds is None:
+            return target
+        start, end = self._bounds
+        return min(max(target, start), max(start, end - SEEK_END_MARGIN))
 
     def take_seek(self, channel: int) -> datetime | None:
         with self._cond:

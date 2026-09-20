@@ -83,6 +83,9 @@ class PlaybackControls(QWidget):
         self.set_reverse(self._reverse)
         self.set_speed(self._speed)
 
+    def is_paused(self) -> bool:
+        return self._paused
+
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
         self._pause.setText("Reanudar" if paused else "Pausa")

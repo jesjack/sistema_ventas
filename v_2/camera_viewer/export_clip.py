@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import queue
+import shutil
+import subprocess
+import threading
+import time
+from concurrent.futures import Future, TimeoutError as FutureTimeout
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Callable
+
+import cv2
+
+from . import download_client
+from .download_manager import DownloadPriority
+
+# Exportar un clip corto (varios segundos o minutos) para conservarlo fuera del
+# DVR, que sobrescribe lo antiguo. Sin Qt: la interfaz lanza start_export() y lee
+# los avisos de la cola `events` con un temporizador (los hilos NUNCA referencian
+# widgets, ver la nota de dvr_info_dialog.py).
+#
+# Se pide al DVR EXACTAMENTE el rango (una descarga por canal, por el embudo con
+# prioridad EXPORT) y se reempaqueta a MP4 sin recodificar con ffmpeg si está
+# disponible (0.1 s, sin pérdida; informes/REPRODUCCION_VELOCIDAD.md); si no, se
+# deja el .dav original (contenedor dhav, sin cifrar, lo reproducen VLC y otros).
+# Antes de dar un archivo por bueno se abre y se comprueba su duración.
+
+ESTIMATED_MBPS_PER_CHANNEL = 2.1  # medido en el DVR real (CBR 2048 kbps + sobrecarga)
+DEFAULT_FOLDER = Path.home() / "Videos" / "Cámaras"
+DOWNLOAD_RETRY_DELAY = 1.0
+FFMPEG_TIMEOUT = 300.0
+DURATION_TOLERANCE_SECONDS = 1.5
+WAIT_POLL = 0.2
+
+
+class ExportError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class ClipRange:
+    start: datetime
+    end: datetime
+
+    @property
+    def duration(self) -> float:
+        return (self.end - self.start).total_seconds()
+
+    @classmethod
+    def around(
+        cls,
+        moment: datetime,
+        before: float,
+        after: float,
+        earliest: datetime | None = None,
+        latest: datetime | None = None,
+    ) -> "ClipRange":
+        """[moment - before, moment + after], recortado a lo que hay grabado."""
+        start, end = moment - timedelta(seconds=before), moment + timedelta(seconds=after)
+        if earliest is not None:
+            start = max(start, earliest)
+        if latest is not None:
+            end = min(end, latest)
+        return cls(start, end)
+
+
+def clip_filename(channel: int, clip_range: ClipRange, extension: str) -> str:
+    return (
+        f"CAM{channel}_{clip_range.start:%Y-%m-%d_%H-%M-%S}_a_{clip_range.end:%H-%M-%S}{extension}"
+    )
+
+
+def unique_path(folder: Path, filename: str) -> Path:
+    """`folder/filename`, o con " (2)", " (3)"... si ya existe (nunca se pisa un archivo)."""
+    candidate = folder / filename
+    stem, suffix = candidate.stem, candidate.suffix
+    counter = 2
+    while candidate.exists():
+        candidate = folder / f"{stem} ({counter}){suffix}"
+        counter += 1
+    return candidate
+
+
+def estimate_bytes(clip_range: ClipRange, channel_count: int) -> float:
+    return clip_range.duration * ESTIMATED_MBPS_PER_CHANNEL * 1e6 / 8 * channel_count
+
+
+def format_size(size: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} B" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def find_ffmpeg() -> str | None:
+    return shutil.which("ffmpeg")
+
+
+def remux_to_mp4(source: Path, destination: Path, ffmpeg: str) -> None:
+    """Copia el video a un MP4 sin recodificar (rápido y sin pérdida)."""
+    command = [
+        ffmpeg, "-y", "-v", "error", "-i", str(source),
+        "-c", "copy", "-map", "0:v:0", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart",
+        str(destination),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ExportError(f"No se pudo convertir el video: {exc}") from exc
+    if result.returncode != 0 or not destination.exists() or destination.stat().st_size == 0:
+        raise ExportError(f"No se pudo convertir el video: {result.stderr.strip()[-200:] or 'ffmpeg falló'}")
+
+
+def verify_clip(path: Path, expected_seconds: float) -> str | None:
+    """Abre el archivo y comprueba que tenga video. Devuelve un AVISO (texto) si su
+    duración no coincide con lo pedido (p. ej. faltan grabaciones en ese tramo);
+    lanza ExportError si no se puede abrir o no tiene imagen."""
+    if not path.exists() or path.stat().st_size == 0:
+        raise ExportError("El archivo quedó vacío")
+    capture = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
+    try:
+        if not capture.isOpened():
+            raise ExportError("El archivo guardado no se puede abrir")
+        ok, _ = capture.read()
+        if not ok:
+            raise ExportError("El archivo guardado no tiene imagen")
+        frames = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        fps = capture.get(cv2.CAP_PROP_FPS)
+    finally:
+        capture.release()
+    if frames and fps and frames > 0 and fps > 0:
+        duration = frames / fps
+        if abs(duration - expected_seconds) > max(DURATION_TOLERANCE_SECONDS, expected_seconds * 0.05):
+            return f"dura {duration:.0f} s de los {expected_seconds:.0f} s pedidos"
+    return None
+
+
+class ClipExport:
+    """Exportación en curso: `events` (cola) y `cancel()`.
+
+    Avisos en `events`, siempre tuplas:
+      ("state", canal, texto)            progreso de un canal
+      ("done", canal, ruta, aviso|None)  ese canal quedó guardado
+      ("failed", canal, mensaje)         ese canal no se pudo
+      ("finished", {canal: ruta|None})   terminó todo (nunca falta este aviso)"""
+
+    def __init__(self) -> None:
+        self.events: queue.Queue = queue.Queue()
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def cancel(self) -> None:
+        self.stop.set()
+
+    def finished(self) -> bool:
+        return self.thread is not None and not self.thread.is_alive()
+
+
+def start_export(
+    host: str,
+    username: str,
+    password: str,
+    channels: list[int],
+    clip_range: ClipRange,
+    folder: Path,
+    submit: Callable[..., Future] | None = None,
+    ffmpeg: str | None | bool = True,
+) -> ClipExport:
+    """Lanza la exportación en un hilo aparte. `ffmpeg=True` busca el del sistema; None = no usar (queda .dav)."""
+    handle = ClipExport()
+    ffmpeg_path = find_ffmpeg() if ffmpeg is True else (ffmpeg or None)
+    handle.thread = threading.Thread(
+        target=_run_export,
+        args=(handle, host, username, password, list(channels), clip_range, Path(folder), submit or download_client.submit, ffmpeg_path),
+        name="ClipExport",
+        daemon=True,
+    )
+    handle.thread.start()
+    return handle
+
+
+def _run_export(
+    handle: ClipExport,
+    host: str,
+    username: str,
+    password: str,
+    channels: list[int],
+    clip_range: ClipRange,
+    folder: Path,
+    submit: Callable[..., Future],
+    ffmpeg: str | None,
+) -> None:
+    results: dict[int, str | None] = {channel: None for channel in channels}
+    events = handle.events
+
+    def request(channel: int) -> Future:
+        return submit(host, username, password, channel, clip_range.start, clip_range.end, DownloadPriority.EXPORT, handle.stop)
+
+    def wait(future: Future) -> Path | None:
+        while True:
+            try:
+                return future.result(timeout=WAIT_POLL)
+            except FutureTimeout:
+                if handle.stop.is_set():
+                    return None
+            except Exception:  # el servicio falló: se trata como una descarga fallida
+                return None
+
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        # Se piden todos de una vez: el embudo los sirve de a dos, por prioridad.
+        futures = {channel: request(channel) for channel in channels}
+        for channel in channels:
+            events.put(("state", channel, "En cola…"))
+        for channel in channels:
+            if handle.stop.is_set():
+                events.put(("failed", channel, "Cancelado"))
+                continue
+            events.put(("state", channel, "Descargando…"))
+            source = wait(futures[channel])
+            if source is None and not handle.stop.is_set():
+                events.put(("state", channel, "Reintentando la descarga…"))
+                time.sleep(DOWNLOAD_RETRY_DELAY)
+                source = wait(request(channel))
+            if source is None:
+                events.put(("failed", channel, "Cancelado" if handle.stop.is_set() else "No se pudo descargar del DVR"))
+                continue
+            try:
+                events.put(("state", channel, "Convirtiendo…" if ffmpeg else "Guardando…"))
+                extension = ".mp4" if ffmpeg else ".dav"
+                final = unique_path(folder, clip_filename(channel, clip_range, extension))
+                partial = final.with_name(f"{final.stem}.part{extension}")
+                try:
+                    if ffmpeg:
+                        remux_to_mp4(source, partial, ffmpeg)
+                    else:
+                        shutil.move(str(source), str(partial))
+                    events.put(("state", channel, "Verificando…"))
+                    warning = verify_clip(partial, clip_range.duration)
+                    partial.replace(final)
+                except BaseException:
+                    partial.unlink(missing_ok=True)
+                    raise
+                results[channel] = str(final)
+                events.put(("done", channel, str(final), warning))
+            except ExportError as exc:
+                events.put(("failed", channel, str(exc)))
+            except OSError as exc:
+                events.put(("failed", channel, f"No se pudo guardar el archivo: {exc}"))
+            finally:
+                source.unlink(missing_ok=True)
+    except Exception as exc:  # cualquier imprevisto: se avisa por cada canal pendiente
+        for channel in channels:
+            if results[channel] is None:
+                events.put(("failed", channel, f"Error inesperado: {exc}"))
+    finally:
+        events.put(("finished", results))
