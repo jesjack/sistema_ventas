@@ -14,6 +14,8 @@ from typing import Callable
 import requests
 from requests.auth import HTTPDigestAuth
 
+from .dvr_log import logger
+
 # Unico punto de contacto de TODA la app con loadfile.cgi (descarga de
 # bloques de grabacion). Nace de la investigacion de 2026-09 (ver
 # camera_viewer/informes/): con solo la reproduccion pidiendo descargas ya
@@ -84,6 +86,13 @@ class _Job:
     stop_event: threading.Event
     future: Future  # se resuelve con Path (exito) o None (cancelado/error)
     progress: Callable[[int], None] | None = None  # bytes recibidos hasta ahora (0 = ya arrancó)
+    priority: int = 0
+    # Lo que se mide de la descarga, para el registro (ver _log_job).
+    submitted_at: float = field(default_factory=time.monotonic)
+    attempts: int = 0
+    first_byte_at: float | None = None
+    received: int = 0
+    error: str | None = None
 
 
 class RecordingDownloadManager:
@@ -166,6 +175,7 @@ class RecordingDownloadManager:
             stop_event=stop_event,
             future=future,
             progress=progress,
+            priority=priority,
         )
         self._queue.put(_QueueItem(priority=priority, seq=next(self._seq_counter), job=job))
         return future
@@ -253,14 +263,39 @@ class RecordingDownloadManager:
         )
         auth = HTTPDigestAuth(job.username, job.password)
 
+        started = time.monotonic()
         try:
             local_path = self._download(url, auth, job)
             job.future.set_result(local_path)
+            self._log_job(job, local_path, started)
         finally:
             # Margen de cortesia: no reabrir un cupo (ni abrir el vivo, ver
             # acquire_live) apenas termina una descarga -- el DVR puede tardar
-            # un instante en liberar los recursos de la sesion.
-            job.stop_event.wait(self._post_download_gap)
+            # un instante en liberar los recursos de la sesion. Se espera SIEMPRE, también
+            # tras una cancelación: antes era `stop_event.wait(...)`, que con el evento ya
+            # activado (justo el caso de una descarga cancelada) volvía al instante, así que
+            # el hilo abría la siguiente sesión mientras el DVR aún cerraba la cancelada; con
+            # las cancelaciones de cada salto o cambio de hora eso pasaba de las 3 sesiones
+            # que aguanta (ver informes/DVR_STRESS_TEST_RESULTS.md).
+            if self._post_download_gap > 0:
+                time.sleep(self._post_download_gap)
+
+    @staticmethod
+    def _log_job(job: _Job, local_path: Path | None, started: float) -> None:
+        now = time.monotonic()
+        waited, total = started - job.submitted_at, now - started
+        head = f"descarga ch{job.channel} {job.start:%H:%M:%S}-{job.end:%H:%M:%S} prio={job.priority} espera_en_cola={waited:.1f}s"
+        first = f"primer_byte={job.first_byte_at - started:.1f}s" if job.first_byte_at is not None else "sin_bytes"
+        size = f"{job.received / 1e6:.1f}MB"
+        if local_path is not None:
+            speed = job.received * 8 / 1e6 / total if total > 0 else 0.0
+            logger.info("%s OK %s total=%.1fs %s (%.1f Mbps) intentos=%d", head, first, total, size, speed, job.attempts)
+        elif job.stop_event.is_set():
+            logger.info("%s CANCELADA a los %.1fs %s %s intentos=%d", head, total, first, size, job.attempts)
+        else:
+            logger.warning(
+                "%s FALLÓ tras %.1fs %s %s intentos=%d motivo=%s", head, total, first, size, job.attempts, job.error or "desconocido"
+            )
 
     def _download(self, url: str, auth: HTTPDigestAuth, job: _Job) -> Path | None:
         self._download_dir.mkdir(parents=True, exist_ok=True)
@@ -269,6 +304,8 @@ class RecordingDownloadManager:
         for attempt in range(2):
             wrote_bytes = False
             received = 0
+            job.attempts += 1
+            job.received = 0
             report(0)
             try:
                 with requests.get(url, auth=auth, stream=True, timeout=30) as response:
@@ -278,20 +315,27 @@ class RecordingDownloadManager:
                             if job.stop_event.is_set():
                                 break
                             if block:
+                                if job.first_byte_at is None:
+                                    job.first_byte_at = time.monotonic()
                                 wrote_bytes = True
                                 fh.write(block)
                                 received += len(block)
+                                job.received = received
                                 report(received)
                 break
-            except requests.exceptions.ConnectionError:
+            except requests.exceptions.ConnectionError as exc:
+                job.error = f"{type(exc).__name__}: {str(exc)[:100]}"
                 local_path.unlink(missing_ok=True)
                 if wrote_bytes or attempt == 1 or job.stop_event.wait(DOWNLOAD_RETRY_DELAY):
                     return None
-            except Exception:
+            except Exception as exc:
+                job.error = f"{type(exc).__name__}: {str(exc)[:100]}"
                 local_path.unlink(missing_ok=True)
                 return None
 
         if job.stop_event.is_set() or local_path.stat().st_size == 0:
+            if not job.stop_event.is_set():
+                job.error = "el DVR respondió sin datos"
             local_path.unlink(missing_ok=True)
             return None
         return local_path

@@ -11,7 +11,7 @@ Visor PySide6 de un DVR Dahua (4 canales) dentro del POS. Historial y mediciones
   `export_bar.py`, `clip_export_dialog.py` + `clip_timeline.py` (ventana propia: `ExportBar(window_mode=True)` es su fila superior; las casillas de canal viven en los paneles). **Avance del guardado:** `export_progress.py` (modelo: fases, bytes, velocidad, tiempo restante) + `save_progress_dialog.py` (ventana modal con tarjeta por canal y Cancelar); los bytes salen del servicio con `submit(..., progress=)` y solo se envían a quien los pide. **Info del DVR:** `dvr_info.py` + `dvr_info_dialog.py`.
 
 ## Pruebas (no tocan el DVR real)
-- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 2 min (288 pruebas), Qt en `offscreen`.
+- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 2 min (297 pruebas), Qt en `offscreen`.
 - Los DVR falsos generan video sintético; OpenCV no puede ESCRIBIR `.dav` (crear `.avi` y renombrar).
 
 ## Validar con el DVR real (IP 192.168.1.108)
@@ -24,6 +24,7 @@ Visor PySide6 de un DVR Dahua (4 canales) dentro del POS. Historial y mediciones
 - Los hilos nunca deben referenciar widgets/QObject (el último dueño lo destruye fuera del hilo GUI: "Bus error"); usar cola + `QTimer`.
 - El POS corre como root y baja solo uid/gid: `launcher.py` debe fijar HOME (ya lo hace). No usar `$HOME`/`Path.home()`; ver `export_clip.user_home()`.
 - `PlaybackControl.wait_turn` devuelve "seek" ANTES de esperar el reloj (atender el salto es lo que avisa "listo": si no, interbloqueo).
+- **Registro de tiempos del DVR** (`dvr_log.py`): cada descarga y las consultas lentas/fallidas dejan una línea en `logs/camera_viewer/run_*.log` (espera en cola, primer byte, total, intentos, motivo). Primer sitio donde mirar si "los clips tardan". Las descargas CANCELADAS también esperan la pausa de cortesía (antes no: abrían la siguiente sesión al instante y podían pasar de 3).
 - DVR: 3 `loadfile` a la vez van bien, 4 fallan; con el vivo abierto las descargas fallan → concesión de vivo; hay atascos de 6-36 s cada ~70 s.
 - Parchear un diálogo de `MainWindow` tras crear `ExportFlow` no surte efecto (guarda el método): parchear `flow._ask_after_seconds`.
 

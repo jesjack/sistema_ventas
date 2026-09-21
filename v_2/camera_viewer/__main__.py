@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QStyleFactory
 
+from . import dvr_log
 from .main_window import MainWindow
 from .singleton_lock import acquire_singleton_lock
 
@@ -47,6 +48,8 @@ def main() -> None:
     if lock_file is None:
         print("camera_viewer ya está corriendo; no se abre una instancia nueva.")
         sys.exit(0)
+
+    dvr_log.enable()  # tiempos de cada descarga y consulta al DVR, en logs/camera_viewer/run_*.log
 
     app = QApplication(sys.argv)
     # Fuerza Fusion en vez del tema nativo del sistema (p. ej. la

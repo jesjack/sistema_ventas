@@ -254,5 +254,8 @@ if __name__ == "__main__":
     if lock_file is None:
         print("download_service ya esta corriendo; no se abre otra instancia.")
     else:
+        from . import dvr_log
+
+        dvr_log.enable()
         print(f"download_service escuchando en {SERVICE_ADDRESS}...")
         serve_forever()

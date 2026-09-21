@@ -299,6 +299,178 @@ class DownloadProgressTests(unittest.TestCase):
         self.assertEqual(seen, [0, 0, 3])
 
 
+class CourtesyGapTests(unittest.TestCase):
+    """La pausa entre descargas del mismo hilo se respeta también tras una cancelación."""
+
+    GAP = 0.4
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.dvr = FakeDVR()
+        patcher = mock.patch.object(requests, "get", self.dvr)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.manager = RecordingDownloadManager(max_concurrent=1, download_dir=self.tmp, post_download_gap=self.GAP)
+        self.addCleanup(self.manager.shutdown)
+        self.events: list[tuple[str, int, float]] = []
+
+    def response_for(self, channel: int, slow: bool):
+        events = self.events
+
+        class Response(FakeResponse):
+            def __exit__(self, *exc) -> None:
+                events.append(("cierra", channel, time.monotonic()))
+
+            def iter_content(self, chunk_size: int = 0):
+                for _ in range(100 if slow else 1):
+                    time.sleep(0.02)
+                    yield b"x"
+
+        return Response()
+
+    def gap_between(self, cancel_first: bool) -> float:
+        def handler(url: str):
+            channel = int(url.split("channel=")[1].split("&")[0])
+            self.events.append(("abre", channel, time.monotonic()))
+            return self.response_for(channel, slow=channel == 1)
+
+        self.dvr.handler = handler
+        stop_first = threading.Event()
+        self.manager.submit("dvr", "u", "p", 1, START, END, 0, stop_first)
+        second = self.manager.submit("dvr", "u", "p", 2, START, END, 0, threading.Event())
+        time.sleep(0.2)
+        if cancel_first:
+            stop_first.set()
+        second.result(timeout=10)
+        closed = next(t for kind, ch, t in self.events if kind == "cierra" and ch == 1)
+        opened = next(t for kind, ch, t in self.events if kind == "abre" and ch == 2)
+        return opened - closed
+
+    def test_after_a_download_that_ends_normally_the_next_one_waits_the_gap(self) -> None:
+        self.assertGreaterEqual(self.gap_between(cancel_first=False), self.GAP * 0.9)
+
+    def test_after_a_cancelled_download_the_next_one_also_waits_the_gap(self) -> None:
+        self.assertGreaterEqual(self.gap_between(cancel_first=True), self.GAP * 0.9)
+
+    def test_a_job_cancelled_before_it_started_does_not_wait_because_it_never_touched_the_dvr(self) -> None:
+        release = threading.Event()
+        self.dvr.handler = lambda url: (release.wait(5), FakeResponse(chunks=[b"x"]))[1]
+        self.manager.submit("dvr", "u", "p", 1, START, END, 0, threading.Event())  # ocupa el hilo
+        stop = threading.Event()
+        stop.set()
+        cancelled = self.manager.submit("dvr", "u", "p", 2, START, END, 0, stop)
+        last = self.manager.submit("dvr", "u", "p", 3, START, END, 0, threading.Event())
+        release.set()
+        started = time.monotonic()
+        self.assertIsNone(cancelled.result(timeout=10))
+        last.result(timeout=10)
+        # dos descargas reales tienen su pausa (la del primero y la de la última), la cancelada antes de empezar no
+        self.assertLess(time.monotonic() - started, self.GAP * 2 + 0.6)
+
+
+class DvrLogTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.dvr = FakeDVR()
+        patcher = mock.patch.object(requests, "get", self.dvr)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch("camera_viewer.download_manager.DOWNLOAD_RETRY_DELAY", 0.01)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.manager = RecordingDownloadManager(max_concurrent=1, download_dir=self.tmp, post_download_gap=0)
+        self.addCleanup(self.manager.shutdown)
+
+    def submit(self, channel: int = 1, stop: threading.Event | None = None):
+        return self.manager.submit("dvr", "u", "p", channel, START, END, 2, stop or threading.Event())
+
+    def test_a_good_download_logs_wait_first_byte_total_size_and_attempts(self) -> None:
+        self.dvr.handler = lambda url: FakeResponse(chunks=[b"a" * 1000, b"b" * 1000])
+        with self.assertLogs("camera_viewer.dvr", level="INFO") as logs:
+            self.submit(3).result(timeout=5)
+            time.sleep(0.1)
+        line = logs.output[0]
+        self.assertIn("descarga ch3 12:00:00-12:00:45 prio=2", line)
+        for expected in ("OK", "espera_en_cola=", "primer_byte=", "total=", "MB", "Mbps", "intentos=1"):
+            self.assertIn(expected, line)
+
+    def test_a_failed_download_is_a_warning_with_the_reason_and_attempts(self) -> None:
+        self.dvr.handler = mock.Mock(side_effect=requests.exceptions.ReadTimeout("Read timed out"))
+        with self.assertLogs("camera_viewer.dvr", level="INFO") as logs:
+            self.assertIsNone(self.submit().result(timeout=5))
+            time.sleep(0.1)
+        self.assertEqual(logs.records[0].levelname, "WARNING")
+        self.assertIn("FALLÓ", logs.output[0])
+        self.assertIn("motivo=ReadTimeout", logs.output[0])
+        self.assertIn("sin_bytes", logs.output[0])
+
+    def test_a_connection_error_then_success_shows_two_attempts(self) -> None:
+        calls = []
+
+        def handler(url: str):
+            calls.append(url)
+            if len(calls) == 1:
+                raise requests.exceptions.ConnectionError("reset")
+            return FakeResponse(chunks=[b"abc"])
+
+        self.dvr.handler = handler
+        with self.assertLogs("camera_viewer.dvr", level="INFO") as logs:
+            self.submit().result(timeout=5)
+            time.sleep(0.1)
+        self.assertIn("OK", logs.output[0])
+        self.assertIn("intentos=2", logs.output[0])
+
+    def test_a_cancelled_download_is_logged_as_cancelled(self) -> None:
+        stop = threading.Event()
+
+        class Slow(FakeResponse):
+            def iter_content(self, chunk_size: int = 0):
+                for _ in range(200):
+                    time.sleep(0.02)
+                    yield b"x" * 100
+
+        self.dvr.handler = lambda url: Slow()
+        with self.assertLogs("camera_viewer.dvr", level="INFO") as logs:
+            future = self.submit(stop=stop)
+            time.sleep(0.2)
+            stop.set()
+            self.assertIsNone(future.result(timeout=5))
+            time.sleep(0.1)
+        self.assertIn("CANCELADA", logs.output[0])
+
+    def test_light_queries_are_only_logged_when_slow_failed_or_retried(self) -> None:
+        light = LightQueryManager(threads=1, max_attempts=2, retry_delay=0)
+        self.addCleanup(light.shutdown)
+        self.dvr.handler = lambda url: FakeResponse(text="ok")
+        with self.assertNoLogs("camera_viewer.dvr", level="INFO"):
+            light.submit_get("dvr", "u", "p", "cgi-bin/x", 0, threading.Event()).result(timeout=5)
+            time.sleep(0.1)
+        self.dvr.handler = mock.Mock(side_effect=requests.exceptions.ReadTimeout("lento"))
+        with self.assertLogs("camera_viewer.dvr", level="INFO") as logs:
+            with self.assertRaises(requests.exceptions.ReadTimeout):
+                light.submit_get("dvr", "u", "p", "cgi-bin/magicBox.cgi?action=getSystemInfo", 0, threading.Event()).result(timeout=5)
+        self.assertEqual(logs.records[0].levelname, "WARNING")
+        self.assertIn("consulta GET cgi-bin/magicBox.cgi?action=getSystemInfo", logs.output[0])
+        self.assertIn("intentos=2", logs.output[0])
+
+    def test_enable_is_idempotent_and_writes_to_the_given_stream(self) -> None:
+        import io
+        import logging
+
+        from camera_viewer import dvr_log
+
+        logger = logging.getLogger("camera_viewer.dvr")
+        saved = list(logger.handlers), logger.level, logger.propagate
+        logger.handlers.clear()
+        self.addCleanup(lambda: (logger.handlers.clear(), logger.handlers.extend(saved[0]), setattr(logger, "level", saved[1]), setattr(logger, "propagate", saved[2])))
+        stream = io.StringIO()
+        dvr_log.enable(stream)
+        dvr_log.enable(io.StringIO())
+        self.assertEqual(len(logger.handlers), 1)
+        logger.info("hola")
+        self.assertIn("[dvr] hola", stream.getvalue())
+
+
 class LanesAreIndependentTests(unittest.TestCase):
     def test_saturated_downloads_do_not_delay_light_queries(self) -> None:
         release = threading.Event()

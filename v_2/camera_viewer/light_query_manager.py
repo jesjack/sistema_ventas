@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import re
 import threading
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -11,6 +12,8 @@ from typing import Any, Callable
 
 import requests
 from requests.auth import HTTPDigestAuth
+
+from .dvr_log import logger
 
 # Segundo carril del embudo hacia el DVR (el primero es
 # download_manager.py, que solo lleva descargas de clips): consultas
@@ -32,6 +35,7 @@ from requests.auth import HTTPDigestAuth
 LIGHT_THREADS = 2
 LIGHT_MAX_ATTEMPTS = 3
 LIGHT_RETRY_DELAY = 1.0
+SLOW_QUERY_SECONDS = 3.0  # una consulta más lenta que esto (o reintentada) queda en el registro
 LIGHT_TIMEOUT = (5, 35)  # (conectar, leer) en segundos; los atascos medidos llegan a ~30 s
 FIND_PAGE_SIZE = 200  # el DVR devuelve como máximo 100 por llamada sin importar el "count"
 
@@ -59,6 +63,8 @@ class _Job:
     work: Callable[[], Any]
     stop_event: threading.Event
     future: Future
+    label: str = ""  # qué pide, para el registro
+    submitted_at: float = field(default_factory=time.monotonic)
 
 
 def parse_items(payload: str) -> list[dict[str, str]]:
@@ -116,7 +122,7 @@ class LightQueryManager:
         def work() -> str:
             return _http_get(f"http://{host}/{path.lstrip('/')}", HTTPDigestAuth(username, password))
 
-        return self._submit(work, priority, stop_event)
+        return self._submit(work, priority, stop_event, f"GET {path.lstrip('/')[:60]}")
 
     def submit_find_files(
         self,
@@ -164,7 +170,7 @@ class LightQueryManager:
                 except Exception:
                     pass
 
-        return self._submit(work, priority, stop_event)
+        return self._submit(work, priority, stop_event, f"buscar ch{channel} {start:%Y-%m-%d %H:%M}-{end:%H:%M}")
 
     def shutdown(self) -> None:
         for _ in self._workers:
@@ -172,9 +178,9 @@ class LightQueryManager:
         for worker in self._workers:
             worker.join(timeout=5.0)
 
-    def _submit(self, work: Callable[[], Any], priority: int, stop_event: threading.Event) -> Future:
+    def _submit(self, work: Callable[[], Any], priority: int, stop_event: threading.Event, label: str = "") -> Future:
         future: Future = Future()
-        job = _Job(work=work, stop_event=stop_event, future=future)
+        job = _Job(work=work, stop_event=stop_event, future=future, label=label)
         self._queue.put(_QueueItem(priority=priority, seq=next(self._seq_counter), job=job))
         return future
 
@@ -186,6 +192,7 @@ class LightQueryManager:
             self._run_job(item.job)
 
     def _run_job(self, job: _Job) -> None:
+        started = time.monotonic()
         last_error: Exception | None = None
         for attempt in range(self._max_attempts):
             if job.stop_event.is_set():
@@ -193,10 +200,22 @@ class LightQueryManager:
                 return
             try:
                 job.future.set_result(job.work())
+                self._log_job(job, started, attempt + 1, None)
                 return
             except Exception as exc:  # cada intento cierra su propia conexión al fallar (requests)
                 last_error = exc
             if attempt < self._max_attempts - 1 and job.stop_event.wait(self._retry_delay):
                 job.future.set_exception(LightQueryCancelled())
                 return
+        self._log_job(job, started, self._max_attempts, last_error)
         job.future.set_exception(last_error or RuntimeError("consulta fallida"))
+
+    @staticmethod
+    def _log_job(job: _Job, started: float, attempts: int, error: Exception | None) -> None:
+        """Solo deja rastro de lo anormal: consultas fallidas, reintentadas o lentas."""
+        total = time.monotonic() - started
+        head = f"consulta {job.label} espera_en_cola={started - job.submitted_at:.1f}s"
+        if error is not None:
+            logger.warning("%s FALLÓ tras %.1fs intentos=%d motivo=%s: %s", head, total, attempts, type(error).__name__, str(error)[:100])
+        elif attempts > 1 or total >= SLOW_QUERY_SECONDS:
+            logger.info("%s OK total=%.1fs intentos=%d", head, total, attempts)
