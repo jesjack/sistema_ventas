@@ -42,7 +42,10 @@ COLOR_ERROR = "#EF4444"
 COLOR_WARN = "#F59E0B"
 COLOR_IDLE = "#94A3B8"
 
-CARD_STYLE = "QFrame#card { background-color: rgba(127, 127, 127, 28); border: 1px solid rgba(127, 127, 127, 90); border-radius: 6px; }"
+CARD_STYLE = (
+    "QFrame#card { background-color: rgba(127, 127, 127, 28); border: 1px solid rgba(127, 127, 127, 90); border-radius: 6px; }"
+    " QFrame#card QLabel { background: transparent; }"  # (la hoja de estilo de la app pinta de oscuro todos los QWidget)
+)
 MUTED = "color: #94A3B8;"
 
 

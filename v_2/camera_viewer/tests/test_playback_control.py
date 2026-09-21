@@ -325,11 +325,11 @@ class PlaybackControlsWidgetTests(unittest.TestCase):
         controls, seen = PlaybackControls(), []
         controls.reverse_toggled.connect(seen.append)
         controls.set_active(True)
-        self.assertEqual(controls._direction.text(), "Normal")
+        self.assertFalse(controls._direction.isChecked())  # sentido normal: el botón de reversa apagado
         controls._direction.click()
         self.assertEqual((seen, controls._direction.isChecked()), ([True], True))
         controls.set_reverse(True)
-        self.assertEqual(controls._direction.text(), "Reversa")
+        self.assertTrue(controls._direction.isChecked())  # reversa: el botón encendido
         controls._direction.click()
         self.assertEqual(seen, [True, False])
 

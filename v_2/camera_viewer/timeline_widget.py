@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFontMetrics, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QGraphicsSimpleTextItem, QScrollBar
 
+from .clip_timeline import label_positions
 from .dvr_client import Clip
 from .zoom_canvas import ZoomPanGraphicsView
 
@@ -51,7 +52,13 @@ Z_BACKGROUND = 0
 Z_GAP = 0.5
 Z_MINUTE_TICK = 1
 Z_RANGE = 5  # banda del clip a exportar: sobre los huecos y las marcas de minuto, bajo el cursor
+Z_RANGE_LABEL = 6  # horas de las marcas: sobre la banda, bajo el cursor
 Z_MARKER = 10
+
+RANGE_LABEL_COLOR = QColor("#F8FAFC")
+RANGE_COLOR = QColor("#3B82F6")
+PENDING_MARK_WIDTH = 2.0  # px de la línea de una marca suelta (falta la otra)
+PENDING_MARK_GAP = 5.0  # px entre esa línea y su hora
 
 PLAYHEAD_REFRESH_MS = 200
 
@@ -92,7 +99,8 @@ class TimelineWidget(ZoomPanGraphicsView):
         self._clips_by_channel: dict[int, list[Clip]] = {}
         self._gap_items: list[QGraphicsRectItem] = []
         self._export_range: tuple[datetime, datetime] | None = None
-        self._range_item: QGraphicsRectItem | None = None
+        self._pending_mark: tuple[str, datetime] | None = None  # ("start" | "end", momento): falta la otra
+        self._range_items: list = []
         self._playhead_started_at: float | None = None
         self._playhead_started_time: datetime | None = None
 
@@ -148,6 +156,7 @@ class TimelineWidget(ZoomPanGraphicsView):
         self.scale(self._fit_scale_x() * self._zoom, 1.0)
         self._refresh_minute_ticks()
         self._refresh_minute_labels()
+        self._draw_export_range()  # las horas de las marcas dependen del zoom (caben dentro o fuera)
 
     def _fit_scale_x(self) -> float:
         viewport_width = max(self.viewport().width(), 1)
@@ -193,7 +202,7 @@ class TimelineWidget(ZoomPanGraphicsView):
         scene = self.scene()
         scene.clear()
         self._marker_item = None
-        self._range_item = None
+        self._range_items = []
         self._minute_tick_items = []
         self._minute_label_items = []
         self._gap_items = []
@@ -236,36 +245,89 @@ class TimelineWidget(ZoomPanGraphicsView):
 
     # -- banda del clip a exportar ------------------------------------------------------
 
+    def set_marks(self, start: datetime | None, end: datetime | None) -> None:
+        """Las marcas de inicio y fin del clip. Las dos: banda con las dos horas (dentro de la banda
+        si caben, si no por fuera). Solo una: una línea con su hora, a la espera de la otra."""
+        if start is not None and end is not None:
+            self._export_range, self._pending_mark = (start, end), None
+        else:
+            self._export_range = None
+            self._pending_mark = ("start", start) if start is not None else ("end", end) if end is not None else None
+        self._draw_export_range()
+
     def set_export_range(self, start: datetime, end: datetime) -> None:
         """Pinta la banda del rango marcado para exportar (solo el tramo que cae en el día mostrado)."""
-        self._export_range = (start, end)
-        self._draw_export_range()
+        self.set_marks(start, end)
 
     def clear_export_range(self) -> None:
-        self._export_range = None
-        self._draw_export_range()
+        self.set_marks(None, None)
 
-    def _draw_export_range(self) -> None:
+    def _clear_range_items(self) -> None:
         scene = self.scene()
-        if self._range_item is not None:
+        for item in self._range_items:
             try:
-                scene.removeItem(self._range_item)
+                scene.removeItem(item)
             except RuntimeError:  # la escena ya lo borró (scene.clear en _redraw)
                 pass
-            self._range_item = None
-        if self._export_range is None or self._day is None:
+        self._range_items = []
+
+    def _add_range_label(self, text: str, x_seconds: float) -> None:
+        label = QGraphicsSimpleTextItem(text)
+        label.setBrush(QBrush(RANGE_LABEL_COLOR))
+        label.setFlag(label.GraphicsItemFlag.ItemIgnoresTransformations, True)  # el texto no se estira con el zoom
+        height = QFontMetrics(label.font()).height()
+        label.setPos(x_seconds, AXIS_HEIGHT + (BODY_HEIGHT - height) / 2)
+        label.setZValue(Z_RANGE_LABEL)
+        self.scene().addItem(label)
+        self._range_items.append(label)
+
+    def _draw_export_range(self) -> None:
+        if not hasattr(self, "_range_items"):  # aún construyéndose
             return
+        self._clear_range_items()
+        if self._day is None:
+            return
+        scene = self.scene()
         midnight = datetime.combine(self._day, dtime.min)
-        start = max(0.0, (self._export_range[0] - midnight).total_seconds())
-        end = min(float(SECONDS_PER_DAY), (self._export_range[1] - midnight).total_seconds())
-        if end <= start:
-            return
-        band = QGraphicsRectItem(start, AXIS_HEIGHT, end - start, BODY_HEIGHT)
-        band.setBrush(QBrush(QColor(59, 130, 246, 110)))
-        band.setPen(_cosmetic_pen(QColor("#3B82F6")))
-        band.setZValue(Z_RANGE)
-        scene.addItem(band)
-        self._range_item = band
+        per_second = self._fit_scale_x() * self._zoom  # píxeles por segundo, para decidir dónde caben las horas
+        metrics = QFontMetrics(QGraphicsSimpleTextItem().font())
+        if self._export_range is not None:
+            start = max(0.0, (self._export_range[0] - midnight).total_seconds())
+            end = min(float(SECONDS_PER_DAY), (self._export_range[1] - midnight).total_seconds())
+            if end <= start:
+                return
+            band = QGraphicsRectItem(start, AXIS_HEIGHT, end - start, BODY_HEIGHT)
+            band.setBrush(QBrush(QColor(59, 130, 246, 110)))
+            band.setPen(_cosmetic_pen(RANGE_COLOR))
+            band.setZValue(Z_RANGE)
+            scene.addItem(band)
+            self._range_items.append(band)
+            texts = [f"{moment:%H:%M:%S}" for moment in self._export_range]
+            for text, x_pixels in label_positions(
+                metrics.horizontalAdvance, start * per_second, end * per_second, SECONDS_PER_DAY * per_second, texts[0], texts[1], None
+            ):
+                self._add_range_label(text, x_pixels / per_second)
+        elif self._pending_mark is not None:
+            kind, moment = self._pending_mark
+            seconds = (moment - midnight).total_seconds()
+            if not 0 <= seconds <= SECONDS_PER_DAY:
+                return
+            line = QGraphicsLineItem(seconds, AXIS_HEIGHT, seconds, AXIS_HEIGHT + BODY_HEIGHT)
+            line.setPen(_cosmetic_pen(RANGE_COLOR))
+            pen = line.pen()
+            pen.setWidthF(PENDING_MARK_WIDTH)
+            line.setPen(pen)
+            line.setZValue(Z_RANGE)
+            scene.addItem(line)
+            self._range_items.append(line)
+            text = f"{moment:%H:%M:%S}"
+            x_pixels = seconds * per_second
+            if kind == "start":  # el clip seguirá hacia la derecha
+                x_pixels += PENDING_MARK_GAP
+            else:  # ...y este será su final: la hora va a la izquierda
+                x_pixels -= PENDING_MARK_GAP + metrics.horizontalAdvance(text)
+            x_pixels = min(max(x_pixels, 2.0), SECONDS_PER_DAY * per_second - 2.0 - metrics.horizontalAdvance(text))
+            self._add_range_label(text, x_pixels / per_second)
 
     def _refresh_gaps(self) -> None:
         """Tramos del dia sin grabacion en NINGUN canal -- el complemento

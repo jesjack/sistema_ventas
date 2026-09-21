@@ -37,19 +37,22 @@ LABEL_PAD = 8  # píxeles entre un asa y su hora, y entre rótulos vecinos
 
 
 def label_positions(
-    width_of, left: float, right: float, total_width: float, start_text: str, end_text: str, duration_text: str
+    width_of, left: float, right: float, total_width: float, start_text: str, end_text: str, duration_text: str | None
 ) -> list[tuple[str, float]]:
     """(texto, x) de los rótulos de la banda entre las asas `left` y `right`. Caben dentro: hora de
     inicio pegada al asa izquierda, hora de fin al asa derecha y la duración al centro. Si la
-    duración ya no cabe se omite; si ni las dos horas caben (clip muy corto), salen de la banda,
-    cada una por fuera de su asa y sin salirse del widget de ancho `total_width`."""
-    start_w, end_w, duration_w = width_of(start_text), width_of(end_text), width_of(duration_text)
+    duración ya no cabe se omite (o no hay, si `duration_text` es None); si ni las dos horas caben
+    (clip muy corto), salen de la banda, cada una por fuera de su asa y sin salirse del widget de
+    ancho `total_width`."""
+    start_w, end_w = width_of(start_text), width_of(end_text)
+    duration_w = width_of(duration_text) if duration_text else None
     start_x, end_x = left + LABEL_PAD, right - LABEL_PAD - end_w
     if start_x + start_w + LABEL_PAD <= end_x:
         labels = [(start_text, start_x), (end_text, end_x)]
-        center_x = (left + right) / 2 - duration_w / 2
-        if center_x >= start_x + start_w + LABEL_PAD and center_x + duration_w + LABEL_PAD <= end_x:
-            labels.insert(1, (duration_text, center_x))
+        if duration_w is not None:
+            center_x = (left + right) / 2 - duration_w / 2
+            if center_x >= start_x + start_w + LABEL_PAD and center_x + duration_w + LABEL_PAD <= end_x:
+                labels.insert(1, (duration_text, center_x))
         return labels
     start_x = max(2.0, left - LABEL_PAD - start_w)
     end_x = min(total_width - 2.0 - end_w, right + LABEL_PAD)
@@ -97,6 +100,13 @@ class ClipTimeline(QWidget):
     def set_export_range(self, start: datetime, end: datetime) -> None:
         self._range = (start, end)
         self.update()
+
+    def set_marks(self, start: datetime | None, end: datetime | None) -> None:
+        """Misma interfaz que la línea de tiempo del día (ver ExportFlow._refresh_marks)."""
+        if start is not None and end is not None:
+            self.set_export_range(start, end)
+        else:
+            self.clear_export_range()
 
     def clear_export_range(self) -> None:
         self._range = None

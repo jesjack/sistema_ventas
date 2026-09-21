@@ -55,12 +55,17 @@ class FakeClient:
 class FakeTimeline:
     def __init__(self) -> None:
         self.range = None
+        self.marks = (None, None)
 
     def set_export_range(self, start, end) -> None:
         self.range = (start, end)
 
     def clear_export_range(self) -> None:
         self.range = None
+
+    def set_marks(self, start, end) -> None:
+        self.marks = (start, end)
+        self.range = (start, end) if start is not None and end is not None else None
 
 
 class FakeExport:
@@ -154,6 +159,20 @@ class MarksTests(FlowTestCase):
         self.flow.mark_start()
         self.assertIn("falta marcar el fin", self.bar._range_label.text())
         self.assertFalse(self.bar._save.isEnabled())
+        self.assertIsNone(self.timeline.range)
+        self.assertEqual(self.timeline.marks, (at(10, 5, 30), None))  # la línea de tiempo dibuja la marca suelta
+
+    def test_a_lone_end_mark_is_reported_to_the_timeline_too(self) -> None:
+        self.set_clock(at(10, 6, 10))
+        self.flow.mark_end()
+        self.assertEqual(self.timeline.marks, (None, at(10, 6, 10)))
+
+    def test_marking_a_new_start_after_the_end_resets_the_area_without_a_clear_button(self) -> None:
+        self.mark(at(10, 5, 30), at(10, 6, 10))
+        self.set_clock(at(10, 8, 0))  # un inicio posterior al fin descarta el fin
+        self.flow.mark_start()
+        self.assertEqual(self.flow.marks, [at(10, 8, 0), None])
+        self.assertEqual(self.timeline.marks, (at(10, 8, 0), None))
         self.assertIsNone(self.timeline.range)
 
     def test_an_end_too_close_to_the_start_discards_the_start(self) -> None:

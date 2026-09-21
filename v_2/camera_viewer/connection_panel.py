@@ -21,6 +21,7 @@ class ConnectionPanel(QWidget):
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
 
         form = QFormLayout()
+        self._form = form
         form.setContentsMargins(4, 12, 4, 0)
         form.addRow("IP DVR", self.host_input)
         form.addRow("Usuario", self.user_input)
@@ -42,6 +43,10 @@ class ConnectionPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(form)
+
+    def add_action_button(self, button: QWidget) -> None:
+        """Otro botón bajo los demás, alineado con ellos (misma columna del formulario)."""
+        self._form.addRow("", button)
 
     def set_live_mode(self, is_live: bool) -> None:
         self.live_toggle_button.setText("Ver grabaciones" if is_live else "Ver en vivo")

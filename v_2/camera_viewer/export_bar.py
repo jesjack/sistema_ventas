@@ -5,6 +5,9 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
+from . import icons
+from .button_group import BUTTON_GAP, fuse_buttons
+
 BUTTON_HEIGHT = 30
 
 # Estados de la barra
@@ -27,7 +30,13 @@ class ExportBar(QWidget):
     una sola fila (carpeta como campo de texto + "Examinar…", tamaño, Guardar,
     Cancelar; luego avance y resultado), sin marcas ni "Inicio del clip" (las asas de su
     línea de tiempo y sus controles ya lo hacen) y con las casillas de canal sueltas, para
-    que la ventana las ponga sobre los paneles de cámara (`channel_check`)."""
+    que la ventana las ponga sobre los paneles de cámara (`channel_check`).
+
+    `compact` es la variante de la ventana principal (fila de controles, ver
+    MainWindow): una sola fila de botones con Inicio y Fin como iconos (corchetes) y
+    "Guardar clip…" fundidos en un grupo, más "Guardar últimos 30 s". Sin etiqueta de rango ni
+    "Limpiar": las horas se rotulan sobre la línea de tiempo, y volver a marcar el inicio o el
+    fin ya reajusta el rango."""
 
     mark_start_clicked = Signal()
     mark_end_clicked = Signal()
@@ -45,16 +54,29 @@ class ExportBar(QWidget):
     folder_edited = Signal(str)  # el texto de la carpeta cambió (cada tecla)
     folder_committed = Signal(str)  # Enter o salir del campo
 
-    def __init__(self, channels: tuple[int, ...], parent: QWidget | None = None, window_mode: bool = False) -> None:
+    def __init__(
+        self, channels: tuple[int, ...], parent: QWidget | None = None, window_mode: bool = False, compact: bool = False
+    ) -> None:
         super().__init__(parent)
         self._state = IDLE
         self._channels = channels
         self._window_mode = window_mode
+        self._compact = compact
         self._available: set[int] | None = None  # None: aún no se sabe, todos disponibles
         self._checks_editable = True
 
         self._mark_start = QPushButton("[ Inicio")
         self._mark_end = QPushButton("Fin ]")
+        if compact:
+            for button, icon, tip in (
+                (self._mark_start, icons.mark_start_icon(), "Marcar aquí el inicio del clip"),
+                (self._mark_end, icons.mark_end_icon(), "Marcar aquí el fin del clip"),
+            ):
+                button.setText("")
+                button.setIcon(icon)
+                button.setIconSize(icons.ICON_SIZE)
+                button.setToolTip(tip)
+                button.setFixedWidth(46)
         self._range_label = QLabel()
         self._range_label.setStyleSheet("color: #9CA3AF;")
         self._clear = QPushButton("Limpiar")
@@ -107,7 +129,15 @@ class ExportBar(QWidget):
         self._open_folder.clicked.connect(self.open_folder_clicked)
         self._dismiss.clicked.connect(self.dismiss_clicked)
 
-        if window_mode:
+        if compact:
+            row = QHBoxLayout(self)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(BUTTON_GAP)
+            row.addWidget(fuse_buttons([self._mark_start, self._mark_end, self._save]))
+            row.addWidget(self._save_last)
+            self._top_widgets = ()
+            self._bottom_widgets = (self._mark_start, self._mark_end, self._save, self._save_last)
+        elif window_mode:
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(self._folder_edit, 1)
@@ -165,7 +195,14 @@ class ExportBar(QWidget):
 
     def set_state(self, state: str) -> None:
         self._state = state
-        if self._window_mode:
+        if self._compact:
+            show = {
+                IDLE: {self._mark_start, self._mark_end, self._save, self._save_last},
+                PREVIEW: set(),  # la vista previa y el guardado viven en su propia ventana
+                EXPORTING: set(),
+                FINISHED: set(),
+            }[state]
+        elif self._window_mode:
             show = {
                 IDLE: set(),
                 PREVIEW: {self._folder_edit, self._browse, self._size_label, self._confirm, self._cancel_preview},

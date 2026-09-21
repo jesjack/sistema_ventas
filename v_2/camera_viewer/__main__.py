@@ -26,6 +26,19 @@ QPushButton {
 }
 QPushButton:hover { background-color: #1F2937; }
 QPushButton:pressed { background-color: #0B1120; }
+/* Casillas: borde claro (con el predeterminado de Fusion el borde queda casi negro sobre el fondo
+   oscuro y no se distinguen). Marcada = relleno azul; a medias (fila/columna con algunas) = azul oscuro. */
+QCheckBox::indicator {
+    width: 14px; height: 14px; border: 1px solid #9CA3AF; border-radius: 3px;
+    background-color: #0B1120;
+}
+QCheckBox::indicator:hover { border-color: #F3F4F6; }
+QCheckBox::indicator:checked { background-color: #3B82F6; border-color: #BFDBFE; }
+QCheckBox::indicator:indeterminate { background-color: #1E40AF; border-color: #BFDBFE; }
+QCheckBox::indicator:disabled { border-color: #6B7280; background-color: #111827; }
+QCheckBox::indicator:checked:disabled, QCheckBox::indicator:indeterminate:disabled {
+    background-color: #1E3A8A; border-color: #6B7280;
+}
 QCalendarWidget QToolButton { color: #E5E7EB; background-color: #111827; }
 QCalendarWidget QAbstractItemView {
     background-color: #0B1120; color: #E5E7EB;

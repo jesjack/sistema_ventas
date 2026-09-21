@@ -186,7 +186,7 @@ class PlaybackTests(DialogTestCase):
         dialog = self.open()
         dialog.controls._pause.click()
         self.assertTrue(self.client.control.paused)
-        self.assertEqual(dialog.controls._pause.text(), "Reanudar")
+        self.assertEqual(dialog.controls._pause.toolTip(), "Reanudar")
         dialog.controls._direction.click()
         self.assertTrue(self.client.control.reverse)
         dialog.controls._faster.click()
@@ -201,7 +201,7 @@ class PlaybackTests(DialogTestCase):
         dialog = self.open()
         self.client.control.reach_bound()
         dialog._tick()
-        self.assertEqual(dialog.controls._pause.text(), "Reanudar")  # se pausó sola y el botón lo refleja
+        self.assertEqual(dialog.controls._pause.toolTip(), "Reanudar")  # se pausó sola y el botón lo refleja
         dialog._toggle_pause()
         self.assertEqual(self.client.calls[-1], ("seek", at(10, 5, 30), True))
         self.assertFalse(self.client.control.paused)

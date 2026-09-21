@@ -3,6 +3,9 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
+from . import icons
+from .button_group import BUTTON_GAP, fuse_buttons
+
 JUMP_SECONDS = 10
 # Velocidades que ofrece el botón, en orden de rotación. Solo las que el
 # equipo sostiene: con los 4 canales el techo medido es ~x1.9 (x3 y x4 no
@@ -14,11 +17,13 @@ DIRECTION_STYLE = "QPushButton:checked { background-color: #1D4ED8; border-color
 
 
 class PlaybackControls(QWidget):
-    """Barra de controles de la vista de grabaciones: -10 s, pausa/reanudar,
-    +10 s, sentido (normal/reversa) y velocidad (más lento, la velocidad
-    actual -que al pulsarla vuelve a x1- y más rápido). Solo emite señales;
-    quien decide qué hacer es MainWindow. Los botones no toman el foco, para
-    que la barra espaciadora no los active por su cuenta."""
+    """Barra de controles de la vista de grabaciones: -10 s, pausa/reanudar
+    (un icono que cambia), +10 s, reversa (un icono que se enciende mientras se
+    reproduce hacia atrás) y velocidad (más lento, la velocidad actual -que al
+    pulsarla vuelve a x1- y más rápido, fundidos en un solo botón). Solo emite
+    señales; quien decide qué hacer es MainWindow. Los botones no toman el foco,
+    para que la barra espaciadora no los active por su cuenta. `set_trailing_widget`
+    deja sitio al final de la fila (MainWindow pone ahí las marcas del clip)."""
 
     pause_clicked = Signal()
     jump_clicked = Signal(int)
@@ -34,9 +39,11 @@ class PlaybackControls(QWidget):
         self._active = False
 
         self._back = QPushButton(f"−{JUMP_SECONDS} s")
-        self._pause = QPushButton("Pausa")
+        self._pause = QPushButton()
+        self._pause_icon, self._play_icon = icons.pause_icon(), icons.play_icon()
         self._forward = QPushButton(f"+{JUMP_SECONDS} s")
-        self._direction = QPushButton("Normal")
+        self._direction = QPushButton()
+        self._direction.setIcon(icons.reverse_icon())
         self._direction.setCheckable(True)
         self._direction.setStyleSheet(DIRECTION_STYLE)
         self._slower = QPushButton("−")
@@ -52,8 +59,9 @@ class PlaybackControls(QWidget):
         for button in (self._slower, self._faster):
             button.setFixedWidth(BUTTON_HEIGHT)
         self._speed_button.setMinimumWidth(54)
-        self._pause.setMinimumWidth(96)  # cabe "Reanudar" sin que la barra cambie de ancho
-        self._direction.setMinimumWidth(78)  # cabe "Reversa"
+        for button in (self._pause, self._direction):
+            button.setIconSize(icons.ICON_SIZE)
+            button.setFixedWidth(46)
 
         self._back.clicked.connect(lambda: self.jump_clicked.emit(-JUMP_SECONDS))
         self._forward.clicked.connect(lambda: self.jump_clicked.emit(JUMP_SECONDS))
@@ -67,21 +75,25 @@ class PlaybackControls(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(BUTTON_GAP)  # el mismo hueco entre todos los botones y grupos de la fila
         layout.addStretch(1)
         for widget in (self._back, self._pause, self._forward):
             layout.addWidget(widget)
-        layout.addSpacing(16)
         layout.addWidget(self._direction)
-        layout.addSpacing(16)
-        for widget in (self._slower, self._speed_button, self._faster):
-            layout.addWidget(widget)
+        layout.addWidget(fuse_buttons([self._slower, self._speed_button, self._faster]))
         if self._restart is not None:
-            layout.addSpacing(16)
             layout.addWidget(self._restart)
+        self._trailing = QHBoxLayout()
+        self._trailing.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(self._trailing)
         layout.addStretch(1)
 
         self.set_speed(NORMAL_SPEED)
         self.set_active(False)
+
+    def set_trailing_widget(self, widget: QWidget) -> None:
+        """Un widget más al final de la fila (con el mismo hueco que entre los demás botones)."""
+        self._trailing.addWidget(widget)
 
     def set_active(self, active: bool) -> None:
         """Habilita los controles (hay una reproducción en curso)."""
@@ -97,12 +109,13 @@ class PlaybackControls(QWidget):
 
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
-        self._pause.setText("Reanudar" if paused else "Pausa")
+        self._pause.setIcon(self._play_icon if paused else self._pause_icon)
+        self._pause.setToolTip("Reanudar" if paused else "Pausar")
 
     def set_reverse(self, reverse: bool) -> None:
         self._reverse = reverse
-        self._direction.setChecked(reverse)
-        self._direction.setText("Reversa" if reverse else "Normal")
+        self._direction.setChecked(reverse)  # encendido = reproduciendo hacia atrás
+        self._direction.setToolTip("Reproduciendo en reversa (clic para volver al sentido normal)" if reverse else "Reproducir en reversa")
 
     def set_speed(self, speed: float) -> None:
         self._speed = speed

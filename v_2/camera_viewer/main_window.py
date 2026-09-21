@@ -26,6 +26,8 @@ from .dvr_info_dialog import DvrInfoDialog
 from .export_bar import ExportBar
 from .export_clip import ClipRange
 from .export_flow import LAST_SECONDS, ExportFlow
+from .hours_controller import HoursExportController
+from .progress_button import ProgressButton
 from .playback_controls import JUMP_SECONDS, PlaybackControls
 from .dvr_client import Clip, DEFAULT_CHANNELS, DVRClient, LIVE_TO_RECORDINGS_SETTLE
 from .light_query_manager import LightPriority
@@ -98,6 +100,15 @@ class MainWindow(QMainWindow):
             preview_opener=self._open_clip_dialog,
         )
         self._wire_signals()
+        self.hours_export = HoursExportController(
+            self.export_hours_button,
+            self,
+            clips_provider=lambda: self._clips_by_channel,
+            day_provider=lambda: self.timeline.day,
+            credentials=lambda: (self.client.host, self.client.username, self.client.password),
+            notify=self.status_label.setText,
+            settings=QSettings("camera_viewer", "camera_viewer"),
+        )
 
         # El calendario ya arranca con hoy seleccionado (pastilla azul) pero
         # eso no dispara day_selected -- se pide a mano lo mismo que haria un
@@ -124,6 +135,10 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.calendar)
         self.connection_panel = ConnectionPanel(self.client.host, self.client.username, self.client.password)
         left_layout.addWidget(self.connection_panel)
+        # Debajo de "Información del DVR": exportar horas. Hace también de barra de progreso (ver
+        # HoursExportController) y de acceso al panel de avance.
+        self.export_hours_button = ProgressButton("Exportar")
+        self.connection_panel.add_action_button(self.export_hours_button)
         left_layout.addStretch(1)
         # Recordatorio del atajo, al fondo de la columna: tenue a proposito
         # (no es un control, solo una pista) y con las menos palabras posibles.
@@ -151,10 +166,11 @@ class MainWindow(QMainWindow):
         top_splitter.setStretchFactor(1, 1)
         root_layout.addWidget(top_splitter, stretch=1)
 
+        # Una sola fila de botones: controles de reproducción y, al final, las marcas del clip.
         self.playback_controls = PlaybackControls()
+        self.export_bar = ExportBar(DEFAULT_CHANNELS, compact=True)
+        self.playback_controls.set_trailing_widget(self.export_bar)
         root_layout.addWidget(self.playback_controls)
-        self.export_bar = ExportBar(DEFAULT_CHANNELS)
-        root_layout.addWidget(self.export_bar)
         self._set_playback_active(False)
 
         self.timeline = TimelineWidget()
@@ -463,6 +479,15 @@ class MainWindow(QMainWindow):
         self.connection_panel.set_live_mode(False)
         self.status_label.setText("Modo grabaciones.")
 
+    def _confirm_close_while_exporting(self) -> bool:
+        box = QMessageBox(QMessageBox.Icon.Warning, "Exportación en curso", "", QMessageBox.StandardButton.NoButton, self)
+        box.setText("Hay una exportación de horas en curso; si cierras la aplicación se cancelará.\n\nLos canales ya guardados se conservan.")
+        close = box.addButton("Cerrar y cancelar", QMessageBox.ButtonRole.DestructiveRole)
+        keep = box.addButton("Seguir exportando", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        return box.clickedButton() is close
+
     def _sync_tools_to_live_clock(self, priority: int = LightPriority.USER) -> None:
         """Calendario en hoy y cursor de la línea de tiempo en la hora real
         (los frames en vivo son "lo último disponible"), avanzando segundo a
@@ -491,6 +516,10 @@ class MainWindow(QMainWindow):
         self._sync_tools_to_live_clock(LightPriority.PERIODIC)
 
     def closeEvent(self, event) -> None:
+        if self.hours_export.is_running() and not self._confirm_close_while_exporting():
+            event.ignore()
+            return
+        self.hours_export.shutdown()  # cancela la exportación de horas y deja que borre sus temporales
         export = self.export_flow.export if self.export_flow is not None else None
         if export is not None and not export.finished():
             # Al cancelar, el hilo de la exportación borra sus archivos parciales (.part); hay que

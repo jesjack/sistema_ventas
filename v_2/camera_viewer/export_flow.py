@@ -207,11 +207,12 @@ class ExportFlow(QObject):
     def _refresh_marks(self) -> None:
         clip_range = self._marked_range()
         if clip_range is not None:
-            self.timeline.set_export_range(clip_range.start, clip_range.end)
+            self.timeline.set_marks(clip_range.start, clip_range.end)
             self.bar.set_marks(True, range_text(clip_range))
             return
-        self.timeline.clear_export_range()
         start, end = self.marks
+        # Con una sola marca la línea de tiempo la dibuja suelta, con su hora, a la espera de la otra.
+        self.timeline.set_marks(start, None) if start is not None else self.timeline.set_marks(None, end)
         if start is not None:
             self.bar.set_marks(False, f"Inicio {start:%H:%M:%S} — falta marcar el fin")
         elif end is not None:
