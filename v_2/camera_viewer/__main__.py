@@ -7,9 +7,10 @@ from PySide6.QtWidgets import QApplication, QStyleFactory
 
 from . import dvr_log
 from .main_window import MainWindow
+from .shared_paths import SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
 from .singleton_lock import acquire_singleton_lock
 
-LOCK_PATH = Path(__file__).resolve().parent.parent / "runtime" / "camera_viewer.lock"
+LOCK_PATH = SHARE_RUNTIME_DIR / "camera_viewer.lock"
 
 
 # Paleta oscura de base -- se refinara mas adelante, esto es punto de
@@ -52,6 +53,9 @@ QCalendarWidget QWidget#qt_calendar_navigationbar { background-color: #111827; }
 
 
 def main() -> None:
+    apply_shared_umask()  # todo lo que este proceso cree en share/ queda escribible por el grupo
+    ensure_shared_root(SHARE_RUNTIME_DIR)
+
     # Sin esto, cada clic en "VER CAMARAS" (p. ej. porque la ventana
     # anterior parecia congelada) lanza OTRO proceso completo, cada uno con
     # sus propias 4 conexiones RTSP al mismo DVR -- eso fue justo lo que se

@@ -89,27 +89,49 @@ class OwnershipTests(unittest.TestCase):
 
 
 class LauncherEnvTests(unittest.TestCase):
-    def launch(self, environ: dict, euid: int) -> dict:
+    def launch(self, environ: dict, euid: int, func=None) -> dict:
         base = Path(tempfile.mkdtemp())
         with mock.patch.dict(os.environ, environ, clear=False), mock.patch.object(os, "geteuid", return_value=euid), mock.patch.object(
             launcher, "find_python_executable", return_value=Path("/usr/bin/python3")
         ), mock.patch.object(subprocess, "Popen") as popen, mock.patch.object(
             pwd, "getpwnam", return_value=types.SimpleNamespace(pw_dir="/home/jesjack", pw_name="jesjack")
         ):
-            launcher.launch_detached(base)
-        return popen.call_args.kwargs
+            (func or launcher.launch_detached)(base)
+        return popen.call_args
 
     def test_the_child_gets_the_real_users_home_when_privileges_are_dropped(self) -> None:
-        kwargs = self.launch({"SUDO_USER": "jesjack", "SUDO_GID": "1000", "HOME": "/root", "USER": "root", "XDG_CONFIG_HOME": "/root/.config"}, euid=0)
+        kwargs = self.launch({"SUDO_USER": "jesjack", "SUDO_GID": "1000", "HOME": "/root", "USER": "root", "XDG_CONFIG_HOME": "/root/.config"}, euid=0).kwargs
         self.assertEqual(kwargs["user"], "jesjack")
         env = kwargs["env"]
         self.assertEqual((env["HOME"], env["USER"], env["LOGNAME"]), ("/home/jesjack", "jesjack", "jesjack"))
         self.assertNotIn("XDG_CONFIG_HOME", env)
 
     def test_nothing_changes_when_not_running_as_root(self) -> None:
-        kwargs = self.launch({"HOME": "/home/jesjack"}, euid=1000)
+        kwargs = self.launch({"HOME": "/home/jesjack"}, euid=1000).kwargs
         self.assertNotIn("user", kwargs)
         self.assertEqual(kwargs["env"]["HOME"], "/home/jesjack")
+
+    def test_launch_archiver_runs_the_archiver_module_dropped_to_the_real_user_too(self) -> None:
+        call = self.launch({"SUDO_USER": "jesjack", "SUDO_GID": "1000", "HOME": "/root"}, euid=0, func=launcher.launch_archiver)
+        self.assertEqual(call.args[0], ["/usr/bin/python3", "-m", "camera_viewer.archiver"])
+        self.assertEqual(call.kwargs["user"], "jesjack")
+
+    def test_launch_detached_and_launch_archiver_use_separate_log_files(self) -> None:
+        base = Path(tempfile.mkdtemp())
+        with mock.patch.object(launcher, "find_python_executable", return_value=Path("/usr/bin/python3")), mock.patch.object(
+            subprocess, "Popen"
+        ):
+            launcher.launch_detached(base)
+            launcher.launch_archiver(base)
+        logs = base / "logs" / "camera_viewer"
+        self.assertEqual(len(list(logs.glob("run_*.log"))), 1)
+        self.assertEqual(len(list(logs.glob("archiver_run_*.log"))), 1)
+
+    def test_launch_archiver_reports_a_missing_venv_the_same_way(self) -> None:
+        base = Path(tempfile.mkdtemp())
+        with mock.patch.object(launcher, "find_python_executable", return_value=None):
+            with self.assertRaises(FileNotFoundError):
+                launcher.launch_archiver(base)
 
 
 class ParseFolderTests(unittest.TestCase):

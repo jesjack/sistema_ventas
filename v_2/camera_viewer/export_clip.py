@@ -89,6 +89,17 @@ def default_export_folder() -> Path:
     return videos_folder(user_home()) / SUBFOLDER
 
 
+def free_bytes_for(folder: Path) -> int:
+    """Espacio libre en el disco donde vive (o viviría) `folder`, aunque aún no exista."""
+    probe = folder
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        return shutil.disk_usage(probe).free
+    except OSError:
+        return 0
+
+
 def _invoking_ids() -> tuple[int, int] | None:
     """(uid, gid) del usuario real si este proceso corre como root por sudo (los archivos
     guardados deben ser de ese usuario, no de root)."""

@@ -35,7 +35,9 @@ from .dvr_log import logger
 # de descarga, sin excepcion, pasa por RecordingDownloadManager.submit().
 
 
-DOWNLOAD_DIR = Path(__file__).resolve().parent.parent / "runtime" / "camera_viewer_downloads"
+from .shared_paths import SHARE_RUNTIME_DIR
+
+DOWNLOAD_DIR = SHARE_RUNTIME_DIR / "camera_viewer_downloads"
 
 # Mismo margen que ya se usaba antes de este modulo (ver
 # DVRClient._open_capture_serialized/POST_DOWNLOAD_GAP): cortesia extra
@@ -65,7 +67,9 @@ class DownloadPriority:
     #               (misma prioridad, cola FIFO, solo 2 hilos) dejaban el primer bloque de otro canal hasta
     #               ~10s en cola detras de pre-descargas que nadie estaba esperando todavia
     EXPORT = 2  # el usuario pidio conservar un clip y esta esperando
-    BACKGROUND = 3  # guardado/compresion oportunista; nunca debe robarle turno a lo de arriba
+    BACKGROUND = 3  # guardado/compresion oportunista (exportar horas); nunca debe robarle turno a lo de arriba
+    ARCHIVE = 4  # archivador pasivo (archiver.py), corriendo solo o de fondo: la prioridad mas baja de
+    #              todas -- nunca debe robarle turno a nada, ni siquiera a BACKGROUND
 
 
 @dataclass(order=True)

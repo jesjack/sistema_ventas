@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .export_clip import format_size, parse_folder
+from .export_clip import format_size, free_bytes_for, parse_folder
 from .export_hours import PHASE_DOWNLOADING, PHASE_GAPS, PHASE_JOINING, HoursSpec, hour_has_recording, plan
 from .hours_progress import PHASE_CANCELLED, PHASE_DONE, PHASE_QUEUED, HoursProgress
 from .save_progress_dialog import (
@@ -47,17 +46,6 @@ DEFAULT_CHANNELS = (1, 2, 3, 4)
 THROUGHPUT_BYTES_PER_S = 6_000_000  # medido: ≈ 9 MB/s de un solo flujo; con la pausa entre trozos y la conversión, ≈ 6
 GB = 1024 ** 3
 INVALID_FOLDER_STYLE = "QLineEdit { border: 1px solid #EF4444; border-radius: 3px; }"
-
-
-def free_bytes_for(folder: Path) -> int:
-    """Espacio libre en el disco donde se guardaría `folder` (aunque aún no exista)."""
-    probe = folder
-    while not probe.exists() and probe != probe.parent:
-        probe = probe.parent
-    try:
-        return shutil.disk_usage(probe).free
-    except OSError:
-        return 0
 
 
 class _HeaderCheck(QCheckBox):

@@ -106,39 +106,33 @@ def find_python_executable(base_dir: Path) -> Path | None:
     return None
 
 
-def _prepare_log_file(base_dir: Path) -> Path:
+def _prepare_log_file(base_dir: Path, prefix: str = "run") -> Path:
     """Un archivo de log nuevo por lanzamiento, igual que
     _activar_log_de_depuracion() en main.py -- necesario porque
     pythonw.exe no tiene consola: si camera_viewer truena al arrancar
     (falta un paquete, error de Qt, lo que sea), sin esto el error
-    desaparece por completo y no queda ningun rastro de que algo fallo."""
+    desaparece por completo y no queda ningun rastro de que algo fallo.
+    `prefix` distingue los logs de la ventana (`run_*`) de los del
+    archivador (`archiver_run_*`, ver launch_archiver): cada uno cuida
+    solo los suyos al podar, sin pisar la retención del otro."""
     logs_dir = base_dir / "logs" / "camera_viewer"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    existentes = sorted(logs_dir.glob("run_*.log"))
+    existentes = sorted(logs_dir.glob(f"{prefix}_*.log"))
     for viejo in existentes[: max(0, len(existentes) - (LOG_RUNS_TO_KEEP - 1))]:
         try:
             viejo.unlink()
         except OSError:
             pass
 
-    nombre = datetime.now().strftime("run_%Y%m%d_%H%M%S.log")
+    nombre = datetime.now().strftime(f"{prefix}_%Y%m%d_%H%M%S.log")
     return logs_dir / nombre
 
 
-def launch_detached(base_dir: Path) -> subprocess.Popen:
-    """Lanza 'python -m camera_viewer' en un proceso completamente aparte.
-    Devuelve de inmediato (no espera a que la ventana se cierre); su
-    stdout/stderr quedan en logs/camera_viewer/run_*.log."""
-    python_executable = find_python_executable(base_dir)
-    if python_executable is None:
-        raise FileNotFoundError(
-            f"No se encontró el entorno Python de camera_viewer en {base_dir / '.venv'}. "
-            "Créalo con 'python -m venv .venv' y 'pip install -r requirements.txt' "
-            "dentro de esa carpeta antes de usar VER CAMARAS."
-        )
-
-    log_path = _prepare_log_file(base_dir)
+def _child_popen_kwargs(base_dir: Path) -> dict:
+    """Los kwargs de subprocess.Popen comunes a cualquier hijo de camera_viewer (la ventana,
+    el archivador...): carpeta de trabajo, entorno limpio (ver _clean_child_env) y, si este
+    proceso es root por sudo, bajado al usuario real de atrás (ver _drop_privileges_kwargs)."""
     popen_kwargs: dict = {"cwd": str(base_dir), "stdin": subprocess.DEVNULL, "env": _clean_child_env()}
     popen_kwargs.update(_drop_privileges_kwargs())
     if "user" in popen_kwargs:
@@ -147,13 +141,40 @@ def launch_detached(base_dir: Path) -> subprocess.Popen:
             popen_kwargs["env"].pop(var, None)
     if sys.platform == "win32":
         popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return popen_kwargs
 
-    with open(log_path, "a", encoding="utf-8") as log_file:
-        process = subprocess.Popen(
-            [str(python_executable), "-m", "camera_viewer"],
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            **popen_kwargs,
+
+def _launch_module(base_dir: Path, module: str, log_prefix: str, hint: str) -> subprocess.Popen:
+    python_executable = find_python_executable(base_dir)
+    if python_executable is None:
+        raise FileNotFoundError(
+            f"No se encontró el entorno Python de camera_viewer en {base_dir / '.venv'}. "
+            f"Créalo con 'python -m venv .venv' y 'pip install -r requirements.txt' "
+            f"dentro de esa carpeta antes de {hint}."
         )
 
-    return process
+    log_path = _prepare_log_file(base_dir, prefix=log_prefix)
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        return subprocess.Popen(
+            [str(python_executable), "-m", module],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            **_child_popen_kwargs(base_dir),
+        )
+
+
+def launch_detached(base_dir: Path) -> subprocess.Popen:
+    """Lanza 'python -m camera_viewer' en un proceso completamente aparte.
+    Devuelve de inmediato (no espera a que la ventana se cierre); su
+    stdout/stderr quedan en logs/camera_viewer/run_*.log."""
+    return _launch_module(base_dir, "camera_viewer", "run", "usar VER CAMARAS")
+
+
+def launch_archiver(base_dir: Path) -> subprocess.Popen:
+    """Lanza 'python -m camera_viewer.archiver' -- el archivador pasivo (ver archiver.py) que
+    copia a la PC lo más viejo que el DVR tenga, antes de que se sobrescriba. Pensado para
+    llamarse una vez por arranque del POS (ver nucleo/arranque.py); no hay que cuidarse de
+    lanzarlo dos veces, archiver.py tiene su propio candado de instancia única
+    (share/runtime/archiver.lock) -- una segunda instancia lo nota, avisa y termina sola.
+    Su stdout/stderr quedan en logs/camera_viewer/archiver_run_*.log."""
+    return _launch_module(base_dir, "camera_viewer.archiver", "archiver_run", "que el archivador pueda correr")

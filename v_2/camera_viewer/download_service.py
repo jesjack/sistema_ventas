@@ -34,6 +34,7 @@ from pathlib import Path
 
 from .download_manager import RecordingDownloadManager
 from .light_query_manager import LightQueryManager
+from .shared_paths import SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
 
 SERVICE_HOST = "localhost"
 SERVICE_PORT = int(os.environ.get("DOWNLOAD_SERVICE_PORT", "51820"))
@@ -44,8 +45,8 @@ SERVICE_ADDRESS = (SERVICE_HOST, SERVICE_PORT)
 # guarda con permisos restringidos, en vez de una clave fija en el codigo
 # fuente. Cualquier proceso que necesite conectarse la lee del mismo
 # archivo (ver download_client.py).
-AUTHKEY_PATH = Path(__file__).resolve().parent.parent / "runtime" / "download_service.authkey"
-SERVICE_LOCK_PATH = Path(__file__).resolve().parent.parent / "runtime" / "download_service.lock"
+AUTHKEY_PATH = SHARE_RUNTIME_DIR / "download_service.authkey"
+SERVICE_LOCK_PATH = SHARE_RUNTIME_DIR / "download_service.lock"
 
 # Cuanto esperar por una respuesta del cliente (poll no bloqueante en un
 # bucle) antes de volver a chequear si el pedido ya termino -- mismo estilo
@@ -65,7 +66,7 @@ LIVE_LEASE_WAIT = 60.0
 
 
 def get_or_create_authkey() -> bytes:
-    AUTHKEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ensure_shared_root(AUTHKEY_PATH.parent)
     try:
         # 'x' falla si ya existe -- evita una condicion de carrera donde dos
         # procesos generan claves DISTINTAS al mismo tiempo y ya no se
@@ -73,7 +74,10 @@ def get_or_create_authkey() -> bytes:
         with open(AUTHKEY_PATH, "xb") as fh:
             key = os.urandom(32)
             fh.write(key)
-        os.chmod(AUTHKEY_PATH, 0o600)
+        # Solo lectura para el grupo (no escritura): la genera quien primero levanta el
+        # servicio, pero CUALQUIER usuario del grupo debe poder leerla para conectarse a ESE
+        # servicio -- no hay una unica cuenta "dueña" de camera_viewer.
+        os.chmod(AUTHKEY_PATH, 0o640)
         return key
     except FileExistsError:
         return AUTHKEY_PATH.read_bytes()
@@ -249,6 +253,11 @@ def _safe_send(conn, message: dict) -> None:
 
 if __name__ == "__main__":
     from .singleton_lock import acquire_singleton_lock
+
+    # Antes del candado: si esta es la primera vez que corre en la maquina, la carpeta
+    # compartida (y su grupo) deben existir YA para que el propio candado se cree bien.
+    apply_shared_umask()
+    ensure_shared_root(SHARE_RUNTIME_DIR)
 
     lock_file = acquire_singleton_lock(SERVICE_LOCK_PATH)
     if lock_file is None:

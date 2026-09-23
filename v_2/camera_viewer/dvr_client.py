@@ -14,7 +14,7 @@ from . import download_client
 from .download_manager import purge_download_dir
 from .channel_player import ChannelPlayer, PlayerDeps
 from .chunk_store import ChunkStore
-from .clip import Clip
+from .clip import Clip, clips_from_items
 from .light_query_manager import LightPriority
 from .playback_control import PlaybackControl
 
@@ -228,19 +228,7 @@ class DVRClient(QObject):
 
     @staticmethod
     def _clips_from_items(channel: int, items: list[dict[str, str]]) -> list[Clip]:
-        clips: list[Clip] = []
-        for item in items:
-            start = item.get("StartTime")
-            end = item.get("EndTime")
-            if start and end:
-                clips.append(
-                    Clip(
-                        channel=channel,
-                        start=datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S"),
-                        end=datetime.strptime(end.strip(), "%Y-%m-%d %H:%M:%S"),
-                    )
-                )
-        return clips
+        return clips_from_items(channel, items)
 
     # -- dias con grabacion (para pintarlos en el calendario) ---------------
 
