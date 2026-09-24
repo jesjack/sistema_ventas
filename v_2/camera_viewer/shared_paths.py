@@ -25,6 +25,10 @@ from pathlib import Path
 SHARE_GROUP = "tpv_yaeli"
 SHARE_DIR = Path(__file__).resolve().parent.parent / "share"
 SHARE_RUNTIME_DIR = SHARE_DIR / "runtime"
+# El archivo local de grabaciones (archiver.py). Definida aquí (no en archiver.py) para que
+# download_manager.py pueda leerla sin un import circular: archiver.py ya depende de
+# download_client -> download_service -> download_manager para descargar del DVR.
+ARCHIVE_DIR = SHARE_DIR / "archivo_camaras"
 
 # rwx para el dueño y el grupo, nada para el resto -- with SUID/SGID: el bit setgid (primer
 # digito) hace que lo que se cree ADENTRO herede este mismo grupo, no el del usuario que lo crea.

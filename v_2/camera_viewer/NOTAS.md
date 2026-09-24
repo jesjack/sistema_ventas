@@ -12,7 +12,7 @@ Visor PySide6 de un DVR Dahua (4 canales) dentro del POS. Historial y mediciones
 - **Archivador pasivo** (guarda en la PC lo más viejo del DVR, ver más abajo): `archiver.py` (motor, sin Qt: `Archiver.run_once()`/`run_forever()`), `archive_index.py` (índice SQLite: segmentos + cursor por canal), `archive_compactor.py` (recomprime un segmento, GPU con reserva a CPU), `shared_paths.py` (permisos multiusuario de todo lo de `share/`, lo usan también `__main__.py` y `download_service.py`). Punto de entrada propio: `python -m camera_viewer.archiver` (candado de instancia única propio, SIGTERM = parar pronto). `launcher.py` gana `launch_archiver()` (mismo patrón que `launch_detached`); `nucleo/arranque.ejecutar()` lo lanza al abrir el POS (ver Archivador pasivo, más abajo).
 
 ## Pruebas (no tocan el DVR real)
-- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 3 min (476 pruebas), Qt en `offscreen`.
+- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 3.5 min (498 pruebas), Qt en `offscreen`.
 - Los DVR falsos generan video sintético; OpenCV no puede ESCRIBIR `.dav` (crear `.avi` y renombrar).
 
 ## Validar con el DVR real (IP 192.168.1.108)
@@ -101,12 +101,31 @@ al pasarse, se desaloja el segmento más viejo de TODO el archivo (cualquier can
   (69.8 Mbps) con prioridad `ARCHIVE` correcta en el log; permisos del árbol resultante verificadas
   a mano (`drwxrws---`, grupo `tpv_yaeli`, sin ACL heredada) tras corregir el bug de la ACL de arriba.
 
-**Falta (no empezado):**
-1. **Leer del disco antes que del DVR.** El embudo (`download_manager.py`/`download_client.py`)
-   debe consultar `archive_index.segments_covering()` primero; si el rango pedido está ahí, servirlo
-   del archivo (sin tocar el DVR) en vez de descargarlo. Esto es lo que hace que reproducir, guardar
-   clips y exportar horas de un día viejo funcionen igual sin el DVR, y lo que potencia todo lo demás
-   ("no haría falta solicitarlas al dvr sino a la memoria", como pidió el usuario).
+**Hecho 2026-09-24: leer del disco antes que del DVR.** `archive_reader.py` (sin Qt):
+`lookup()` mira si [start, end) de un canal ya está ENTERO en un solo segmento archivado
+(`archive_index.segments_covering` + `find_covering_segment`; si cae a caballo entre dos
+segmentos, de momento se pide al DVR como siempre -- unir varios es una mejora futura) y
+`extract()` lo recorta con `ffmpeg -c copy` (sin recodificar, rápido) a un archivo nuevo en la
+carpeta de descargas de siempre. Enganchado en
+`RecordingDownloadManager.submit()` (`download_manager.py`): si hay un acierto, se sirve en un
+hilo APARTE de los `max_concurrent` de descarga (no consume cupo, no espera concesión de vivo
+ni la pausa de cortesía -- nada de eso protege al DVR de algo que nunca lo toca) y, si la
+extracción fallara por lo que sea, la MISMA llamada sigue con el pedido real al DVR (nunca hace
+falta que quien llama reintente). `archive_dir` es `None` por omisión en la clase (para que
+ninguna prueba toque sin querer el archivo real de la máquina, que sigue creciendo con el uso
+real del POS) -- `download_service.py` es el único que le pasa la carpeta real
+(`shared_paths.ARCHIVE_DIR`, movida ahí desde `archiver.py` para evitar un import circular:
+`download_manager -> archive_reader -> export_clip -> download_manager` si `find_ffmpeg` se
+hubiera importado de `export_clip.py` en vez de reimplementarse en 2 líneas).
+Prueba real: un minuto de un canal ya archivado (2026-09-18, canal 1) se sirvió en 0.22 s
+(contra varios segundos de ida y vuelta al DVR), con 59.97 s de duración real. Todo consumidor
+(reproducción, guardar clip, exportar horas, el propio archivador) se beneficia sin que se le
+haya tocado una sola línea: pasa por `download_client.submit()` -> `download_manager.submit()`
+igual que siempre.
+
+**Falta:**
+1. **Unir segmentos cuando el rango pedido cae a caballo entre dos** (hoy: si no hay UNO solo
+   que lo cubra entero, se pide al DVR aunque los datos ya estén, repartidos, en la PC).
 2. **Calendario y línea de tiempo:** que muestren también los días que solo están en la PC (hoy solo
    preguntan al DVR).
 3. **Selección inteligente** (por horario del negocio, y si el DVR expone algo de movimiento): lo que

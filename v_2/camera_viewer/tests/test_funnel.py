@@ -2,18 +2,20 @@
 Correr desde v_2/: .venv/bin/python -m unittest camera_viewer.tests.test_funnel -v"""
 from __future__ import annotations
 
+import shutil
 import socket
+import subprocess
 import tempfile
 import threading
 import time
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
 import requests
 
-from camera_viewer import download_client, download_service
+from camera_viewer import archive_index, archive_reader, download_client, download_service
 from camera_viewer.download_manager import RecordingDownloadManager
 from camera_viewer.light_query_manager import LightPriority, LightQueryCancelled, LightQueryManager
 
@@ -612,6 +614,93 @@ class ServiceEndToEndTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             future.result(timeout=5)
         release.set()
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "hace falta ffmpeg")
+class ArchiveFirstTests(unittest.TestCase):
+    """submit() debe mirar el archivo local (ver archive_reader.py) antes de tocar el DVR, y
+    caer al DVR sin que quien llama tenga que reintentar si la lectura local no puede."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.download_dir = self.tmp / "descargas"
+        self.archive_dir = self.tmp / "archivo"
+        (self.archive_dir / "ch1").mkdir(parents=True)
+        self.source = self.archive_dir / "ch1" / "seg.dav"
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=96x64:rate=10:duration=10",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "10", "-f", "mpegts", str(self.source)],
+            check=True,
+        )
+        self.conn = archive_index.open_db(self.archive_dir / "index.sqlite3")
+        archive_index.add_segment(self.conn, 1, START, START + timedelta(seconds=10), "ch1/seg.dav", self.source.stat().st_size)
+        self.conn.close()
+
+        self.dvr = FakeDVR()
+        self.dvr.handler = lambda url: FakeResponse(chunks=[b"del-dvr"])
+        patcher = mock.patch.object(requests, "get", self.dvr)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.manager = RecordingDownloadManager(max_concurrent=2, download_dir=self.download_dir, post_download_gap=0, archive_dir=self.archive_dir)
+        self.addCleanup(self.manager.shutdown)
+
+    def submit(self, start=None, end=None, channel=1):
+        return self.manager.submit("dvr", "u", "p", channel, start or START, end or START + timedelta(seconds=4), 0, threading.Event())
+
+    def test_a_fully_covered_range_is_served_without_touching_the_dvr(self) -> None:
+        path = self.submit().result(timeout=10)
+        self.assertIsNotNone(path)
+        self.assertTrue(path.exists())
+        self.assertEqual(self.dvr.calls, [])  # el DVR falso nunca fue llamado
+
+    def test_the_served_file_lives_in_the_regular_download_dir(self) -> None:
+        path = self.submit().result(timeout=10)
+        self.assertEqual(path.parent, self.download_dir)
+
+    def test_a_range_the_archive_does_not_cover_goes_to_the_dvr_as_usual(self) -> None:
+        path = self.submit(start=START + timedelta(hours=1), end=START + timedelta(hours=1, seconds=4)).result(timeout=10)
+        self.assertEqual(len(self.dvr.calls), 1)
+        self.assertEqual(path.read_bytes(), b"del-dvr")
+
+    def test_the_wrong_channel_also_falls_through_to_the_dvr(self) -> None:
+        path = self.submit(channel=2).result(timeout=10)
+        self.assertEqual(len(self.dvr.calls), 1)
+        self.assertEqual(path.read_bytes(), b"del-dvr")
+
+    def test_a_covered_range_that_fails_to_extract_falls_back_to_the_dvr_in_the_same_call(self) -> None:
+        self.source.unlink()  # el índice dice que está, pero el archivo real ya no
+        path = self.submit().result(timeout=10)
+        self.assertEqual(len(self.dvr.calls), 1)  # sin que quien llama tenga que reintentar
+        self.assertEqual(path.read_bytes(), b"del-dvr")
+
+    def test_an_archive_hit_never_counts_as_an_active_dvr_download_not_even_while_running(self) -> None:
+        gate = threading.Event()
+        real_extract = archive_reader.extract
+
+        def slow_extract(*args, **kwargs):
+            gate.wait(5)
+            return real_extract(*args, **kwargs)
+
+        with mock.patch.object(archive_reader, "extract", side_effect=slow_extract):
+            future = self.submit()
+            time.sleep(0.2)  # la extracción sigue "corriendo" (atrapada en gate.wait)
+            self.assertEqual(self.manager.stats(), {"active": 0, "queued": 0, "live_holders": 0})
+            gate.set()
+            self.assertIsNotNone(future.result(timeout=10))
+
+    def test_disabling_the_archive_means_everything_goes_to_the_dvr_like_before(self) -> None:
+        manager = RecordingDownloadManager(max_concurrent=2, download_dir=self.download_dir, post_download_gap=0)  # sin archive_dir
+        self.addCleanup(manager.shutdown)
+        path = manager.submit("dvr", "u", "p", 1, START, START + timedelta(seconds=4), 0, threading.Event()).result(timeout=10)
+        self.assertEqual(len(self.dvr.calls), 1)
+        self.assertEqual(path.read_bytes(), b"del-dvr")
+
+    def test_a_broken_index_never_blocks_asking_the_dvr(self) -> None:
+        (self.archive_dir / "index.sqlite3").write_bytes(b"esto no es una base sqlite de verdad")
+        path = self.submit().result(timeout=10)
+        self.assertEqual(len(self.dvr.calls), 1)
+        self.assertEqual(path.read_bytes(), b"del-dvr")
 
 
 if __name__ == "__main__":

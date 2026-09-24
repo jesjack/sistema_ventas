@@ -14,6 +14,7 @@ from typing import Callable
 import requests
 from requests.auth import HTTPDigestAuth
 
+from . import archive_reader
 from .dvr_log import logger
 
 # Unico punto de contacto de TODA la app con loadfile.cgi (descarga de
@@ -121,10 +122,17 @@ class RecordingDownloadManager:
         max_concurrent: int = MAX_CONCURRENT_DOWNLOADS,
         download_dir: Path = DOWNLOAD_DIR,
         post_download_gap: float = POST_DOWNLOAD_GAP,
+        archive_dir: Path | None = None,
     ) -> None:
         self._max_concurrent = max_concurrent
         self._download_dir = download_dir
         self._post_download_gap = post_download_gap
+        # None (el valor por omisión de ESTA clase, a propósito) desactiva la lectura del
+        # archivo local: quien de verdad la quiere la pide explícito (ver download_service.py,
+        # que sí pasa la carpeta real) -- por defecto aquí, no, para que ninguna prueba que
+        # construya un RecordingDownloadManager "a secas" toque sin querer el archivo REAL de
+        # la máquina donde corren las pruebas (que además va creciendo con el uso real del POS).
+        self._archive_dir = archive_dir
 
         self._queue: PriorityQueue[_QueueItem] = PriorityQueue()
         self._seq_counter = itertools.count()
@@ -165,6 +173,13 @@ class RecordingDownloadManager:
         red. El llamador decide si reintentar (mismo criterio que antes de
         este modulo: la reproduccion reintenta el mismo bloque).
 
+        Antes de tocar el DVR se mira si [start, end) ya está completo en el archivo local (ver
+        archive_reader.py); si así es, se sirve de ahí -- sin cola, sin cupo de concurrencia,
+        sin la concesión de vivo ni la pausa de cortesía (nada de eso protege al DVR de algo que
+        nunca lo toca). Si la extracción fallara por lo que sea, esta misma llamada sigue con el
+        pedido real al DVR (no hace falta que quien llama reintente): jamás se resuelve `None`
+        solo porque el archivo local no pudo, únicamente si de verdad no hay otra salida.
+
         `progress` (opcional) se llama desde el hilo descargador con los bytes
         recibidos: primero con 0 cuando el trabajo YA salió de la cola y arrancó, y
         luego tras cada bloque. Nunca debe bloquear ni lanzar (si lanza se ignora)."""
@@ -181,8 +196,40 @@ class RecordingDownloadManager:
             progress=progress,
             priority=priority,
         )
-        self._queue.put(_QueueItem(priority=priority, seq=next(self._seq_counter), job=job))
+        segment = self._archive_hit(channel, start, end)
+        if segment is not None:
+            threading.Thread(target=self._serve_from_archive, args=(segment, job), name="ArchiveRead", daemon=True).start()
+        else:
+            self._queue.put(_QueueItem(priority=priority, seq=next(self._seq_counter), job=job))
         return future
+
+    def _archive_hit(self, channel: int, start: datetime, end: datetime):
+        if self._archive_dir is None:
+            return None
+        try:
+            return archive_reader.lookup(self._archive_dir, channel, start, end)
+        except Exception:
+            return None  # un índice ilegible/corrupto no debe impedir pedirlo al DVR
+
+    def _serve_from_archive(self, segment, job: _Job) -> None:
+        path = None
+        try:
+            path = archive_reader.extract(self._archive_dir, segment, job.start, job.end, self._download_dir, stop_event=job.stop_event)
+        except Exception as exc:
+            job.error = f"archivo local: {type(exc).__name__}: {str(exc)[:100]}"
+        if path is not None:
+            logger.info(
+                "archivo local ch%d %s-%s -> %s (%.1fMB, sin tocar el DVR)",
+                job.channel, job.start, job.end, path.name, path.stat().st_size / 1e6,
+            )
+            _safe_progress(job.progress)(path.stat().st_size)
+            job.future.set_result(path)
+            return
+        if job.stop_event.is_set():
+            job.future.set_result(None)
+            return
+        logger.info("archivo local ch%d %s-%s no se pudo servir de ahí, se pide al DVR", job.channel, job.start, job.end)
+        self._queue.put(_QueueItem(priority=job.priority, seq=next(self._seq_counter), job=job))
 
     def acquire_live(self, timeout: float | None = None) -> bool:
         """Concesión de vista en vivo: desde que se pide, NINGÚN trabajo nuevo

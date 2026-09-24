@@ -18,7 +18,7 @@ from .dvr_log import logger
 from .export_clip import free_bytes_for, own_as_user, unique_path
 from .export_hours import WAIT_POLL, merge_intervals
 from .light_query_manager import LightPriority
-from .shared_paths import SHARE_DIR, SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
+from .shared_paths import ARCHIVE_DIR, SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
 
 # Archivador pasivo: mientras la app de cámaras está cerrada (o abierta: no le estorba, ver
 # DownloadPriority.ARCHIVE, la más baja de todas), va copiando a la PC lo más VIEJO que el DVR
@@ -39,7 +39,6 @@ from .shared_paths import SHARE_DIR, SHARE_RUNTIME_DIR, apply_shared_umask, ensu
 # (archive_compactor.py): recomprimido, un segmento crudo pesa una fracción -- 3 a 30 veces menos,
 # medido en el DVR real el 2026-09-21/23, según cuánto se mueve la escena.
 
-ARCHIVE_DIR = SHARE_DIR / "archivo_camaras"
 DEFAULT_CHANNELS = (1, 2, 3, 4)
 
 DEFAULT_MARGIN_DAYS = 3.0  # el negocio cierra sábado y domingo: hasta ~2.5 días seguidos apagada

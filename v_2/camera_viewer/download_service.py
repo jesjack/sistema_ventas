@@ -34,7 +34,7 @@ from pathlib import Path
 
 from .download_manager import RecordingDownloadManager
 from .light_query_manager import LightQueryManager
-from .shared_paths import SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
+from .shared_paths import ARCHIVE_DIR, SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
 
 SERVICE_HOST = "localhost"
 SERVICE_PORT = int(os.environ.get("DOWNLOAD_SERVICE_PORT", "51820"))
@@ -92,7 +92,11 @@ def serve_forever(
     vuelve a chequear el candado, solo sirve. Hay DOS carriles
     independientes hacia el DVR: descargas de clips (manager) y consultas
     ligeras (light_manager, ver light_query_manager.py)."""
-    manager = manager or RecordingDownloadManager()
+    # archive_dir=ARCHIVE_DIR (leer del archivo local antes que del DVR, ver
+    # RecordingDownloadManager.submit) solo en el manager por OMISIÓN, el que de verdad sirve en
+    # producción -- si algo construye su propio RecordingDownloadManager (como hacen las
+    # pruebas) y lo pasa aquí, se respeta tal cual, sin archivo local a menos que lo pida.
+    manager = manager or RecordingDownloadManager(archive_dir=ARCHIVE_DIR)
     light_manager = light_manager or LightQueryManager()
     authkey = get_or_create_authkey()
     # Sin authkey aqui a proposito: Listener.accept() haria el saludo de
