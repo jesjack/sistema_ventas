@@ -12,7 +12,7 @@ Visor PySide6 de un DVR Dahua (4 canales) dentro del POS. Historial y mediciones
 - **Archivador pasivo** (guarda en la PC lo más viejo del DVR, ver más abajo): `archiver.py` (motor, sin Qt: `Archiver.run_once()`/`run_forever()`), `archive_index.py` (índice SQLite: segmentos + cursor por canal), `archive_compactor.py` (recomprime un segmento, GPU con reserva a CPU), `shared_paths.py` (permisos multiusuario de todo lo de `share/`, lo usan también `__main__.py` y `download_service.py`). Punto de entrada propio: `python -m camera_viewer.archiver` (candado de instancia única propio, SIGTERM = parar pronto). `launcher.py` gana `launch_archiver()` (mismo patrón que `launch_detached`); `nucleo/arranque.ejecutar()` lo lanza al abrir el POS (ver Archivador pasivo, más abajo).
 
 ## Pruebas (no tocan el DVR real)
-- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 3 min (474 pruebas), Qt en `offscreen`.
+- Desde `v_2/`: `.venv/bin/python -m unittest camera_viewer.tests.test_<módulo>`; todas juntas ≈ 3 min (476 pruebas), Qt en `offscreen`.
 - Los DVR falsos generan video sintético; OpenCV no puede ESCRIBIR `.dav` (crear `.avi` y renombrar).
 
 ## Validar con el DVR real (IP 192.168.1.108)
@@ -28,6 +28,20 @@ Visor PySide6 de un DVR Dahua (4 canales) dentro del POS. Historial y mediciones
 - **Registro de tiempos del DVR** (`dvr_log.py`): cada descarga y las consultas lentas/fallidas dejan una línea en `logs/camera_viewer/run_*.log` (espera en cola, primer byte, total, intentos, motivo). Primer sitio donde mirar si "los clips tardan". Las descargas CANCELADAS también esperan la pausa de cortesía (antes no: abrían la siguiente sesión al instante y podían pasar de 3).
 - DVR: 3 `loadfile` a la vez van bien, 4 fallan; con el vivo abierto las descargas fallan → concesión de vivo; hay atascos de 6-36 s cada ~70 s.
 - Parchear un diálogo de `MainWindow` tras crear `ExportFlow` no surte efecto (guarda el método): parchear `flow._ask_after_seconds`.
+- **`subprocess.Popen(user=..., group=...)` NUNCA llama a `setgroups()` si no se le pasa también
+  `extra_groups`** -- el hijo con privilegios bajados se queda con los grupos SUPLEMENTARIOS de
+  root al bifurcar (típicamente ninguno útil), no los del usuario real, aunque su uid/gid
+  principal ya sean los suyos. Causa real (encontrada 2026-09-24) de que "VER CAMARAS" no
+  funcionara para otro usuario del grupo del negocio: sin su membresía real en `tpv_yaeli`, ese
+  usuario no tenía NINGÚN permiso sobre lo que otro ya había creado en `share/runtime`/
+  `share/archivo_camaras` (candados, la carpeta de descargas, el archivo de grabaciones), ni su
+  propio proceso podía arreglarlo (`chown`/`chmod` a un grupo del que el kernel no lo cree
+  miembro -- por eso mis propias verificaciones del día anterior, hechas como `jesjack`
+  DIRECTO, sin pasar por este camino, no lo habían notado). Arreglado en
+  `launcher._drop_privileges_kwargs()` con `extra_groups=os.getgrouplist(usuario, gid)`.
+  Si esto vuelve a pasar: revisar `share/runtime` y `share/archivo_camaras` a mano
+  (`stat -c '%A %U:%G %n'`) -- lo creado ANTES del arreglo se quedó con el grupo del usuario
+  que lo creó primero, no `tpv_yaeli`, y hay que corregirlo una vez a mano (`chgrp -R`).
 - **`share/` (la carpeta compartida del POS) trae una ACL POSIX por defecto heredable de "rwx para cualquiera"** (para Samba, `getfacl -p share` lo muestra: `default:other::rwx`). Un `mkdir`/`open` normal ahí abajo HEREDA esa ACL sin importar el `chmod` ni el `umask` del proceso -- una grabación guardada a mano ahí habría quedado legible/escribible por cualquier usuario del sistema, no solo por `tpv_yaeli` (encontrado y corregido el 2026-09-23 al aterrizar el primer segmento real: el `.dav` salió `-rw-rw-rw-`). `shared_paths.ensure_shared_root()` la quita con `setfacl -b`; cualquier carpeta nueva bajo `share/` debe pasar por ahí (o por una ya "curada" por ella), nunca un `Path.mkdir()` suelto.
 
 ## No verificado

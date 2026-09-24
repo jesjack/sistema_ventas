@@ -111,6 +111,37 @@ class LauncherEnvTests(unittest.TestCase):
         self.assertNotIn("user", kwargs)
         self.assertEqual(kwargs["env"]["HOME"], "/home/jesjack")
 
+    def test_the_child_gets_the_real_users_supplementary_groups(self) -> None:
+        """2026-09-24: sin esto, subprocess.Popen nunca llama a setgroups() en el hijo (solo lo
+        hace si se le pasa extra_groups) -- el proceso bajado se queda con los grupos de ROOT,
+        no los del usuario real, y por eso otro usuario del grupo del negocio (p. ej. tpv_yaeli)
+        no tenía ningún permiso sobre los archivos compartidos que otro ya había creado."""
+        base = Path(tempfile.mkdtemp())
+        with mock.patch.dict(os.environ, {"SUDO_USER": "nancy", "SUDO_GID": "1004"}, clear=False), mock.patch.object(
+            os, "geteuid", return_value=0
+        ), mock.patch.object(launcher, "find_python_executable", return_value=Path("/usr/bin/python3")), mock.patch.object(
+            subprocess, "Popen"
+        ) as popen, mock.patch.object(pwd, "getpwnam", return_value=types.SimpleNamespace(pw_dir="/home/nancy", pw_name="nancy")), mock.patch.object(
+            os, "getgrouplist", return_value=[1004, 1003]
+        ) as getgrouplist:
+            launcher.launch_detached(base)
+        getgrouplist.assert_called_once_with("nancy", 1004)
+        self.assertEqual(popen.call_args.kwargs["extra_groups"], [1004, 1003])
+
+    def test_an_unknown_user_still_drops_uid_gid_it_just_skips_extra_groups(self) -> None:
+        base = Path(tempfile.mkdtemp())
+        with mock.patch.dict(os.environ, {"SUDO_USER": "fantasma", "SUDO_GID": "9999"}, clear=False), mock.patch.object(
+            os, "geteuid", return_value=0
+        ), mock.patch.object(launcher, "find_python_executable", return_value=Path("/usr/bin/python3")), mock.patch.object(
+            subprocess, "Popen"
+        ) as popen, mock.patch.object(pwd, "getpwnam", side_effect=KeyError("fantasma")), mock.patch.object(
+            os, "getgrouplist", side_effect=KeyError("fantasma")
+        ):
+            launcher.launch_detached(base)
+        kwargs = popen.call_args.kwargs
+        self.assertEqual(kwargs["user"], "fantasma")
+        self.assertNotIn("extra_groups", kwargs)
+
     def test_launch_archiver_runs_the_archiver_module_dropped_to_the_real_user_too(self) -> None:
         call = self.launch({"SUDO_USER": "jesjack", "SUDO_GID": "1000", "HOME": "/root"}, euid=0, func=launcher.launch_archiver)
         self.assertEqual(call.args[0], ["/usr/bin/python3", "-m", "camera_viewer.archiver"])

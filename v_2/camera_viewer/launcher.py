@@ -70,9 +70,24 @@ def _drop_privileges_kwargs() -> dict:
         return {}
 
     try:
-        return {"user": sudo_user, "group": int(sudo_gid)}
+        gid = int(sudo_gid)
     except ValueError:
         return {}
+
+    kwargs: dict = {"user": sudo_user, "group": gid}
+    # Sin esto, subprocess.Popen NUNCA llama a setgroups() en el hijo (solo lo hace si se le
+    # pasa extra_groups) -- el proceso bajado se queda con los grupos SUPLEMENTARIOS de root
+    # (typicamente ninguno util), no los del usuario real, aunque uid/gid principal ya sean
+    # los suyos. Encontrado 2026-09-24: es la causa real de que "VER CAMARAS" no funcionara
+    # para otro usuario del grupo -- sin su membresía real (p. ej. tpv_yaeli), ese usuario no
+    # tenia NINGUN permiso sobre los archivos compartidos que otro ya habia creado (candados,
+    # la carpeta de descargas, el archivo de grabaciones; ver shared_paths.py), ni podia el
+    # propio proceso arreglarlo (chown/chmod a un grupo del que el kernel no lo cree miembro).
+    try:
+        kwargs["extra_groups"] = os.getgrouplist(sudo_user, gid)
+    except (KeyError, OSError):
+        pass
+    return kwargs
 
 
 def _target_user_env() -> dict[str, str]:
