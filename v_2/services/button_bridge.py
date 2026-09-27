@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import threading
+import traceback
 from pathlib import Path
 
 
@@ -109,6 +110,11 @@ class SheetButtonBridge:
             self._thread.join(timeout=2)
 
     def _watch_events(self) -> None:
+        # Confirma que el hilo de sondeo llegó a arrancar: si los botones dejan de responder y
+        # esta línea SÍ salió, el hilo empezó bien y se atascó o murió después (buscar
+        # [FALLO INESPERADO] o pedir un volcado con nucleo.diagnostico); si NO salió, el hilo
+        # nunca llegó a correr.
+        print(f"[button_bridge] Escuchando clics en {self.events_dir} (cada {self.poll_interval}s).")
         while not self._stop_event.wait(self.poll_interval):
             try:
                 self._drain_events()
@@ -118,6 +124,13 @@ class SheetButtonBridge:
                 # externo al diseno interfiere (antivirus, etc.), no dejamos
                 # que esto mate el hilo -- se reintenta en el siguiente poll.
                 print(f"[button_bridge] Error leyendo eventos (se reintenta en {self.poll_interval}s): {exc}")
+            except Exception:
+                # Red de seguridad: cualquier otro fallo (no solo de archivo) mataria este
+                # hilo para siempre -- los botones dejarian de responder por el resto de la
+                # sesion, en silencio, hasta reiniciar. Mejor perder un ciclo de sondeo que
+                # el hilo entero (ver nucleo/controlador_venta.py:on_enter, mismo problema
+                # con la tecla Enter).
+                print(f"[FALLO INESPERADO] SheetButtonBridge (se reintenta en {self.poll_interval}s): {traceback.format_exc()}")
 
     def _drain_events(self) -> None:
         if not self.events_dir.exists():

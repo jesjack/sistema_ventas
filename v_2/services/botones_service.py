@@ -1,24 +1,19 @@
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime
 
+from services.base_datos import conectar, ruta_db
 from services.identidad import USUARIO_PLANTILLA
 
 
 class BotonesService:
     def __init__(self, db_path=None):
-        if db_path is None:
-            db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ventas.db")
-
-        self.db_path = db_path
+        self.db_path = ruta_db(db_path)
         self._ensure_schema()
 
     def _connect(self):
-        con = sqlite3.connect(self.db_path)
-        con.execute("PRAGMA foreign_keys = ON")
-        return con
+        return conectar(self.db_path)
 
     def _normalizar_usuario(self, usuario):
         return str(usuario).strip().lower()

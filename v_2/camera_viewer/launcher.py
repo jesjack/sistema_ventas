@@ -46,6 +46,12 @@ def _clean_child_env() -> dict[str, str]:
     env = os.environ.copy()
     for var in _ENV_VARS_TO_STRIP:
         env.pop(var, None)
+    # Sin esto, stdout queda con buffer de bloque completo por estar redirigido a un archivo
+    # (no una terminal): si el proceso muere de golpe (segfault, kill, corte de luz) todo lo
+    # impreso desde el ultimo flush se pierde, y el log de logs/camera_viewer/ queda vacio aunque
+    # el proceso sí haya hecho trabajo real -- visto el 2026-09-26 diagnosticando una ventana que
+    # sí cargó pero cuyo log no mostraba nada.
+    env["PYTHONUNBUFFERED"] = "1"
     return env
 
 

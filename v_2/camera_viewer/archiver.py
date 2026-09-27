@@ -18,7 +18,13 @@ from .dvr_log import logger
 from .export_clip import free_bytes_for, own_as_user, unique_path
 from .export_hours import WAIT_POLL, merge_intervals
 from .light_query_manager import LightPriority
-from .shared_paths import ARCHIVE_DIR, SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
+from .shared_paths import (
+    ARCHIVE_DIR,
+    ARCHIVER_DISABLED_MARKER,
+    SHARE_RUNTIME_DIR,
+    apply_shared_umask,
+    ensure_shared_root,
+)
 
 # Archivador pasivo: mientras la app de cámaras está cerrada (o abierta: no le estorba, ver
 # DownloadPriority.ARCHIVE, la más baja de todas), va copiando a la PC lo más VIEJO que el DVR
@@ -57,6 +63,18 @@ CYCLE_IDLE_SLEEP = 30.0  # nada que hacer en ningún canal ahora mismo: antes de
 CHUNK_RETRIES = 2
 CHUNK_RETRY_DELAYS = (2.0, 5.0)
 MIN_PIECE_SECONDS = 1.0
+
+# El DVR real (2026-09-25) estuvo caído >90 min y el archivador siguió golpeándolo sin pausa: cada
+# trozo fallido pasaba a intentar el siguiente de inmediato, sin ninguna espera creciente. Con
+# esto, tras DVR_BACKOFF_FAILURE_THRESHOLD fallos SEGUIDOS (de cualquier canal: query o descarga)
+# se asume que el DVR entero está caído/reiniciando, no que un trozo tuvo mala suerte, y las
+# esperas entre ciclos se van doblando hasta un tope -- el primer intento que sí responda (p. ej.
+# apenas el DVR termina de reiniciarse) reinicia el conteo y el ritmo normal, sin intervención
+# manual.
+DVR_BACKOFF_FAILURE_THRESHOLD = 2
+DVR_BACKOFF_INITIAL = CYCLE_IDLE_SLEEP
+DVR_BACKOFF_MAX = 300.0
+DVR_BACKOFF_MULTIPLIER = 2.0
 COMPACT_ATTEMPT_LIMIT = 20  # por ciclo: un segmento roto no debe bloquear a los demás para siempre
 
 
@@ -143,6 +161,8 @@ class Archiver:
         self._oldest_cache: dict[int, tuple[float, datetime]] = {}
         self._pending: dict[int, list[tuple[datetime, datetime]]] = {}
         self._channel_index = 0
+        self._consecutive_failures = 0
+        self._backoff = DVR_BACKOFF_INITIAL
         # No solo por si esta clase se usa fuera de `if __name__ == "__main__"` de este módulo
         # (p. ej. desde un script suelto, o más adelante desde la propia app): que la carpeta
         # del archivo quede lista para cualquier usuario del grupo no puede depender de que quien
@@ -169,8 +189,25 @@ class Archiver:
             except Exception:
                 logger.exception("archiver: fallo inesperado en un ciclo, se sigue")
                 did_something = False
-            if not did_something:
+            if self._consecutive_failures >= DVR_BACKOFF_FAILURE_THRESHOLD:
+                wait = self._backoff
+                self._backoff = min(self._backoff * DVR_BACKOFF_MULTIPLIER, DVR_BACKOFF_MAX)
+                logger.warning(
+                    "archiver: %d fallos seguidos con el DVR, se espera %.0fs antes de reintentar "
+                    "(¿está caído o reiniciando?)", self._consecutive_failures, wait,
+                )
+                self.stop.wait(wait)
+            elif not did_something:
                 self.stop.wait(CYCLE_IDLE_SLEEP)
+
+    def _register_failure(self) -> None:
+        self._consecutive_failures += 1
+
+    def _register_success(self) -> None:
+        if self._consecutive_failures >= DVR_BACKOFF_FAILURE_THRESHOLD:
+            logger.info("archiver: el DVR volvió a responder tras %d fallos seguidos, ritmo normal", self._consecutive_failures)
+        self._consecutive_failures = 0
+        self._backoff = DVR_BACKOFF_INITIAL
 
     def request_stop(self) -> None:
         self.stop.set()
@@ -192,6 +229,7 @@ class Archiver:
         now = self._now()
         dvr_oldest = self._dvr_oldest(channel, now)
         if dvr_oldest is None:
+            self._register_failure()
             return False  # el DVR no respondió o no tiene nada de este canal
         ceiling = eligible_ceiling(dvr_oldest, self.config.margin_days, now)
         checked_until = idx.get_cursor(self.conn, channel)
@@ -205,25 +243,34 @@ class Archiver:
             lookup_end = min(window[1], window[0] + timedelta(seconds=LOOKUP_WINDOW_SECONDS))
             clips = self._fetch_clips(channel, window[0], lookup_end, LOOKUP_MAX_PAGES)
             if clips is None:
+                self._register_failure()
                 return False  # la consulta falló: NO se avanza el cursor, se reintenta en el próximo ciclo
             pending = chunk_recorded(clips, window[0], lookup_end, self.config.segment_seconds)
             if not pending:
                 idx.set_cursor(self.conn, channel, lookup_end)  # de verdad no hay nada grabado ahí
+                self._register_success()
                 return True
             self._pending[channel] = pending
 
-        piece_start, piece_end = pending.pop(0)
+        # No se saca de `pending` (pop) hasta que aterriza bien: si el DVR está caído, el mismo
+        # trozo se reintenta en el siguiente ciclo en vez de perderse (antes el cursor avanzaba
+        # igual aunque _land_piece fallara, saltándose para siempre lo que no se pudo bajar).
+        piece_start, piece_end = pending[0]
+        if not self._land_piece(channel, piece_start, piece_end, now):
+            self._register_failure()
+            return False
+        pending.pop(0)
         if not pending:
             del self._pending[channel]
-        self._land_piece(channel, piece_start, piece_end, now)
         idx.set_cursor(self.conn, channel, piece_end)
         self._enforce_budget()
+        self._register_success()
         return True
 
-    def _land_piece(self, channel: int, start: datetime, end: datetime, now: datetime) -> None:
+    def _land_piece(self, channel: int, start: datetime, end: datetime, now: datetime) -> bool:
         source, elapsed = self._fetch_with_retries(channel, start, end)
         if source is None:
-            return
+            return False
         channel_dir = self.config.archive_dir / f"ch{channel}"
         channel_dir.mkdir(parents=True, exist_ok=True)
         final = unique_path(channel_dir, f"{start:%Y-%m-%d_%H%M%S}_a_{end:%H%M%S}.dav")
@@ -236,11 +283,12 @@ class Archiver:
         except OSError as exc:
             logger.warning("archiver: no se pudo guardar el trozo ch%d %s-%s: %s", channel, start, end, exc)
             partial.unlink(missing_ok=True)
-            return
+            return False
         finally:
             source.unlink(missing_ok=True)
         relative = str(final.relative_to(self.config.archive_dir))
         idx.add_segment(self.conn, channel, start, end, relative, final.stat().st_size, now=now)
+        return True
 
     def _fetch_with_retries(self, channel: int, start: datetime, end: datetime) -> tuple[Path | None, float]:
         for attempt in range(1 + CHUNK_RETRIES):
@@ -349,8 +397,9 @@ if __name__ == "__main__":
 
     apply_shared_umask()
     ensure_shared_root(SHARE_RUNTIME_DIR)
-    lock_file = acquire_singleton_lock(SHARE_RUNTIME_DIR / "archiver.lock")
-    if lock_file is None:
+    if ARCHIVER_DISABLED_MARKER.exists():
+        print(f"archiver: desactivado a mano ({ARCHIVER_DISABLED_MARKER} existe); no arranca. Bórralo para reactivarlo.")
+    elif (lock_file := acquire_singleton_lock(SHARE_RUNTIME_DIR / "archiver.lock")) is None:
         print("archiver ya está corriendo; no se abre otra instancia.")
     else:
         dvr_log.enable()

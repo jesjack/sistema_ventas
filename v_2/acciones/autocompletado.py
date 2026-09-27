@@ -1,9 +1,5 @@
-from acciones._contexto import usar_contexto
+from ui.catalogo_autocompletado import abrir_editor_catalogo_autocompletado
 
 
-@usar_contexto
 def ejecutar(ctx):
-    abrir_editor_catalogo_autocompletado(
-        context,
-        ventas_service=table_manager.ventas_service,
-    )
+    abrir_editor_catalogo_autocompletado(ctx.context, catalogo=ctx.catalogo)

@@ -1,22 +1,8 @@
-import unohelper
-from com.sun.star.awt import XActionListener
-
+from dialogs._base import EscuchaAccion, EscuchaCasilla, crear_peer
 from services.identidad import USUARIO_PLANTILLA
-from services.ventas_service import VentasService
+from services.usuarios_service import UsuariosService
 
-_CANCELADO = object()
 _ETIQUETA_PLANTILLA = "NUEVOS USUARIOS (plantilla)"
-
-
-class _EscuchaBoton(unohelper.Base, XActionListener):
-    def __init__(self, al_hacer_clic):
-        self._al_hacer_clic = al_hacer_clic
-
-    def actionPerformed(self, event):
-        self._al_hacer_clic()
-
-    def disposing(self, event):
-        pass
 
 
 def _crear_dialogo_base(uno_context, titulo, ancho, alto):
@@ -28,14 +14,6 @@ def _crear_dialogo_base(uno_context, titulo, ancho, alto):
     dialog_model.Height = alto
     dialog_model.Title = titulo
     return smgr, dialog_model
-
-
-def _crear_peer(smgr, uno_context, dialog_model):
-    dialog = smgr.createInstanceWithContext("com.sun.star.awt.UnoControlDialog", uno_context)
-    dialog.setModel(dialog_model)
-    toolkit = smgr.createInstanceWithContext("com.sun.star.awt.ExtToolkit", uno_context)
-    dialog.createPeer(toolkit, None)
-    return dialog
 
 
 def _agregar_boton_ok_cancel(dialog_model, y, etiqueta_ok="Aceptar"):
@@ -85,7 +63,7 @@ def _mostrar_mensaje(uno_context, mensaje, titulo="Aviso"):
     ok_model.DefaultButton = True
     dialog_model.insertByName("btnOk", ok_model)
 
-    dialog = _crear_peer(smgr, uno_context, dialog_model)
+    dialog = crear_peer(smgr, uno_context, dialog_model)
     try:
         dialog.execute()
     finally:
@@ -116,7 +94,7 @@ def _solicitar_texto(uno_context, titulo, etiqueta, valor_inicial=""):
 
     _agregar_boton_ok_cancel(dialog_model, 68)
 
-    dialog = _crear_peer(smgr, uno_context, dialog_model)
+    dialog = crear_peer(smgr, uno_context, dialog_model)
     try:
         resultado = dialog.execute()
         if resultado != 1:
@@ -126,8 +104,10 @@ def _solicitar_texto(uno_context, titulo, etiqueta, valor_inicial=""):
         dialog.dispose()
 
 
-def _solicitar_datos_boton(uno_context, titulo, etiqueta_inicial="", archivo_inicial="", orden_inicial=0):
-    smgr, dialog_model = _crear_dialogo_base(uno_context, titulo, 260, 140)
+def _solicitar_datos_boton(uno_context, titulo, etiqueta_inicial="", archivo_inicial=""):
+    # Sin campo de orden: se reordena con las flechas de la matriz (ver _mover_boton), nunca
+    # escribiendo un numero a mano.
+    smgr, dialog_model = _crear_dialogo_base(uno_context, titulo, 260, 108)
 
     def _agregar_campo(nombre, y, etiqueta_texto, valor_inicial):
         etiqueta_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
@@ -150,11 +130,10 @@ def _solicitar_datos_boton(uno_context, titulo, etiqueta_inicial="", archivo_ini
 
     _agregar_campo("Etiqueta", 8, "Etiqueta (texto del botón):", etiqueta_inicial)
     _agregar_campo("Archivo", 46, "Archivo en acciones/ (sin .py):", archivo_inicial)
-    _agregar_campo("Orden", 84, "Orden (número, menor = primero):", orden_inicial)
 
-    _agregar_boton_ok_cancel(dialog_model, 116, etiqueta_ok="Guardar")
+    _agregar_boton_ok_cancel(dialog_model, 84, etiqueta_ok="Guardar")
 
-    dialog = _crear_peer(smgr, uno_context, dialog_model)
+    dialog = crear_peer(smgr, uno_context, dialog_model)
     try:
         resultado = dialog.execute()
         if resultado != 1:
@@ -162,19 +141,13 @@ def _solicitar_datos_boton(uno_context, titulo, etiqueta_inicial="", archivo_ini
 
         etiqueta = dialog.getControl("txtEtiqueta").getModel().Text.strip()
         archivo = dialog.getControl("txtArchivo").getModel().Text.strip()
-        orden_texto = dialog.getControl("txtOrden").getModel().Text.strip()
     finally:
         dialog.dispose()
 
     if not etiqueta or not archivo:
         return None
 
-    try:
-        orden = int(orden_texto) if orden_texto else 0
-    except ValueError:
-        orden = 0
-
-    return etiqueta, archivo, orden
+    return etiqueta, archivo
 
 
 def _ejecutar_dialogo_con_acciones(uno_context, dialog_model, dialog, mapa_botones, nombre_lista=None):
@@ -186,7 +159,7 @@ def _ejecutar_dialogo_con_acciones(uno_context, dialog_model, dialog, mapa_boton
 
     referencias = []
     for nombre_control, valor in mapa_botones.items():
-        listener = _EscuchaBoton(lambda valor=valor: _marcar(valor))
+        listener = EscuchaAccion(lambda valor=valor: _marcar(valor))
         dialog.getControl(nombre_control).addActionListener(listener)
         referencias.append(listener)
 
@@ -203,282 +176,251 @@ def _etiqueta_usuario(nombre_usuario):
     return _ETIQUETA_PLANTILLA if nombre_usuario == USUARIO_PLANTILLA else nombre_usuario
 
 
-def _listar_usuarios_candidatos(ventas_service):
+def _listar_usuarios_candidatos(usuarios_service):
     # __default__ (la plantilla) siempre primero y con etiqueta amigable;
     # el resto, usuarios reales vistos alguna vez en usuarios_sistema, en orden alfabetico.
     nombres = sorted(
-        {str(nombre_usuario).strip().lower() for _id, nombre_usuario, *_resto in ventas_service.listar_usuarios_sistema()}
+        {str(nombre_usuario).strip().lower() for _id, nombre_usuario, *_resto in usuarios_service.listar_usuarios_sistema()}
     )
     nombres = [n for n in nombres if n != USUARIO_PLANTILLA]
     return [USUARIO_PLANTILLA] + nombres
 
 
-def _solicitar_visibilidad(uno_context, titulo, candidatos, seleccionados_previos):
-    seleccionados_previos = set(seleccionados_previos or [])
+def _mover_boton(botones_service, botones, indice, direccion):
+    """Intercambia el botón en `indice` con su vecino (direccion=-1 izquierda, +1 derecha) y
+    renumera TODOS los botones 0..n-1 según el nuevo orden visual -- no solo los dos que se
+    mueven: si dos botones comparten el mismo `orden` (empate en la base real), intercambiar
+    solo esos dos valores no cambiaria nada. Renumerar todos de una vez deshace cualquier
+    empate de paso y deja las flechas funcionando siempre."""
+    nuevo_indice = indice + direccion
+    if nuevo_indice < 0 or nuevo_indice >= len(botones):
+        return
 
-    alto_checkboxes = 16 * len(candidatos)
-    alto_total = 24 + alto_checkboxes + 34
-    smgr, dialog_model = _crear_dialogo_base(uno_context, titulo, 260, alto_total)
+    reordenados = list(botones)
+    reordenados[indice], reordenados[nuevo_indice] = reordenados[nuevo_indice], reordenados[indice]
+    for nueva_posicion, boton in enumerate(reordenados):
+        botones_service.editar_boton(boton[0], orden=nueva_posicion)
 
-    y = 8
 
-    def _agregar_checkbox(nombre, etiqueta_texto, marcado):
-        nonlocal y
-        modelo = dialog_model.createInstance("com.sun.star.awt.UnoControlCheckBoxModel")
+def _menu_editar_boton(uno_context, boton):
+    _boton_id, _nombre_interno, etiqueta, _archivo, _orden, _activo = boton
+    smgr, dialog_model = _crear_dialogo_base(uno_context, etiqueta, 200, 112)
+
+    titulo_model = dialog_model.createInstance("com.sun.star.awt.UnoControlFixedTextModel")
+    titulo_model.Name = "lblTitulo"
+    titulo_model.PositionX = 8
+    titulo_model.PositionY = 8
+    titulo_model.Width = 184
+    titulo_model.Height = 14
+    titulo_model.Label = etiqueta
+    dialog_model.insertByName("lblTitulo", titulo_model)
+
+    for nombre, y, etiqueta_texto in (("btnEditar", 28, "Editar"), ("btnEliminar", 52, "Eliminar"), ("btnCerrar", 76, "Cerrar")):
+        modelo = dialog_model.createInstance("com.sun.star.awt.UnoControlButtonModel")
         modelo.Name = nombre
         modelo.PositionX = 8
         modelo.PositionY = y
-        modelo.Width = 244
-        modelo.Height = 14
+        modelo.Width = 184
+        modelo.Height = 18
         modelo.Label = etiqueta_texto
-        modelo.TriState = False
-        modelo.State = 1 if marcado else 0
         dialog_model.insertByName(nombre, modelo)
-        y += 16
 
-    for indice, nombre_usuario in enumerate(candidatos):
-        _agregar_checkbox(f"chkUsuario{indice}", _etiqueta_usuario(nombre_usuario), nombre_usuario in seleccionados_previos)
-
-    _agregar_boton_ok_cancel(dialog_model, y + 8, etiqueta_ok="Guardar")
-
-    dialog = _crear_peer(smgr, uno_context, dialog_model)
-    try:
-        resultado = dialog.execute()
-        if resultado != 1:
-            return _CANCELADO
-
-        usuarios = []
-        for indice, nombre_usuario in enumerate(candidatos):
-            if dialog.getControl(f"chkUsuario{indice}").getState() == 1:
-                usuarios.append(nombre_usuario)
-        return usuarios
-    finally:
-        dialog.dispose()
+    dialog = crear_peer(smgr, uno_context, dialog_model)
+    mapa = {"btnEditar": "editar", "btnEliminar": "eliminar", "btnCerrar": "cerrar"}
+    valor, _seleccion = _ejecutar_dialogo_con_acciones(uno_context, dialog_model, dialog, mapa)
+    return valor
 
 
-def _pantalla_botones(uno_context, botones_service, ventas_service):
+ANCHO_COL_USUARIO = 132
+ANCHO_COL_BOTON = 28  # angosta: el nombre va en vertical (una letra por línea), no de lado
+ALTO_BLOQUE_FLECHAS = 42  # ◀ + casilla de activo + ▶, apilados (no caben lado a lado en 28px)
+ALTO_POR_LETRA = 11
+ALTO_FILA = 18
+_X0 = 8
+_Y0 = 8
+
+
+def _pantalla_botones(uno_context, botones_service, usuarios_service):
+    """Matriz de botones (columnas) x usuarios (filas), con una casilla por celda para la
+    visibilidad de ese botón para ese usuario. Columnas angostas -- el nombre del botón va en
+    vertical, una letra por línea, no de lado -- para que la matriz quepa en pantalla sin importar
+    cuántos botones haya; eso era justo lo que se perdía con columnas anchas. En el encabezado de
+    cada columna: flechas ◀/▶ para reordenar (intercambian con el vecino, nunca un número a mano)
+    y una casilla de activo/inactivo (desmarcarla apaga -- y deshabilita -- todas las casillas de
+    esa columna), apiladas porque no caben lado a lado en una columna tan angosta. Un clic en el
+    nombre abre Editar/Eliminar."""
     while True:
         botones = botones_service.listar_botones()
-        etiquetas = [
-            f"{etiqueta} -> {archivo} [{'activo' if activo else 'inactivo'}] (orden {orden})"
-            for _id, _nombre_interno, etiqueta, archivo, orden, activo in botones
-        ]
 
-        smgr, dialog_model = _crear_dialogo_base(uno_context, "Administrar botones", 320, 210)
+        candidatos = _listar_usuarios_candidatos(usuarios_service)
+        visibilidad_por_boton = {boton[0]: set(botones_service.listar_visibilidad(boton[0])) for boton in botones}
+        extra = sorted({u for visibles in visibilidad_por_boton.values() for u in visibles if u not in candidatos})
+        usuarios_filas = candidatos + extra
 
-        lista_model = dialog_model.createInstance("com.sun.star.awt.UnoControlListBoxModel")
-        lista_model.Name = "lstBotones"
-        lista_model.PositionX = 8
-        lista_model.PositionY = 8
-        lista_model.Width = 304
-        lista_model.Height = 118
-        lista_model.StringItemList = tuple(etiquetas)
-        dialog_model.insertByName("lstBotones", lista_model)
+        letras_max = max((len(boton[2]) for boton in botones), default=0)
+        alto_encabezado = ALTO_BLOQUE_FLECHAS + letras_max * ALTO_POR_LETRA + 4
 
-        disposicion = (
-            ("btnCrear", 8, 134, 70, "Crear"),
-            ("btnEditar", 82, 134, 70, "Editar"),
-            ("btnEliminar", 156, 134, 70, "Eliminar"),
-            ("btnActivar", 8, 154, 100, "Activar/Desactivar"),
-            ("btnVisibilidad", 112, 154, 100, "Visibilidad"),
-            ("btnCerrar", 216, 154, 96, "Cerrar"),
-        )
-        for nombre, x, y, ancho, etiqueta_texto in disposicion:
-            modelo = dialog_model.createInstance("com.sun.star.awt.UnoControlButtonModel")
+        ancho = _X0 * 2 + ANCHO_COL_USUARIO + max(1, len(botones)) * ANCHO_COL_BOTON
+        alto_grilla = alto_encabezado + len(usuarios_filas) * ALTO_FILA
+        alto = _Y0 * 2 + alto_grilla + 8 + 20
+        smgr, dialog_model = _crear_dialogo_base(uno_context, "Administrar botones", ancho, alto)
+
+        def _control(tipo, nombre, x, y, ancho_control, alto_control, **propiedades):
+            modelo = dialog_model.createInstance(tipo)
             modelo.Name = nombre
             modelo.PositionX = x
             modelo.PositionY = y
-            modelo.Width = ancho
-            modelo.Height = 16
-            modelo.Label = etiqueta_texto
+            modelo.Width = ancho_control
+            modelo.Height = alto_control
+            for propiedad, valor in propiedades.items():
+                setattr(modelo, propiedad, valor)
             dialog_model.insertByName(nombre, modelo)
+            return modelo
 
-        dialog = _crear_peer(smgr, uno_context, dialog_model)
-        mapa = {
-            "btnCrear": "crear",
-            "btnEditar": "editar",
-            "btnEliminar": "eliminar",
-            "btnActivar": "activar",
-            "btnVisibilidad": "visibilidad",
-            "btnCerrar": "cerrar",
-        }
-        valor, seleccion = _ejecutar_dialogo_con_acciones(uno_context, dialog_model, dialog, mapa, "lstBotones")
+        # Encabezados de fila (usuarios), columna izquierda. Se alinean con el PIE de la zona de
+        # encabezados de columna, no con su tope: los nombres de usuario quedan a la altura de las
+        # casillas, no a medio bloque de letras verticales.
+        y_grilla = _Y0 + alto_encabezado
+        for j, nombre_usuario in enumerate(usuarios_filas):
+            _control(
+                "com.sun.star.awt.UnoControlFixedTextModel", f"lbl_usuario_{j}",
+                _X0, y_grilla + j * ALTO_FILA + 2, ANCHO_COL_USUARIO - 4, ALTO_FILA,
+                Label=_etiqueta_usuario(nombre_usuario),
+            )
 
-        if valor in (None, "cerrar"):
+        # Encabezados de columna (botones): flechas y casilla de activo apiladas (no caben lado a
+        # lado en una columna de ANCHO_COL_BOTON), y el nombre en vertical debajo -- una letra por
+        # línea, alineado al PIE del bloque para que quede pegado a la fila de casillas de abajo
+        # sin importar cuán corto sea el nombre.
+        for i, boton in enumerate(botones):
+            boton_id, _ni, etiqueta, _ar, _orden, activo = boton
+            x = _X0 + ANCHO_COL_USUARIO + i * ANCHO_COL_BOTON
+
+            _control(
+                "com.sun.star.awt.UnoControlButtonModel", f"btn_izq_{i}",
+                x, _Y0, ANCHO_COL_BOTON, 14, Label="◀", Enabled=(i > 0),
+            )
+            _control(
+                "com.sun.star.awt.UnoControlCheckBoxModel", f"chk_activo_{i}",
+                x + (ANCHO_COL_BOTON - 16) // 2, _Y0 + 14, 16, 14, TriState=False, State=1 if activo else 0,
+            )
+            _control(
+                "com.sun.star.awt.UnoControlButtonModel", f"btn_der_{i}",
+                x, _Y0 + 28, ANCHO_COL_BOTON, 14, Label="▶", Enabled=(i < len(botones) - 1),
+            )
+            # Boton, no etiqueta: un XMouseListener (para detectar doble clic) no entrega NINGUN
+            # evento en este toolkit -- comprobado con tres controles distintos (etiqueta, boton,
+            # campo), ni siquiera mouseEntered. Un clic simple con ActionListener si es confiable
+            # (ya probado hoy con las flechas y las casillas), asi que el nombre abre el menu de
+            # Editar/Eliminar con un solo clic, no con doble.
+            alto_nombre = len(etiqueta) * ALTO_POR_LETRA
+            _control(
+                "com.sun.star.awt.UnoControlButtonModel", f"btn_nombre_{i}",
+                x, y_grilla - alto_nombre, ANCHO_COL_BOTON, alto_nombre,
+                MultiLine=True, Label="\n".join(etiqueta),
+            )
+
+            # Casillas de visibilidad de esta columna.
+            visibles = visibilidad_por_boton[boton_id]
+            for j, nombre_usuario in enumerate(usuarios_filas):
+                _control(
+                    "com.sun.star.awt.UnoControlCheckBoxModel", f"chk_v_{i}_{j}",
+                    x + (ANCHO_COL_BOTON - 16) // 2, y_grilla + j * ALTO_FILA, 16, 16,
+                    TriState=False, State=1 if nombre_usuario in visibles else 0, Enabled=bool(activo),
+                )
+
+        y_botones = _Y0 + alto_grilla + 8
+        _control("com.sun.star.awt.UnoControlButtonModel", "btnCrear", _X0, y_botones, 100, 18, Label="Crear botón")
+        _control("com.sun.star.awt.UnoControlButtonModel", "btnCerrar", ancho - _X0 - 76, y_botones, 76, 18, Label="Cerrar", PushButtonType=2)
+
+        dialog = crear_peer(smgr, uno_context, dialog_model)
+        accion = {"tipo": "cerrar", "boton": None}
+        referencias = []
+
+        def _terminar(tipo, boton=None):
+            accion["tipo"] = tipo
+            accion["boton"] = boton
+            dialog.endExecute()
+
+        def _crear_movedor(i, direccion):
+            def _mover():
+                _mover_boton(botones_service, botones, i, direccion)
+                _terminar("recargar")
+
+            return _mover
+
+        for i, boton in enumerate(botones):
+            referencias.append(EscuchaAccion(_crear_movedor(i, -1)))
+            dialog.getControl(f"btn_izq_{i}").addActionListener(referencias[-1])
+            referencias.append(EscuchaAccion(_crear_movedor(i, 1)))
+            dialog.getControl(f"btn_der_{i}").addActionListener(referencias[-1])
+
+            referencias.append(EscuchaAccion(lambda boton=boton: _terminar("editar_boton", boton)))
+            dialog.getControl(f"btn_nombre_{i}").addActionListener(referencias[-1])
+
+            def _al_cambiar_activo(marcada, i=i, boton_id=boton[0]):
+                botones_service.establecer_activo(boton_id, marcada)
+                for j in range(len(usuarios_filas)):
+                    dialog.getControl(f"chk_v_{i}_{j}").getModel().Enabled = marcada
+
+            referencias.append(EscuchaCasilla(_al_cambiar_activo))
+            dialog.getControl(f"chk_activo_{i}").addItemListener(referencias[-1])
+
+            for j, nombre_usuario in enumerate(usuarios_filas):
+                def _al_cambiar_visibilidad(marcada, boton_id=boton[0], nombre_usuario=nombre_usuario):
+                    visibles = visibilidad_por_boton[boton_id]
+                    visibles.add(nombre_usuario) if marcada else visibles.discard(nombre_usuario)
+                    botones_service.set_visibilidad(boton_id, list(visibles))
+
+                referencias.append(EscuchaCasilla(_al_cambiar_visibilidad))
+                dialog.getControl(f"chk_v_{i}_{j}").addItemListener(referencias[-1])
+
+        referencias.append(EscuchaAccion(lambda: _terminar("crear")))
+        dialog.getControl("btnCrear").addActionListener(referencias[-1])
+
+        try:
+            dialog.execute()
+        finally:
+            dialog.dispose()
+
+        # accion["tipo"] queda en su valor por defecto ("cerrar") si se cerró con el botón
+        # Cerrar (PushButtonType=CANCELAR: UNO lo maneja solo, sin pasar por ningún listener
+        # nuestro) o con la X de la ventana; cualquier otro camino lo sobreescribe via _terminar.
+        tipo = accion["tipo"]
+
+        if tipo == "cerrar":
             return
 
-        if valor == "crear":
+        if tipo == "crear":
             datos = _solicitar_datos_boton(uno_context, "Nuevo botón")
-            if datos is None:
-                continue
-            etiqueta, archivo, orden = datos
-            try:
-                botones_service.crear_boton(archivo, etiqueta, archivo, orden)
-            except ValueError as exc:
-                _mostrar_mensaje(uno_context, str(exc))
+            if datos is not None:
+                etiqueta, archivo = datos
+                try:
+                    botones_service.crear_boton(archivo, etiqueta, archivo, orden=len(botones))
+                except ValueError as exc:
+                    _mostrar_mensaje(uno_context, str(exc))
             continue
 
-        if seleccion < 0 or seleccion >= len(botones):
-            _mostrar_mensaje(uno_context, "Seleccione un botón de la lista primero.")
+        if tipo == "editar_boton":
+            boton_id, _ni, etiqueta, archivo, _orden, _activo = accion["boton"]
+            opcion = _menu_editar_boton(uno_context, accion["boton"])
+            if opcion == "editar":
+                datos = _solicitar_datos_boton(uno_context, "Editar botón", etiqueta, archivo)
+                if datos is not None:
+                    nueva_etiqueta, nuevo_archivo = datos
+                    botones_service.editar_boton(boton_id, etiqueta=nueva_etiqueta, archivo_accion=nuevo_archivo)
+            elif opcion == "eliminar":
+                botones_service.eliminar_boton(boton_id)
             continue
 
-        boton_id, _nombre_interno, etiqueta, archivo, orden, activo = botones[seleccion]
-
-        if valor == "editar":
-            datos = _solicitar_datos_boton(uno_context, "Editar botón", etiqueta, archivo, orden)
-            if datos is None:
-                continue
-            nueva_etiqueta, nuevo_archivo, nuevo_orden = datos
-            botones_service.editar_boton(boton_id, etiqueta=nueva_etiqueta, archivo_accion=nuevo_archivo, orden=nuevo_orden)
-            continue
-
-        if valor == "eliminar":
-            botones_service.eliminar_boton(boton_id)
-            continue
-
-        if valor == "activar":
-            botones_service.establecer_activo(boton_id, not activo)
-            continue
-
-        if valor == "visibilidad":
-            usuarios_actuales = botones_service.listar_visibilidad(boton_id)
-            candidatos = _listar_usuarios_candidatos(ventas_service)
-            candidatos_completos = candidatos + [u for u in usuarios_actuales if u not in candidatos]
-            resultado = _solicitar_visibilidad(uno_context, f"Visibilidad: {etiqueta}", candidatos_completos, usuarios_actuales)
-            if resultado is not _CANCELADO:
-                botones_service.set_visibilidad(boton_id, resultado)
-            continue
-
-
-def _pantalla_botones_de_usuario(uno_context, botones_service, nombre_usuario):
-    etiqueta_pantalla = _etiqueta_usuario(nombre_usuario)
-
-    usuario_id = botones_service.obtener_usuario_id(nombre_usuario)
-    botones = botones_service.listar_botones()
-    visibles_ids = {
-        boton_id
-        for boton_id, _et, _ar, _or in botones_service.listar_botones_visibles_para(usuario_id, solo_activos=False)
-    }
-
-    smgr, dialog_model = _crear_dialogo_base(uno_context, f"Botones de: {etiqueta_pantalla}", 280, 40 + 16 * len(botones) + 34)
-
-    y = 8
-    for indice, (boton_id, _ni, etiqueta, _ar, _or, activo) in enumerate(botones):
-        modelo = dialog_model.createInstance("com.sun.star.awt.UnoControlCheckBoxModel")
-        modelo.Name = f"chkBoton{indice}"
-        modelo.PositionX = 8
-        modelo.PositionY = y
-        modelo.Width = 244
-        modelo.Height = 14
-        modelo.Label = f"{etiqueta}" + ("" if activo else " (inactivo)")
-        modelo.TriState = False
-        modelo.State = 1 if boton_id in visibles_ids else 0
-        dialog_model.insertByName(f"chkBoton{indice}", modelo)
-        y += 16
-
-    _agregar_boton_ok_cancel(dialog_model, y + 8, etiqueta_ok="Guardar")
-
-    dialog = _crear_peer(smgr, uno_context, dialog_model)
-    try:
-        resultado = dialog.execute()
-        if resultado != 1:
-            return
-
-        for indice, (boton_id, _ni, _et, _ar, _or, _ac) in enumerate(botones):
-            marcado = dialog.getControl(f"chkBoton{indice}").getState() == 1
-            ya_incluido = boton_id in visibles_ids
-            if marcado == ya_incluido:
-                continue
-
-            visibilidad_actual = botones_service.listar_visibilidad(boton_id)
-            nueva = [u for u in visibilidad_actual if u != nombre_usuario]
-            if marcado:
-                nueva.append(nombre_usuario)
-            botones_service.set_visibilidad(boton_id, nueva)
-    finally:
-        dialog.dispose()
-
-
-def _pantalla_usuarios(uno_context, botones_service, ventas_service):
-    while True:
-        usuarios = _listar_usuarios_candidatos(ventas_service)
-        etiquetas = [_etiqueta_usuario(nombre) for nombre in usuarios]
-
-        smgr, dialog_model = _crear_dialogo_base(uno_context, "Usuarios y accesos", 260, 190)
-
-        lista_model = dialog_model.createInstance("com.sun.star.awt.UnoControlListBoxModel")
-        lista_model.Name = "lstUsuarios"
-        lista_model.PositionX = 8
-        lista_model.PositionY = 8
-        lista_model.Width = 244
-        lista_model.Height = 128
-        lista_model.StringItemList = tuple(etiquetas)
-        dialog_model.insertByName("lstUsuarios", lista_model)
-
-        for nombre, x, etiqueta_texto in (("btnBotones", 8, "Administrar botones"), ("btnCerrar", 176, "Cerrar")):
-            modelo = dialog_model.createInstance("com.sun.star.awt.UnoControlButtonModel")
-            modelo.Name = nombre
-            modelo.PositionX = x
-            modelo.PositionY = 144
-            modelo.Width = 76 if nombre == "btnCerrar" else 160
-            modelo.Height = 16
-            modelo.Label = etiqueta_texto
-            dialog_model.insertByName(nombre, modelo)
-
-        dialog = _crear_peer(smgr, uno_context, dialog_model)
-        mapa = {"btnBotones": "botones", "btnCerrar": "cerrar"}
-        valor, seleccion = _ejecutar_dialogo_con_acciones(uno_context, dialog_model, dialog, mapa, "lstUsuarios")
-
-        if valor in (None, "cerrar"):
-            return
-
-        if valor == "botones":
-            if seleccion < 0 or seleccion >= len(usuarios):
-                _mostrar_mensaje(uno_context, "Seleccione un usuario de la lista primero.")
-                continue
-            _pantalla_botones_de_usuario(uno_context, botones_service, usuarios[seleccion])
-            continue
-
-
-def _pantalla_menu_principal(uno_context):
-    smgr, dialog_model = _crear_dialogo_base(uno_context, "Administrar admins", 220, 130)
-
-    lista_model = dialog_model.createInstance("com.sun.star.awt.UnoControlListBoxModel")
-    lista_model.Name = "lstMenu"
-    lista_model.PositionX = 8
-    lista_model.PositionY = 8
-    lista_model.Width = 204
-    lista_model.Height = 70
-    lista_model.StringItemList = ("Usuarios y accesos", "Administrar botones")
-    dialog_model.insertByName("lstMenu", lista_model)
-
-    _agregar_boton_ok_cancel(dialog_model, 88, etiqueta_ok="Entrar")
-    dialog_model.getByName("btnCancel").Label = "Cerrar"
-
-    dialog = _crear_peer(smgr, uno_context, dialog_model)
-    try:
-        resultado = dialog.execute()
-        if resultado != 1:
-            return None
-        seleccion = dialog.getControl("lstMenu").getSelectedItemPos()
-    finally:
-        dialog.dispose()
-
-    if seleccion == 0:
-        return "usuarios"
-    if seleccion == 1:
-        return "botones"
-    return None
+        # "recargar": las flechas ya aplicaron el cambio; solo falta reconstruir la matriz.
+        continue
 
 
 def abrir_panel_administracion(uno_context, botones_service, usuario_actual):
-    ventas_service = VentasService()
-
-    while True:
-        opcion = _pantalla_menu_principal(uno_context)
-        if opcion is None:
-            return
-        if opcion == "usuarios":
-            _pantalla_usuarios(uno_context, botones_service, ventas_service)
-        elif opcion == "botones":
-            _pantalla_botones(uno_context, botones_service, ventas_service)
+    # La matriz (visibilidad por casilla, activo/inactivo en el encabezado) ya cubre todo lo que
+    # hacían "Usuarios y accesos"/"Botones de: <usuario>" -- de a un usuario a la vez, botón por
+    # botón -- así que se quitaron: no había nada más que ese menú ofreciera. El botón
+    # "ADMINISTRAR ADMINS" de la hoja abre la matriz directo, sin un paso intermedio de elegir.
+    usuarios_service = UsuariosService()
+    _pantalla_botones(uno_context, botones_service, usuarios_service)

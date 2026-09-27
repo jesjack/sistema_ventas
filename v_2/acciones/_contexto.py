@@ -2,7 +2,11 @@ import functools
 
 
 def usar_contexto(ejecutar):
-    """Antes de correr ejecutar(ctx), copia cada entrada de ctx como global de
+    """OBSOLETO: solo lo usa acciones/ver_camaras.py (la app de cámaras la mantiene otra instancia).
+    Las acciones nuevas reciben un nucleo.contexto.Contexto y usan `ctx.atributo` con imports explícitos.
+    Cuando ver_camaras deje de usarlo, borrar este archivo y Contexto.keys/__getitem__.
+
+    Antes de correr ejecutar(ctx), copia cada entrada de ctx como global de
     este modulo, para escribir "cart" en vez de "ctx["cart"]" en el cuerpo.
 
     Limite real: esto copia valores HACIA el modulo de la accion, no los

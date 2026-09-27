@@ -1,19 +1,6 @@
-from acciones._contexto import usar_contexto
+from nucleo.caja import abrir_caja
 
 
-@usar_contexto
 def ejecutar(ctx):
-    try:
-        printer = TicketPrinter()
-        printer.open_cash_drawer()
+    if abrir_caja(ctx, detalle_ok="Se abrió la caja desde el botón de la hoja."):
         print("Caja abierta desde el boton.")
-    except Exception as exc:
-        print(f"No se pudo abrir la caja: {exc}")
-        return
-
-    with sheet_admin.temporary_unlock():
-        table_manager.registrar_evento_especial(
-            ventas,
-            "APERTURA DE CAJA",
-            detalle="Se abrió la caja desde el botón de la hoja.",
-        )

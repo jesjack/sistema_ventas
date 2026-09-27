@@ -8,11 +8,49 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
 
 try:
     import qrcode
 except ImportError:  # pragma: no cover - fallback para entornos sin dependencia
     qrcode = None
+
+
+# 2026-09-23: con la impresora atascada, escribir a /dev/usb/lpN se quedaba esperando para
+# siempre (sin excepción, sin timeout propio del driver) -- y como esto corre dentro del mismo
+# hilo que escucha TODOS los botones de la hoja (SheetButtonBridge), un ticket colgado dejaba
+# muertos ABRIR CAJA y cualquier otro botón, sin ningún error en el log. Ver
+# _escribir_con_limite_de_tiempo.
+DEVICE_WRITE_TIMEOUT = 5.0  # s
+
+
+def _escribir_con_limite_de_tiempo(device, data, timeout=DEVICE_WRITE_TIMEOUT):
+    """open(device, 'wb') + write + flush, pero sin esperar más de `timeout` segundos.
+
+    Python no puede interrumpir una escritura bloqueada a un dispositivo desde el hilo que la
+    pidió, así que se delega a un hilo aparte: si no termina a tiempo, se deja de esperarlo (ese
+    hilo queda abandonado en segundo plano, sin bloquear el arranque/cierre del proceso -- es
+    `daemon`) y se avisa con un error claro en vez de colgar a quien llamó."""
+    resultado = {}
+
+    def escribir():
+        try:
+            with open(device, "wb") as printer:
+                printer.write(data)
+                printer.flush()
+            resultado["ok"] = True
+        except Exception as exc:
+            resultado["error"] = exc
+
+    hilo = threading.Thread(target=escribir, name="EscrituraImpresora", daemon=True)
+    hilo.start()
+    hilo.join(timeout)
+
+    if hilo.is_alive():
+        raise TimeoutError(f"la impresora no respondió en {timeout:.1f}s (dispositivo: {device})")
+    if "error" in resultado:
+        raise resultado["error"]
+    return resultado.get("ok", False)
 
 
 class TicketPrinter:
@@ -408,9 +446,7 @@ class TicketPrinter:
 
         # Fallback: try to open as a file/device on POSIX
         try:
-            with open(device, "wb") as printer:
-                printer.write(self.buffer)
-                printer.flush()
+            _escribir_con_limite_de_tiempo(device, bytes(self.buffer))
         except Exception as exc:
             self._log_error(f"No se pudo imprimir en {device}: {exc}")
             return False
@@ -470,8 +506,16 @@ class TicketPrinter:
         return self.send_print()
 
 
-default_ticket_printer = TicketPrinter()
+_default_ticket_printer = None
+
+
+def impresora_de_tickets():
+    """La impresora compartida, creada en el primer uso: importar este modulo no debe tocar el disco."""
+    global _default_ticket_printer
+    if _default_ticket_printer is None:
+        _default_ticket_printer = TicketPrinter()
+    return _default_ticket_printer
 
 
 def imprimir_ticket_venta(items, total, recibido, cambio, title="Yaeli's Boutique", website_url=None):
-    return default_ticket_printer.print_sale(items, total, recibido, cambio, title=title, website_url=website_url)
+    return impresora_de_tickets().print_sale(items, total, recibido, cambio, title=title, website_url=website_url)

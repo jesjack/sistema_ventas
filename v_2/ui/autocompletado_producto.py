@@ -14,12 +14,12 @@ LOG_PATH = LOGS_DIR / "autocompletado_producto.log"
 
 
 class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
-    def __init__(self, uno_context, documento, hoja, input_table, ventas_service, sheet_admin):
+    def __init__(self, uno_context, documento, hoja, input_table, catalogo, sheet_admin):
         self.uno_context = uno_context
         self.documento = documento
         self.hoja = hoja
         self.input_table = input_table
-        self.ventas_service = ventas_service
+        self.catalogo = catalogo
         self.sheet_admin = sheet_admin
         self.selector_activo = False
 
@@ -208,9 +208,9 @@ class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
             self._log("Autocompletado cancelado: B4 esta vacia.")
             return False
 
-        prefijo = self.ventas_service._normalizar_prefijo_usuario(texto)
+        prefijo = self.catalogo.normalizar_prefijo(texto)
         self._log(f"Buscando coincidencias por iniciales: {texto!r} -> {prefijo!r}")
-        coincidencias = self.ventas_service.buscar_catalogo_por_iniciales(prefijo, limite=25)
+        coincidencias = self.catalogo.buscar_catalogo_por_iniciales(prefijo, limite=25)
         self._log(f"Coincidencias por iniciales encontradas: {len(coincidencias)}")
         if not coincidencias:
             self._log(f"No se encontraron coincidencias para las iniciales: {prefijo!r}")
@@ -226,9 +226,9 @@ class AutocompletadoProductoHandler(unohelper.Base, XKeyHandler):
 
     def seleccionar_producto(self, prefijo=None, limite=25):
         if prefijo:
-            coincidencias = self.ventas_service.buscar_catalogo_por_iniciales(prefijo, limite=limite)
+            coincidencias = self.catalogo.buscar_catalogo_por_iniciales(prefijo, limite=limite)
         else:
-            coincidencias = self.ventas_service.listar_catalogo_autocompletado()
+            coincidencias = self.catalogo.listar_catalogo_autocompletado()
 
         return self._elegir_producto(coincidencias)
 

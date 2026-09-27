@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QStyleFactory
 
 from . import dvr_log
 from .main_window import MainWindow
-from .shared_paths import SHARE_RUNTIME_DIR, apply_shared_umask, ensure_shared_root
+from .shared_paths import (
+    SHARE_RUNTIME_DIR,
+    apply_shared_umask,
+    ensure_shared_root,
+    purge_old_ready_markers,
+    ready_marker_path,
+)
 from .singleton_lock import acquire_singleton_lock
 
 LOCK_PATH = SHARE_RUNTIME_DIR / "camera_viewer.lock"
@@ -79,6 +87,22 @@ def main() -> None:
 
     window = MainWindow()
     window.show()
+
+    # Avisa a quien lanzó este proceso (ver_camaras.py) que la ventana ya se mostró, para que
+    # deje de mostrar "Abriendo cámaras…" -- QTimer.singleShot(0, ...) para escribirlo ya
+    # arrancado el bucle de eventos, no aquí: show() solo AGENDA que se muestre, el primer
+    # dibujo real ocurre recién ahí. purge_old_ready_markers() de paso (nadie más los limpia:
+    # esta app cierra con os._exit, sin oportunidad de borrar el suyo al terminar).
+    purge_old_ready_markers()
+    marker = ready_marker_path(os.getpid())
+
+    def _avisar_ventana_lista() -> None:
+        try:
+            marker.touch(exist_ok=True)
+        except OSError:
+            pass  # no es crítico: quien espera este archivo igual tiene su propio tope de tiempo
+
+    QTimer.singleShot(0, _avisar_ventana_lista)
 
     sys.exit(app.exec())
 

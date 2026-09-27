@@ -95,10 +95,20 @@ copy_to_dir() {
 
     mkdir -p "$target_dir"
 
+    # 0755 (ejecutable), no 0644: Nautilus (GNOME Files, lo que usa este equipo) no muestra el
+    # Icon= de un .desktop del escritorio que no sea ejecutable -- se ve un icono generico en vez
+    # del nuestro. Con esto sale el icono correcto de una vez.
+    #
+    # Falta un paso que este script NO puede automatizar: Nautilus ademas exige "confiar" en el
+    # lanzador antes de poder abrirlo con doble clic (marca metadata::trusted, que vive en la
+    # sesion grafica de CADA usuario via gvfs-metadata -- root no puede escribirla por otro
+    # usuario). La primera vez, cada usuario tiene que darle clic derecho al icono y elegir
+    # "Permitir lanzamiento" (o el equivalente en su idioma) una sola vez.
     if [[ -n "$owner_user" && -n "$owner_group" ]]; then
-        install -D -m 0644 -o "$owner_user" -g "$owner_group" "$SOURCE_FILE" "$target_file"
+        install -D -m 0755 -o "$owner_user" -g "$owner_group" "$SOURCE_FILE" "$target_file"
     else
         cp "$SOURCE_FILE" "$target_file"
+        chmod 0755 "$target_file"
     fi
 }
 
@@ -149,12 +159,21 @@ fi
 # Nota: set -e no detiene un bucle while por si solo cuando el comando que
 # falla esta combinado con "||" -- por eso cada copia se maneja asi en vez de
 # dejar que un solo usuario problematico aborte el resto del barrido.
-while IFS=: read -r user home_dir _rest; do
+#
+# getent passwd da 7 campos (usuario:contraseña:uid:gid:gecos:home:shell) --
+# hay que nombrarlos TODOS en el read. Antes solo se nombraban 3
+# (user/home_dir/_rest), asi que "home_dir" se quedaba con el campo 2 (la "x"
+# de la contraseña) en vez del 6 (el home real): [[ "$home_dir" == /home/* ]]
+# nunca era cierto para NINGUN usuario ya existente, y el bucle los saltaba a
+# todos con continue -- nunca llego a copiar nada aqui, solo a los usuarios
+# nuevos via /etc/skel. Encontrado el 2026-09-24 al ver que no llegaba a
+# nancy pese a que el script terminaba sin ningun error.
+while IFS=: read -r user _pass _uid gid _gecos home_dir _shell; do
     [[ -n "$home_dir" ]] || continue
     [[ "$home_dir" == /home/* ]] || continue
     [[ -d "$home_dir" ]] || continue
 
-    primary_group="$(getent passwd "$user" | cut -d: -f4 | xargs getent group | cut -d: -f1)"
+    primary_group="$(getent group "$gid" | cut -d: -f1)"
     if [[ -n "$primary_group" ]]; then
         copy_to_dir "$(resolve_desktop_dir "$home_dir")" "$user" "$primary_group" \
             || failed_users+=("$user")

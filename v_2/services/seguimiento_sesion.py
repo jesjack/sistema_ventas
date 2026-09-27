@@ -6,19 +6,19 @@ import time
 
 
 class SeguimientoSesionSistema:
-    def __init__(self, ventas_service, usuario_id, intervalo_segundos=60):
+    def __init__(self, usuarios_service, usuario_id, intervalo_segundos=60):
         # usuario_id ya viene resuelto por el llamador (via
-        # ventas_service.asegurar_usuario_sistema): la visibilidad de
+        # usuarios_service.asegurar_usuario_sistema): la visibilidad de
         # botones necesita ese id incluso si este seguimiento de sesion
         # falla al construirse, asi que no se deriva aqui adentro.
-        self.ventas_service = ventas_service
+        self.usuarios_service = usuarios_service
         self.usuario_id = usuario_id
         self.intervalo_segundos = max(5, int(intervalo_segundos))
         self._detener = threading.Event()
         self._lock = threading.Lock()
         self._cerrado = False
 
-        self.sesion_id = self.ventas_service.iniciar_sesion_sistema(
+        self.sesion_id = self.usuarios_service.iniciar_sesion_sistema(
             self.usuario_id,
             pid=os.getpid(),
         )
@@ -32,7 +32,7 @@ class SeguimientoSesionSistema:
     def _bucle_latido(self):
         while not self._detener.wait(self.intervalo_segundos):
             try:
-                self.ventas_service.registrar_latido_sesion(self.sesion_id)
+                self.usuarios_service.registrar_latido_sesion(self.sesion_id)
             except Exception:
                 pass
 
@@ -47,7 +47,7 @@ class SeguimientoSesionSistema:
 
         self._detener.set()
         try:
-            self.ventas_service.cerrar_sesion_sistema(
+            self.usuarios_service.cerrar_sesion_sistema(
                 self.sesion_id,
                 detalle=detalle,
                 exitosa=exitosa,
@@ -60,6 +60,6 @@ class SeguimientoSesionSistema:
 
     def latido_inmediato(self):
         try:
-            self.ventas_service.registrar_latido_sesion(self.sesion_id)
+            self.usuarios_service.registrar_latido_sesion(self.sesion_id)
         except Exception:
             pass

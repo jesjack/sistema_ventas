@@ -4,5 +4,5 @@ Name=Abrir sistema ventas
 Comment=Pre-hornea la hoja de ventas y abre LibreOffice con el puerto 2002
 Exec=/bin/bash /home/jesjack/sistema_ventas/v_2/open_system.sh
 Terminal=false
-Icon=/home/jesjack/sistema_ventas/v_2/share/icono_tpv_yaeli.svg
+Icon=/home/jesjack/sistema_ventas/v_2/share/icono_sistema_ventas.svg
 Categories=Office;

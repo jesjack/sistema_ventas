@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -136,6 +137,42 @@ class InheritedAclTests(unittest.TestCase):
         with mock.patch.object(shared_paths.subprocess, "run", side_effect=OSError("no se pudo")):
             shared_paths.ensure_shared_root(target)  # no lanza
         self.assertTrue(target.is_dir())
+
+
+class ReadyMarkerTests(unittest.TestCase):
+    """El aviso "la ventana ya se mostró" que espera acciones/ver_camaras.py (ver
+    dialogs/aviso_cargando.py) en vez de un tiempo fijo."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+        patcher = mock.patch.object(shared_paths, "SHARE_RUNTIME_DIR", self.tmp)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_path_is_named_after_the_pid(self) -> None:
+        self.assertEqual(shared_paths.ready_marker_path(4242), self.tmp / "listo_4242.marker")
+        self.assertNotEqual(shared_paths.ready_marker_path(1), shared_paths.ready_marker_path(2))
+
+    def test_purge_removes_only_markers_older_than_max_age(self) -> None:
+        old = shared_paths.ready_marker_path(1)
+        new = shared_paths.ready_marker_path(2)
+        old.touch()
+        new.touch()
+        old_time = time.time() - 1000
+        os.utime(old, (old_time, old_time))
+        shared_paths.purge_old_ready_markers(max_age=300.0)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists())
+
+    def test_purge_with_no_runtime_dir_yet_does_not_fail(self) -> None:
+        shutil.rmtree(self.tmp)
+        shared_paths.purge_old_ready_markers()  # no lanza
+
+    def test_purge_ignores_files_that_do_not_match_the_marker_pattern(self) -> None:
+        (self.tmp / "otro_archivo.txt").write_text("x")
+        shared_paths.purge_old_ready_markers(max_age=0.0)
+        self.assertTrue((self.tmp / "otro_archivo.txt").exists())
 
 
 if __name__ == "__main__":

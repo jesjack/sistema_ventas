@@ -1,41 +1,21 @@
 import time
 
-from dialogs.cobro_uno import solicitar_monto_cliente
-from services.ventas_service import VentasService
-from hardware.ticket_printer import imprimir_ticket_venta
-
-ventas_service = VentasService()
+from table_modules.carrito import agregar_al_carrito, total_del_carrito
 
 
 class TableManager:
-    def __init__(self, uno_context=None, ventas_service_instance=None, cobro_provider=None):
-        self.uno_context = uno_context
-        self.ventas_service = ventas_service_instance or ventas_service
-        self.cobro_provider = cobro_provider or (
-            lambda total: solicitar_monto_cliente(total, self.uno_context)
-        )
+    """Une las tablas de la hoja con los servicios: vender, cargar el historial y
+    registrar eventos. Todo lo externo (base de datos, cobro, ticket) llega por el
+    constructor, asi que importar este modulo no abre nada y se puede probar con
+    dobles."""
+
+    def __init__(self, ventas_service, cobro_provider, imprimir_ticket):
+        self.ventas_service = ventas_service
+        self.cobro_provider = cobro_provider  # total -> (recibido, cambio) | None si se cancela
+        self.imprimir_ticket = imprimir_ticket  # (items, total, recibido, cambio)
 
     def add_item_to_cart(self, input_table, cart_table):
-        input_data = list(input_table[0])
-        if not input_data:
-            return False
-
-        producto, precio, cantidad = input_data
-        if not producto or not precio or not cantidad:
-            print("Todos los campos deben estar completos para agregar al carrito.")
-            return False
-
-        for index, row in enumerate(cart_table):
-            if row[0] == producto and row[1] == precio:
-                cantidad_total = row[2] + cantidad
-                cart_table[index] = (producto, precio, cantidad_total, precio * cantidad_total)
-                break
-        else:
-            cart_table.append((producto, precio, cantidad, precio * cantidad))
-
-        input_table.clear()
-        input_table.append(["", "", 1])
-        return True
+        return agregar_al_carrito(input_table, cart_table)
 
     def sell_items(self, cart_table, ventas_table):
         if not cart_table:
@@ -43,7 +23,7 @@ class TableManager:
             return "code"
 
         items_vendidos = list(cart_table)
-        total = sum(float(item[3]) for item in items_vendidos)
+        total = total_del_carrito(items_vendidos)
         cobro = self.cobro_provider(total)
         if cobro is None:
             print("Venta cancelada por el usuario.")
@@ -57,7 +37,7 @@ class TableManager:
 
         self.ventas_service.registrar_venta(items_vendidos, recibido=recibido, cambio=cambio)
         try:
-            imprimir_ticket_venta(items_vendidos, total, recibido, cambio)
+            self.imprimir_ticket(items_vendidos, total, recibido, cambio)
         except Exception as exc:
             print(f"No se pudo generar el ticket de venta: {exc}")
         cart_table.clear()

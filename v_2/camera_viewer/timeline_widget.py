@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QGraphicsSim
 
 from .clip_timeline import label_positions
 from .dvr_client import Clip
+from .export_hours import GAP_TOLERANCE
 from .zoom_canvas import ZoomPanGraphicsView
 
 SECONDS_PER_DAY = 24 * 60 * 60
@@ -369,7 +370,13 @@ class TimelineWidget(ZoomPanGraphicsView):
         """Rangos (en segundos desde medianoche) con grabacion en AL MENOS
         un canal, fusionados y ordenados. Cada clip se recorta a los
         limites del dia mostrado -- un clip de otro dia (no deberia pasar,
-        pero por las dudas) no debe ensuciar el resultado."""
+        pero por las dudas) no debe ensuciar el resultado.
+
+        Un hueco menor a GAP_TOLERANCE entre dos clips consecutivos NO cuenta como falta de
+        grabación: el propio DVR corta la grabación en archivos separados con un salto real de
+        uno o dos segundos entre cada uno (visto en export_hours.merge_intervals, que usa esta
+        misma tolerancia) -- sin esto, cada uno de esos cortes normales se pintaba como una
+        franja roja de "sin grabación" en la línea de tiempo, aunque no faltara nada de verdad."""
         if self._day is None:
             return []
 
@@ -398,9 +405,10 @@ class TimelineWidget(ZoomPanGraphicsView):
 
         intervals.sort()
         merged = [intervals[0]]
+        tolerance_seconds = GAP_TOLERANCE
         for start, end in intervals[1:]:
             last_start, last_end = merged[-1]
-            if start <= last_end:
+            if start <= last_end + tolerance_seconds:
                 merged[-1] = (last_start, max(last_end, end))
             else:
                 merged.append((start, end))

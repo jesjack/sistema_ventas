@@ -195,15 +195,29 @@ class LandingTests(EngineTestCase):
         self.assertFalse(engine.run_once())
         self.assertIsNone(idx.get_cursor(engine.conn, 1))
 
-    def test_a_download_that_fails_after_retries_still_advances_past_that_piece(self) -> None:
+    def test_a_download_that_fails_after_retries_is_retried_later_not_skipped(self) -> None:
+        """2026-09-25: el DVR real estuvo caído >90 min y el cursor seguía avanzando de todos
+        modos, saltándose para siempre lo que no se pudo bajar -- ahora el trozo se queda
+        pendiente y se reintenta en el siguiente ciclo, sin perder nada."""
         self.find_files.recordings[1] = [(at(9), at(9, 5))]
         self.submit.fail_starts.add(at(9))
         engine = self.make(segment_seconds=300)
         with mock.patch.object(archiver, "CHUNK_RETRY_DELAYS", (0.0, 0.0)):
-            self.assertTrue(engine.run_once())
+            self.assertFalse(engine.run_once())  # no se pudo aterrizar nada este ciclo
         self.assertEqual(idx.segments_for_channel(engine.conn, 1), [])  # no se guardó nada
-        self.assertEqual(idx.get_cursor(engine.conn, 1), at(9, 5))  # pero no se atasca ahí para siempre
-        self.assertGreaterEqual(len(self.submit.calls), 1 + archiver.CHUNK_RETRIES)
+        self.assertIsNone(idx.get_cursor(engine.conn, 1))  # sigue sin avanzar: se reintentará
+        calls_after_first_cycle = len(self.submit.calls)
+        self.assertGreaterEqual(calls_after_first_cycle, 1 + archiver.CHUNK_RETRIES)
+
+        # Ya no consulta find_files de nuevo (el trozo pendiente sigue cacheado) y reintenta la
+        # MISMA pieza; si el DVR ya respondió, esta vez se aterriza bien.
+        self.submit.fail_starts.discard(at(9))
+        find_files_calls_before = len(self.find_files.calls)
+        with mock.patch.object(archiver, "CHUNK_RETRY_DELAYS", (0.0, 0.0)):
+            self.assertTrue(engine.run_once())
+        self.assertEqual(len(self.find_files.calls), find_files_calls_before)
+        self.assertEqual(len(idx.segments_for_channel(engine.conn, 1)), 1)
+        self.assertEqual(idx.get_cursor(engine.conn, 1), at(9, 5))
 
     def test_channels_are_served_round_robin_not_one_at_a_time(self) -> None:
         self.find_files.recordings[1] = [(at(9), at(9, 20))]
@@ -336,6 +350,58 @@ class RunForeverTests(EngineTestCase):
         engine.run_once = flaky
         engine.run_forever()  # no debe propagar la excepción
         self.assertGreaterEqual(calls["n"], 2)
+
+    def test_backoff_grows_on_consecutive_failures_and_resets_on_success(self) -> None:
+        """2026-09-25: con el DVR real caído, el archivador reintentaba sin ninguna pausa
+        creciente durante más de 90 min seguidos. Ahora, tras varios fallos SEGUIDOS, la espera
+        entre ciclos se va doblando -- y en cuanto un ciclo tiene éxito (p. ej. el DVR ya
+        reinició), vuelve sola al ritmo normal, sin que nadie tenga que detener el proceso."""
+        engine = self.make()
+        outcomes = [False, False, False, True]  # 3 fallos seguidos, luego el DVR responde
+        waits: list[float] = []
+
+        def fake_run_once() -> bool:
+            if outcomes.pop(0):
+                engine._register_success()
+            else:
+                engine._register_failure()
+            if not outcomes:
+                engine.request_stop()
+            return False
+
+        def fake_wait(timeout=None) -> bool:
+            waits.append(timeout)
+            return engine.stop.is_set()
+
+        engine.run_once = fake_run_once
+        engine.stop.wait = fake_wait
+        engine.run_forever()
+
+        idle, initial, mult = archiver.CYCLE_IDLE_SLEEP, archiver.DVR_BACKOFF_INITIAL, archiver.DVR_BACKOFF_MULTIPLIER
+        self.assertEqual(waits, [idle, initial, initial * mult, idle])
+
+    def test_backoff_never_exceeds_the_configured_cap(self) -> None:
+        engine = self.make()
+        waits: list[float] = []
+        cycles = {"n": 0}
+
+        def always_fails() -> bool:
+            engine._register_failure()
+            cycles["n"] += 1
+            if cycles["n"] >= 12:
+                engine.request_stop()
+            return False
+
+        def fake_wait(timeout=None) -> bool:
+            waits.append(timeout)
+            return engine.stop.is_set()
+
+        engine.run_once = always_fails
+        engine.stop.wait = fake_wait
+        engine.run_forever()
+
+        self.assertLessEqual(max(waits), archiver.DVR_BACKOFF_MAX)
+        self.assertEqual(waits[-1], archiver.DVR_BACKOFF_MAX)  # ya llegó al tope y se quedó ahí
 
 
 @unittest.skipUnless(FFMPEG and shutil.which("ffprobe"), "hace falta ffmpeg/ffprobe")

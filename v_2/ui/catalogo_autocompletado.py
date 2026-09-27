@@ -1,57 +1,15 @@
-import sqlite3
-import unohelper
-from com.sun.star.awt import XActionListener
-
-from services.ventas_service import VentasService
-
-PREPOSICIONES = {
-    "de",
-    "del",
-    "la",
-    "el",
-    "los",
-    "las",
-    "un",
-    "una",
-    "unos",
-    "unas",
-    "y",
-    "o",
-}
+from dialogs._base import EscuchaAccion
+from services.catalogo_service import CatalogoService, ProductoDuplicado, ProductoEnUso, formatear_nombre
 
 
 def _normalizar_catalogo(texto):
     return str(texto).strip().lower()
 
 
-def _formatear_catalogo(texto):
-    palabras = []
-    for palabra in str(texto).strip().split():
-        palabra_limpia = palabra.strip()
-        if not palabra_limpia:
-            continue
-        if palabra_limpia.lower() in PREPOSICIONES:
-            palabras.append(palabra_limpia.lower())
-        else:
-            palabras.append(palabra_limpia[:1].upper() + palabra_limpia[1:].lower())
-    return " ".join(palabras)
-
-
-class _BotonListener(unohelper.Base, XActionListener):
-    def __init__(self, callback):
-        self._callback = callback
-
-    def actionPerformed(self, _event):
-        self._callback()
-
-    def disposing(self, _event):
-        pass
-
-
 class EditorCatalogoAutocompletado:
-    def __init__(self, uno_context, ventas_service=None):
+    def __init__(self, uno_context, catalogo=None):
         self.uno_context = uno_context
-        self.ventas_service = ventas_service or VentasService()
+        self.catalogo = catalogo or CatalogoService()
         self._smgr = uno_context.ServiceManager
         self._toolkit = self._smgr.createInstanceWithContext("com.sun.star.awt.ExtToolkit", uno_context)
 
@@ -191,8 +149,8 @@ class EditorCatalogoAutocompletado:
         return self._rows[indice]
 
     def _recargar_lista(self, seleccionar_id=None):
-        self._rows = self.ventas_service.listar_catalogo_autocompletado()
-        nombres = tuple(_formatear_catalogo(nombre) for _id, nombre in self._rows)
+        self._rows = self.catalogo.listar_catalogo_autocompletado()
+        nombres = tuple(formatear_nombre(nombre) for _id, nombre in self._rows)
         self._list_control.getModel().StringItemList = nombres
 
         if not self._rows:
@@ -215,7 +173,7 @@ class EditorCatalogoAutocompletado:
             return
 
         _prod_id, nombre = seleccionado
-        self._edit_control.getModel().Text = _formatear_catalogo(nombre)
+        self._edit_control.getModel().Text = formatear_nombre(nombre)
         self._set_status("Producto cargado para edicion.")
 
     def _agregar(self):
@@ -225,11 +183,11 @@ class EditorCatalogoAutocompletado:
             return
 
         try:
-            prod_id = self.ventas_service.agregar_producto_autocompletado(nombre)
+            prod_id = self.catalogo.agregar_producto_autocompletado(nombre)
             self._recargar_lista(seleccionar_id=prod_id)
             self._edit_control.getModel().Text = ""
             self._set_status("Producto agregado.")
-        except sqlite3.IntegrityError:
+        except ProductoDuplicado:
             self._set_status("Ese producto ya existe en el catalogo.")
         except Exception as exc:
             self._set_status(f"Error al agregar: {exc}")
@@ -247,13 +205,13 @@ class EditorCatalogoAutocompletado:
 
         prod_id, _nombre = seleccionado
         try:
-            actualizado = self.ventas_service.editar_producto_autocompletado(prod_id, nuevo_nombre)
+            actualizado = self.catalogo.editar_producto_autocompletado(prod_id, nuevo_nombre)
             if actualizado:
                 self._recargar_lista(seleccionar_id=prod_id)
                 self._set_status("Producto actualizado.")
             else:
                 self._set_status("No se encontró el producto seleccionado.")
-        except sqlite3.IntegrityError:
+        except ProductoDuplicado:
             self._set_status("Ya existe otro producto con ese nombre.")
         except Exception as exc:
             self._set_status(f"Error al editar: {exc}")
@@ -266,18 +224,20 @@ class EditorCatalogoAutocompletado:
 
         prod_id, nombre = seleccionado
         try:
-            eliminado = self.ventas_service.eliminar_producto_autocompletado(prod_id)
+            eliminado = self.catalogo.eliminar_producto_autocompletado(prod_id)
             if eliminado:
                 self._recargar_lista()
                 self._edit_control.getModel().Text = ""
                 self._set_status(f"Producto eliminado: {nombre}")
             else:
                 self._set_status("No se encontró el producto seleccionado.")
+        except ProductoEnUso:
+            self._set_status("No se puede eliminar: tiene códigos de barras registrados.")
         except Exception as exc:
             self._set_status(f"Error al eliminar: {exc}")
 
     def _registrar_listener(self, nombre_control, callback):
-        listener = _BotonListener(callback)
+        listener = EscuchaAccion(callback)
         self._dialog.getControl(nombre_control).addActionListener(listener)
         self._listeners.append(listener)
 
@@ -292,6 +252,6 @@ class EditorCatalogoAutocompletado:
         self._dialog.dispose()
 
 
-def abrir_editor_catalogo_autocompletado(uno_context, ventas_service=None):
-    editor = EditorCatalogoAutocompletado(uno_context, ventas_service=ventas_service)
+def abrir_editor_catalogo_autocompletado(uno_context, catalogo=None):
+    editor = EditorCatalogoAutocompletado(uno_context, catalogo=catalogo)
     editor.mostrar()
