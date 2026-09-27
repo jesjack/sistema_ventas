@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import threading
 import time
@@ -18,6 +17,7 @@ from .dvr_log import logger
 from .export_clip import free_bytes_for, own_as_user, unique_path
 from .export_hours import WAIT_POLL, merge_intervals
 from .light_query_manager import LightPriority
+from .dvr_credentials import dvr_credentials
 from .shared_paths import (
     ARCHIVE_DIR,
     ARCHIVER_DISABLED_MARKER,
@@ -403,13 +403,8 @@ if __name__ == "__main__":
         print("archiver ya está corriendo; no se abre otra instancia.")
     else:
         dvr_log.enable()
-        # Mismos valores por omisión que DVRClient (dvr_client.py) -- se duplican aquí a propósito
-        # para no importar ese módulo (y con él, Qt) en un proceso que no abre ninguna ventana.
-        archiver_config = ArchiverConfig(
-            host=os.environ.get("DVR_HOST", "192.168.1.108"),
-            username=os.environ.get("DVR_USER", "nancy"),
-            password=os.environ.get("DVR_PASSWORD", "miriam.2017"),
-        )
+        host, username, password = dvr_credentials()
+        archiver_config = ArchiverConfig(host=host, username=username, password=password)
         print(f"archiver: guardando en {archiver_config.archive_dir}")
         main_engine = Archiver(archiver_config)
         # El POS lo lanza y lo cierra con él (nucleo/arranque.py): un SIGTERM debe pedir que

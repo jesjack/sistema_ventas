@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, Signal
 
 from . import download_client
 from .download_manager import purge_download_dir
+from .dvr_credentials import dvr_credentials
 from .channel_player import ChannelPlayer, PlayerDeps
 from .chunk_store import ChunkStore
 from .clip import Clip, clips_from_items
@@ -129,16 +130,11 @@ class DVRClient(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        # Mismos valores por defecto que el resto de cameras/*.py (DVR
-        # real). Se pueden pisar con las variables de entorno DVR_HOST /
-        # DVR_USER / DVR_PASSWORD / DVR_RTSP_PORT -- asi los scripts
-        # run_camera_viewer_emulated.* pueden apuntar la app al emulador
-        # local sin tocar la UI, y sin que el resto del tiempo (DVR real)
-        # dependa de nada especial en el entorno. Si no estan definidas, se
-        # comporta igual que antes.
-        self.host = os.environ.get("DVR_HOST", "192.168.1.108")
-        self.username = os.environ.get("DVR_USER", "nancy")
-        self.password = os.environ.get("DVR_PASSWORD", "miriam.2017")
+        # host/usuario/contraseña: ver dvr_credentials.py (variable de entorno, si no .env en
+        # la raíz del proyecto -- nunca quemados en el código). Las variables de entorno siguen
+        # pudiendo pisarlas puntualmente -- así los scripts run_camera_viewer_emulated.* apuntan
+        # la app al emulador local sin tocar la UI, sin que el DVR real dependa de nada especial.
+        self.host, self.username, self.password = dvr_credentials()
         self.rtsp_port = int(os.environ.get("DVR_RTSP_PORT", RTSP_PORT))
 
         self._playback_stop_events: dict[int, threading.Event] = {}
