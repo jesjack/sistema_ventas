@@ -71,7 +71,7 @@ def _iniciar_archivador_de_camaras(base_dir):
     except FileNotFoundError as exc:
         print(f"[archivador] {exc}")
         return None
-    print(f"[archivador] camera_viewer.archiver lanzado (pid={proceso.pid}); su log queda en logs/camera_viewer/")
+    print(f"[archivador] camera_viewer.archiver lanzado (pid={proceso.pid}); su log queda en share/logs/camera_viewer/")
     return proceso
 
 
@@ -259,6 +259,10 @@ def _modo_normal(base_dir, context, desktop, documento, hoja, sheet_admin, contr
     botones = BotonesDeLaHoja(ctx, bridge, botones_service, usuario_id, obtener_usuario_actual())
     bridge.prepare(clear_events=True)
     botones.construir()
+    # admin_botones corre en su propio proceso (ver BotonesDeLaHoja.abrir_panel_admin) y no
+    # avisa cuando guarda un cambio; se reusa el hilo de sondeo de clics que ya arranca bridge.start()
+    # para también notar esos cambios y refrescar la hoja sola, sin reiniciar el sistema.
+    bridge.on_tick = botones.revisar_cambios
     bridge.start()
     atexit.register(bridge.close)
 

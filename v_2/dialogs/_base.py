@@ -4,7 +4,6 @@ receta copiada) y los listeners."""
 import unohelper
 from com.sun.star.awt import (  # pyright: ignore[reportMissingImports]
     XActionListener,
-    XItemListener,
     XTextListener,
 )
 
@@ -122,31 +121,15 @@ class EscuchaTexto(unohelper.Base, XTextListener):
         pass
 
 
-class EscuchaCasilla(unohelper.Base, XItemListener):
-    """Llama a `al_cambiar(marcada: bool)` cada vez que se marca o desmarca una casilla.
-
-    Lee el estado con `evento.Source.getState()`, no con `evento.Selected` -- ese campo de
-    ItemEvent no es el booleano "quedó marcada" para una casilla (se comprobó con clics reales:
-    quedaba invertido/sin aplicar). getState() es la misma forma en que el resto del código ya
-    lee casillas."""
-
-    def __init__(self, al_cambiar):
-        self._al_cambiar = al_cambiar
-
-    def itemStateChanged(self, evento):
-        self._al_cambiar(evento.Source.getState() == 1)
-
-    def disposing(self, _evento):
-        pass
-
-
-
 # 2026-09-25: se intentó un EscuchaDobleClic con XMouseListener para abrir un menú con doble clic
-# en el encabezado de un botón (ui/panel_admin.py). Comprobado con tres controles distintos
-# (etiqueta, botón, campo de texto), en un LibreOffice headless real: XMouseListener no entrega
-# NINGÚN evento, ni siquiera mouseEntered al simplemente pasar el mouse por encima -- mientras que
-# XActionListener/XItemListener (botones, casillas) sí funcionan de forma confiable, probado varias
-# veces el mismo día. No se sabe si es una limitación del modo headless o del toolkit en general;
-# dado que no se pudo verificar, no se dejó como opción disponible aquí. Si hace falta detectar un
-# clic sobre texto plano en el futuro, probar primero en una sesión gráfica real (no headless)
-# antes de asumir que funciona, y considerar un botón de un solo clic como alternativa segura.
+# en el encabezado de un botón (extinto ui/panel_admin.py). Comprobado con tres controles
+# distintos (etiqueta, botón, campo de texto), en un LibreOffice headless real: XMouseListener no
+# entrega NINGÚN evento, ni siquiera mouseEntered al simplemente pasar el mouse por encima --
+# mientras que XActionListener/XItemListener (botones, casillas) sí funcionan de forma confiable,
+# probado varias veces el mismo día. No se sabe si es una limitación del modo headless o del
+# toolkit en general; dado que no se pudo verificar, no se dejó como opción disponible aquí. Este
+# mismo límite (y la falta de texto rotado en los diálogos UNO) es lo que llevó a reemplazar la
+# matriz de "Administrar botones" por una herramienta aparte en Qt (ver admin_botones/). Si hace
+# falta detectar un clic sobre texto plano en un diálogo UNO en el futuro, probar primero en una
+# sesión gráfica real (no headless) antes de asumir que funciona, y considerar un botón de un solo
+# clic como alternativa segura.

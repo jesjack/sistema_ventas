@@ -64,6 +64,41 @@ class TestWatchEventsSobrevive(unittest.TestCase):
             self.assertIn("Click sin handler: nada", salida.getvalue())
             self.assertEqual(list(bridge.events_dir.glob("*.evt")), [])
 
+    def test_on_tick_se_llama_en_cada_ciclo_de_sondeo(self):
+        with tempfile.TemporaryDirectory() as base_dir:
+            documento = SimpleNamespace(getScriptProvider=lambda: None)
+            llamadas = []
+            bridge = SheetButtonBridge(
+                uno_context=None, document=documento, base_dir=Path(base_dir),
+                poll_interval=0.05, on_tick=lambda: llamadas.append(1),
+            )
+            bridge.prepare(clear_events=True)
+            bridge.start()
+            time.sleep(0.3)
+            bridge.close()
+            self.assertGreater(len(llamadas), 1)
+
+    def test_un_on_tick_que_falla_no_mata_el_hilo(self):
+        with tempfile.TemporaryDirectory() as base_dir:
+            documento = SimpleNamespace(getScriptProvider=lambda: None)
+
+            def on_tick_que_falla():
+                raise RuntimeError("fallo en revisar_cambios")
+
+            bridge = SheetButtonBridge(
+                uno_context=None, document=documento, base_dir=Path(base_dir),
+                poll_interval=0.05, on_tick=on_tick_que_falla,
+            )
+            bridge.prepare(clear_events=True)
+
+            salida = io.StringIO()
+            with redirect_stdout(salida):
+                bridge.start()
+                time.sleep(0.2)
+                bridge.close()
+
+            self.assertIn("[FALLO INESPERADO] SheetButtonBridge.on_tick", salida.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

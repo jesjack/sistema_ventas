@@ -335,5 +335,77 @@ class TestTextosYParseo(unittest.TestCase):
         self.assertEqual(formatear_fecha_registro(None), "")
 
 
+class BridgeFalso:
+    def __init__(self):
+        self.botones = []
+        self.publicados = 0
+
+    def reset_buttons(self):
+        self.botones = []
+
+    def add_button(self, etiqueta, manejador):
+        self.botones.append(etiqueta)
+
+    def publish_layout(self):
+        self.publicados += 1
+
+
+class BotonesServiceFalso:
+    def __init__(self):
+        self._resumen = (0, None)
+        self.visibles = []
+
+    def resumen_cambios(self):
+        return self._resumen
+
+    def listar_botones_visibles_para(self, usuario_id):
+        return self.visibles
+
+    def cambiar_resumen(self):
+        self._resumen = (self._resumen[0] + 1, "algo")
+
+
+class TestBotonesDeLaHoja(unittest.TestCase):
+    def crear(self, usuario_actual="ana"):
+        from nucleo.botones import BotonesDeLaHoja
+
+        bridge = BridgeFalso()
+        servicio = BotonesServiceFalso()
+        ctx = SimpleNamespace(acciones={}, base_dir=Path("/base"))
+        botones = BotonesDeLaHoja(ctx, bridge, servicio, usuario_id=1, usuario_actual=usuario_actual)
+        return botones, bridge, servicio
+
+    def test_construir_guarda_el_resumen_como_punto_de_referencia(self):
+        botones, bridge, servicio = self.crear()
+        botones.construir()
+        self.assertEqual(bridge.publicados, 1)
+        self.assertEqual(botones._ultimo_resumen, servicio.resumen_cambios())
+
+    def test_revisar_cambios_no_reconstruye_si_nada_cambio(self):
+        botones, bridge, _servicio = self.crear()
+        botones.construir()
+        botones.revisar_cambios()
+        self.assertEqual(bridge.publicados, 1)  # no un segundo publish_layout
+
+    def test_revisar_cambios_reconstruye_cuando_el_resumen_cambia(self):
+        botones, bridge, servicio = self.crear()
+        botones.construir()
+        servicio.cambiar_resumen()
+        botones.revisar_cambios()
+        self.assertEqual(bridge.publicados, 2)
+
+    def test_admin_raiz_ve_el_boton_administrar_admins(self):
+        from nucleo.config import ADMIN_RAIZ
+
+        botones, bridge, _servicio = self.crear(usuario_actual=ADMIN_RAIZ)
+        botones.construir()
+        self.assertIn("ADMINISTRAR ADMINS", bridge.botones)
+
+    def test_usuario_normal_no_ve_administrar_admins(self):
+        botones, bridge, _servicio = self.crear(usuario_actual="ana")
+        botones.construir()
+        self.assertNotIn("ADMINISTRAR ADMINS", bridge.botones)
+
+
 if __name__ == "__main__":
     unittest.main()

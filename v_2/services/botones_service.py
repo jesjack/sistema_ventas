@@ -65,6 +65,19 @@ class BotonesService:
 
     # ---- botones ----
 
+    def resumen_cambios(self):
+        """Una foto barata para detectar si algo cambió en `botones` (crear, editar,
+        activar/desactivar, cambiar visibilidad, eliminar) sin traer todas las filas. Se
+        necesitan las dos cosas: MAX(actualizado_en) solo no basta porque un DELETE no mueve
+        ningun actualizado_en (si se borró justo el botón con la marca más alta, el máximo
+        podría no cambiar) -- por eso también se cuenta el total de filas. La usa
+        nucleo/botones.py para saber cuándo refrescar los botones de la hoja tras un cambio
+        hecho desde admin_botones."""
+        with self._connect() as con:
+            cur = con.cursor()
+            cur.execute("SELECT COUNT(*), MAX(actualizado_en) FROM botones")
+            return tuple(cur.fetchone())
+
     def listar_botones(self, solo_activos=False):
         with self._connect() as con:
             cur = con.cursor()
@@ -185,6 +198,13 @@ class BotonesService:
                     "INSERT OR IGNORE INTO boton_visibilidad (boton_id, usuario_id) VALUES (?, ?)",
                     (int(boton_id), usuario_id),
                 )
+            # Sin esto, admin_botones puede cambiar la visibilidad de un botón sin que
+            # BotonesDeLaHoja._hay_cambios_de_botones (nucleo/botones.py) lo note -- ese refresco
+            # solo mira MAX(actualizado_en), y hasta ahora solo editar_boton/establecer_activo lo tocaban.
+            cur.execute(
+                "UPDATE botones SET actualizado_en = ? WHERE id = ?",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(boton_id)),
+            )
             con.commit()
 
     def listar_botones_visibles_para(self, usuario_id, solo_activos=True):

@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 from services.botones_service import BotonesService
 from services.catalogo_service import CatalogoService, ProductoDuplicado, ProductoEnUso, formatear_nombre
@@ -121,6 +122,41 @@ class TestUsuariosYBotones(BaseConDb):
         botones = BotonesService(self.db)
         botones.crear_boton("x", "X", "x", orden=1)
         self.assertEqual([b[1] for b in botones.listar_botones()], ["x"])
+
+    def test_set_visibilidad_actualiza_actualizado_en(self):
+        # admin_botones (proceso aparte) refresca la hoja en vivo comparando resumen_cambios();
+        # sin este bump, un cambio de SOLO visibilidad pasaría inadvertido. actualizado_en tiene
+        # resolución de segundo (ver crear_boton/set_visibilidad), así que se fija un "ahora"
+        # distinto para cada llamada en vez de confiar en que el reloj real avance entre ambas.
+        usuarios = UsuariosService(self.db)
+        usuarios.asegurar_usuario_sistema(
+            {"nombre_usuario": "ana", "sistema_operativo": "Linux", "nombre_equipo": "pc", "dominio": ""}
+        )
+        botones = BotonesService(self.db)
+
+        with mock.patch("services.botones_service.datetime") as datetime_falso:
+            datetime_falso.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+            boton_id = botones.crear_boton("x", "X", "x")
+        antes = botones.resumen_cambios()
+
+        with mock.patch("services.botones_service.datetime") as datetime_falso:
+            datetime_falso.now.return_value.strftime.return_value = "2026-01-01 00:00:01"
+            botones.set_visibilidad(boton_id, ["ana"])
+
+        self.assertNotEqual(botones.resumen_cambios(), antes)
+        self.assertEqual(botones.listar_visibilidad(boton_id), ["ana"])
+
+    def test_resumen_cambios_nota_creacion_y_eliminacion(self):
+        UsuariosService(self.db)
+        botones = BotonesService(self.db)
+        vacio = botones.resumen_cambios()
+
+        boton_id = botones.crear_boton("x", "X", "x")
+        con_uno = botones.resumen_cambios()
+        self.assertNotEqual(con_uno, vacio)
+
+        botones.eliminar_boton(boton_id)
+        self.assertNotEqual(botones.resumen_cambios(), con_uno)
 
 
 if __name__ == "__main__":

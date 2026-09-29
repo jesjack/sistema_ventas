@@ -14,10 +14,17 @@ class ButtonSpec:
 
 
 class SheetButtonBridge:
-    def __init__(self, uno_context, document, base_dir: Path, poll_interval: float = 0.5):
+    def __init__(self, uno_context, document, base_dir: Path, poll_interval: float = 0.5, on_tick=None):
         self.uno_context = uno_context
         self.document = document
         self.base_dir = Path(base_dir)
+        # Callback opcional, llamado en cada ciclo de sondeo (ademas de drenar
+        # clics): permite reusar este hilo ya existente para otras revisiones
+        # periodicas (hoy, detectar cambios hechos desde admin_botones) sin
+        # levantar un hilo nuevo solo para eso. Atributo publico (no
+        # `_on_tick`) a proposito: se suele asignar despues de construir el
+        # bridge, cuando quien lo necesita (BotonesDeLaHoja) recien se arma.
+        self.on_tick = on_tick
         # Carpeta de "spool": la macro Basic (TPV_EscribirEvento) escribe un
         # archivo NUEVO por cada clic en vez de sobreescribir uno compartido.
         # Antes, un unico button_events.txt causaba "Error de E/S del
@@ -131,6 +138,14 @@ class SheetButtonBridge:
                 # el hilo entero (ver nucleo/controlador_venta.py:on_enter, mismo problema
                 # con la tecla Enter).
                 print(f"[FALLO INESPERADO] SheetButtonBridge (se reintenta en {self.poll_interval}s): {traceback.format_exc()}")
+
+            if self.on_tick is not None:
+                try:
+                    self.on_tick()
+                except Exception:
+                    # Mismo criterio que arriba: un fallo aqui no debe matar el sondeo de clics,
+                    # que es lo critico de este hilo.
+                    print(f"[FALLO INESPERADO] SheetButtonBridge.on_tick (se reintenta en {self.poll_interval}s): {traceback.format_exc()}")
 
     def _drain_events(self) -> None:
         if not self.events_dir.exists():
