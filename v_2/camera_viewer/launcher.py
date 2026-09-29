@@ -19,6 +19,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .shared_paths import ensure_shared_root
+
 # Orden de busqueda dentro de <base_dir>/.venv: pythonw.exe primero en
 # Windows (no abre consola detras de la GUI), luego python.exe como
 # respaldo, luego las rutas equivalentes de Linux/macOS.
@@ -48,7 +50,7 @@ def _clean_child_env() -> dict[str, str]:
         env.pop(var, None)
     # Sin esto, stdout queda con buffer de bloque completo por estar redirigido a un archivo
     # (no una terminal): si el proceso muere de golpe (segfault, kill, corte de luz) todo lo
-    # impreso desde el ultimo flush se pierde, y el log de logs/camera_viewer/ queda vacio aunque
+    # impreso desde el ultimo flush se pierde, y el log de share/logs/camera_viewer/ queda vacio aunque
     # el proceso sí haya hecho trabajo real -- visto el 2026-09-26 diagnosticando una ventana que
     # sí cargó pero cuyo log no mostraba nada.
     env["PYTHONUNBUFFERED"] = "1"
@@ -135,9 +137,15 @@ def _prepare_log_file(base_dir: Path, prefix: str = "run") -> Path:
     desaparece por completo y no queda ningun rastro de que algo fallo.
     `prefix` distingue los logs de la ventana (`run_*`) de los del
     archivador (`archiver_run_*`, ver launch_archiver): cada uno cuida
-    solo los suyos al podar, sin pisar la retención del otro."""
-    logs_dir = base_dir / "logs" / "camera_viewer"
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    solo los suyos al podar, sin pisar la retención del otro.
+
+    ensure_shared_root() (no un simple mkdir): esta carpeta la puede crear CUALQUIER usuario del
+    negocio (nancy, ruby, jesjack...) según quién abra el POS primero -- sin esto, el primero
+    que la crea (a veces root, si el POS arrancó con sudo para el hardware) deja a todos los
+    demás sin poder escribir ahí nunca más. Visto en producción el 2026-09-28: quedó a nombre de
+    root y ni el propio dueño de la PC podía relanzar el archivador a mano."""
+    logs_dir = base_dir / "share" / "logs" / "camera_viewer"
+    ensure_shared_root(logs_dir)
 
     existentes = sorted(logs_dir.glob(f"{prefix}_*.log"))
     for viejo in existentes[: max(0, len(existentes) - (LOG_RUNS_TO_KEEP - 1))]:
@@ -187,7 +195,7 @@ def _launch_module(base_dir: Path, module: str, log_prefix: str, hint: str) -> s
 def launch_detached(base_dir: Path) -> subprocess.Popen:
     """Lanza 'python -m camera_viewer' en un proceso completamente aparte.
     Devuelve de inmediato (no espera a que la ventana se cierre); su
-    stdout/stderr quedan en logs/camera_viewer/run_*.log."""
+    stdout/stderr quedan en share/logs/camera_viewer/run_*.log."""
     return _launch_module(base_dir, "camera_viewer", "run", "usar VER CAMARAS")
 
 
@@ -197,5 +205,5 @@ def launch_archiver(base_dir: Path) -> subprocess.Popen:
     llamarse una vez por arranque del POS (ver nucleo/arranque.py); no hay que cuidarse de
     lanzarlo dos veces, archiver.py tiene su propio candado de instancia única
     (share/runtime/archiver.lock) -- una segunda instancia lo nota, avisa y termina sola.
-    Su stdout/stderr quedan en logs/camera_viewer/archiver_run_*.log."""
+    Su stdout/stderr quedan en share/logs/camera_viewer/archiver_run_*.log."""
     return _launch_module(base_dir, "camera_viewer.archiver", "archiver_run", "que el archivador pueda correr")

@@ -38,6 +38,14 @@ LIVE_SUBTYPE = 1
 RECONNECT_BACKOFF_INITIAL = 1.0
 RECONNECT_BACKOFF_MAX = 10.0
 
+# Cuántas veces se reintenta la concesión de vista en vivo (ver _live_starter) antes de
+# rendirse -- 2026-09-28: antes, si UNA sola espera de LIVE_LEASE_WAIT (60s) se agotaba con
+# una descarga de baja prioridad atascada (típico con el DVR ya lento), la vista en vivo abría
+# igual SIN la garantía de "nada descargando al mismo tiempo" (ver informes/
+# DVR_STRESS_TEST_RESULTS.md, Adenda 6: esa combinación degrada más al DVR). Ahora se reintenta
+# varias veces y, si ninguna lo logra, se avisa y NO se abre -- nunca sin la protección.
+LIVE_LEASE_ATTEMPTS = 3
+
 # El DVR (Dahua XVR51xxHS-S2, ver camera_viewer/informes/DVR_HARDWARE.md) es un
 # equipo de gama baja: un solo SoC embebido generico y un puerto Ethernet
 # de 100 Mbps, sin nada en su ficha tecnica que sugiera que su firmware
@@ -189,16 +197,24 @@ class DVRClient(QObject):
         threading.Thread(target=self._search_worker, args=(start_dt, end_dt, priority), daemon=True).start()
 
     def _search_worker(self, start_dt: datetime, end_dt: datetime, priority: int) -> None:
-        try:
-            futures = {channel: self._submit_find(channel, start_dt, end_dt, 1, priority) for channel in DEFAULT_CHANNELS}
-            clips: list[Clip] = []
-            for channel, future in futures.items():
+        # Cada canal se aísla (2026-09-28): antes, si UN canal fallaba, se perdían los clips de
+        # los otros 3 que sí habían respondido -- con el DVR teniendo un mal momento, un solo
+        # canal lento dejaba el timeline entero vacío. Ahora se muestra lo que sí se pudo
+        # conseguir, y search_failed solo avisa cuáles canales fallaron (no reemplaza a
+        # clips_ready, se complementan).
+        futures = {channel: self._submit_find(channel, start_dt, end_dt, 1, priority) for channel in DEFAULT_CHANNELS}
+        clips: list[Clip] = []
+        failed_channels: list[int] = []
+        for channel, future in futures.items():
+            try:
                 clips.extend(self._clips_from_items(channel, future.result()))
-        except Exception as exc:
-            self.search_failed.emit(str(exc))
-            return
+            except Exception:
+                failed_channels.append(channel)
 
         self.clips_ready.emit(clips)
+        if failed_channels:
+            canales = ", ".join(str(c) for c in failed_channels)
+            self.search_failed.emit(f"No se pudo consultar el canal {canales} (se muestran los demás)")
 
     def _submit_find(self, channel: int, start_dt: datetime, end_dt: datetime, max_pages: int, priority: int) -> Future:
         """Toda consulta de grabaciones pasa por el carril de consultas
@@ -236,25 +252,31 @@ class DVRClient(QObject):
         start_dt = datetime(year, month, 1)
         end_dt = datetime(year, month, last_day, 23, 59, 59)
 
-        try:
-            # Se piden todas las paginas hasta que una venga vacia -- ver la
-            # nota en MAX_RECORDED_DAYS_PAGES sobre por que no basta con
-            # revisar si la pagina trajo menos de lo pedido.
-            futures = [
-                self._submit_find(channel, start_dt, end_dt, MAX_RECORDED_DAYS_PAGES, LightPriority.USER)
-                for channel in DEFAULT_CHANNELS
-            ]
-            recorded_days: set[date] = set()
-            for future in futures:
-                for item in future.result():
-                    start = item.get("StartTime")
-                    if start:
-                        recorded_days.add(datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S").date())
-        except Exception as exc:
-            self.recorded_days_failed.emit(str(exc))
-            return
+        # Se piden todas las paginas hasta que una venga vacia -- ver la nota en
+        # MAX_RECORDED_DAYS_PAGES sobre por que no basta con revisar si la pagina trajo menos de
+        # lo pedido. Cada canal se aísla (2026-09-28, mismo motivo que _search_worker): un solo
+        # canal atascado ya no deja el calendario entero sin marcar.
+        futures = {
+            channel: self._submit_find(channel, start_dt, end_dt, MAX_RECORDED_DAYS_PAGES, LightPriority.USER)
+            for channel in DEFAULT_CHANNELS
+        }
+        recorded_days: set[date] = set()
+        failed_channels: list[int] = []
+        for channel, future in futures.items():
+            try:
+                items = future.result()
+            except Exception:
+                failed_channels.append(channel)
+                continue
+            for item in items:
+                start = item.get("StartTime")
+                if start:
+                    recorded_days.add(datetime.strptime(start.strip(), "%Y-%m-%d %H:%M:%S").date())
 
         self.recorded_days_ready.emit(year, month, recorded_days)
+        if failed_channels:
+            canales = ", ".join(str(c) for c in failed_channels)
+            self.recorded_days_failed.emit(f"No se pudo consultar el canal {canales} (se muestran los demás)")
 
     # -- reproduccion -------------------------------------------------------
 
@@ -389,13 +411,28 @@ class DVRClient(QObject):
         starter.start()
 
     def _live_starter(self, stop_event: threading.Event) -> None:
-        lease = download_client.acquire_live_lease(stop_event)
+        lease = None
+        for _ in range(LIVE_LEASE_ATTEMPTS):
+            if stop_event.is_set():
+                return
+            lease = download_client.acquire_live_lease(stop_event)
+            if lease is not None:
+                break
+            for channel in DEFAULT_CHANNELS:
+                self.live_channel_status.emit(channel, "Esperando a que termine una descarga en curso...")
+
         with self._live_lock:
             if stop_event.is_set():
                 if lease is not None:
                     lease.release()
                 return
-            self._live_lease = lease  # None si el servicio no respondió: se sigue como antes, sin la garantía
+            if lease is None:
+                # Nunca abrir la vista en vivo sin la garantía de que no hay ninguna descarga
+                # en curso -- ver LIVE_LEASE_ATTEMPTS más arriba.
+                for channel in DEFAULT_CHANNELS:
+                    self.live_channel_status.emit(channel, "No se pudo iniciar vista en vivo: el DVR sigue ocupado")
+                return
+            self._live_lease = lease
 
         # Un Event de backpressure por canal (ver _live_channel_worker):
         # arranca "set" (listo para el primer frame).

@@ -14,8 +14,8 @@ v_2/ventas.db.backup_pre_migracion_usuarios
 
 # Credenciales reales del DVR (ver camera_viewer/dvr_credentials.py y .env.example).
 v_2/.env
+
 v_2/logs/debug/
-v_2/logs/camera_viewer/
 v_2/logs/dvr_stress_test/
 v_2/runtime/camera_viewer.lock
 v_2/runtime/camera_viewer_downloads/

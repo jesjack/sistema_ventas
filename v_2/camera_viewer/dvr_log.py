@@ -7,7 +7,7 @@ import sys
 # pedido en la cola, cuánto tardó el DVR en dar el primer byte, cuánto duró, cuántos intentos
 # hizo y por qué falló o se canceló. Nace del "los clips tardan en cargar" de 2026-09-21: sin
 # estos tiempos no queda rastro para saber si la lentitud es de la cola, de la red o del DVR.
-# Va a stderr, que el lanzador ya redirige a logs/camera_viewer/run_*.log.
+# Va a stderr, que el lanzador ya redirige a share/logs/camera_viewer/run_*.log.
 
 logger = logging.getLogger("camera_viewer.dvr")
 

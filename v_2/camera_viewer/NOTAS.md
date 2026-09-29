@@ -25,7 +25,7 @@ Visor PySide6 de un DVR Dahua (4 canales) dentro del POS. Historial y mediciones
 - Los hilos nunca deben referenciar widgets/QObject (el último dueño lo destruye fuera del hilo GUI: "Bus error"); usar cola + `QTimer`.
 - El POS corre como root y baja solo uid/gid: `launcher.py` debe fijar HOME (ya lo hace). No usar `$HOME`/`Path.home()`; ver `export_clip.user_home()`.
 - `PlaybackControl.wait_turn` devuelve "seek" ANTES de esperar el reloj (atender el salto es lo que avisa "listo": si no, interbloqueo).
-- **Registro de tiempos del DVR** (`dvr_log.py`): cada descarga y las consultas lentas/fallidas dejan una línea en `logs/camera_viewer/run_*.log` (espera en cola, primer byte, total, intentos, motivo). Primer sitio donde mirar si "los clips tardan". Las descargas CANCELADAS también esperan la pausa de cortesía (antes no: abrían la siguiente sesión al instante y podían pasar de 3).
+- **Registro de tiempos del DVR** (`dvr_log.py`): cada descarga y las consultas lentas/fallidas dejan una línea en `share/logs/camera_viewer/run_*.log` (espera en cola, primer byte, total, intentos, motivo). Primer sitio donde mirar si "los clips tardan". Las descargas CANCELADAS también esperan la pausa de cortesía (antes no: abrían la siguiente sesión al instante y podían pasar de 3).
 - DVR: 3 `loadfile` a la vez van bien, 4 fallan; con el vivo abierto las descargas fallan → concesión de vivo; hay atascos de 6-36 s cada ~70 s.
 - Parchear un diálogo de `MainWindow` tras crear `ExportFlow` no surte efecto (guarda el método): parchear `flow._ask_after_seconds`.
 - **`subprocess.Popen(user=..., group=...)` NUNCA llama a `setgroups()` si no se le pasa también
@@ -134,7 +134,7 @@ igual que siempre.
    `asegurar_instancia_unica()` (así corre mientras el POS esté abierto, en los dos modos, no solo
    con "VER CAMARAS") vía `camera_viewer.launcher.launch_archiver()` (nueva, junto a
    `launch_detached`: mismo patrón -- proceso aparte en el venv de camera_viewer, privilegios
-   bajados si el POS corre por sudo, log propio en `logs/camera_viewer/archiver_run_*.log`) y lo
+   bajados si el POS corre por sudo, log propio en `share/logs/camera_viewer/archiver_run_*.log`) y lo
    cierra con `atexit` (`archiver.py` atiende SIGTERM con `Archiver.request_stop()`, así no deja un
    trozo a medias). Import LOCAL en `arranque.py` (no arriba del archivo): ese módulo corre en el
    Python embebido de LibreOffice, que no tiene OpenCV -- `camera_viewer.launcher` sí puede

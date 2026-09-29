@@ -304,5 +304,71 @@ class DVRClientLiveTests(unittest.TestCase):
         self.assertEqual(len(self.released), 1)  # la concesión tardía se devolvió, no quedó tomada
 
 
+class LiveStarterRetryTests(unittest.TestCase):
+    """2026-09-28: antes, si UNA sola espera de la concesión se agotaba (p. ej. el archivador
+    atascado con el DVR lento), la vista en vivo abría igual SIN la garantía de "nada
+    descargando al mismo tiempo" -- la combinación que degrada más al DVR (ver
+    informes/DVR_STRESS_TEST_RESULTS.md, Adenda 6). Ahora reintenta varias veces y, si ninguna
+    lo logra, no abre nada."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def make_client(self, outcomes):
+        from camera_viewer import dvr_client
+
+        client = dvr_client.DVRClient()
+        self.opened: list[int] = []
+        self.statuses: list[tuple[int, str]] = []
+        self.lease_calls = 0
+        outcomes_iter = iter(outcomes)
+
+        class FakeLease:
+            def release(inner) -> None:
+                pass
+
+        def fake_acquire(stop_event=None, timeout=None):
+            self.lease_calls += 1
+            outcome = next(outcomes_iter, None)
+            return FakeLease() if outcome else None
+
+        def fake_worker(channel, host, stop_event, ready_event) -> None:
+            self.opened.append(channel)
+            stop_event.wait(10)
+
+        patches = [
+            mock.patch.object(dvr_client.download_client, "acquire_live_lease", fake_acquire),
+            mock.patch.object(client, "_live_channel_worker", fake_worker),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        client.live_channel_status.connect(lambda ch, text: self.statuses.append((ch, text)))
+        return client
+
+    def test_a_late_success_within_the_retry_budget_still_opens_live_view(self) -> None:
+        client = self.make_client(outcomes=[False, False, True])  # falla 2 veces, la 3ra ya sirve
+        client.start_live()
+        time.sleep(0.3)
+        self.assertEqual(self.lease_calls, 3)
+        self.assertEqual(sorted(self.opened), [1, 2, 3, 4])
+        client.stop_live()
+
+    def test_exhausting_every_retry_never_opens_live_view_unprotected(self) -> None:
+        from camera_viewer import dvr_client
+
+        client = self.make_client(outcomes=[False, False, False])  # nunca se concede
+        client.start_live()
+        time.sleep(0.3)
+        self.app.processEvents()  # entrega la señal en cola (viene de otro hilo, sin bucle de eventos corriendo)
+        self.assertEqual(self.lease_calls, dvr_client.LIVE_LEASE_ATTEMPTS)
+        self.assertEqual(self.opened, [])  # ningún canal RTSP se abrió
+        self.assertTrue(any("no se pudo" in text.lower() for _, text in self.statuses))
+        client.stop_live()
+
+
 if __name__ == "__main__":
     unittest.main()

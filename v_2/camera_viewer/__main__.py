@@ -74,7 +74,7 @@ def main() -> None:
         print("camera_viewer ya está corriendo; no se abre una instancia nueva.")
         sys.exit(0)
 
-    dvr_log.enable()  # tiempos de cada descarga y consulta al DVR, en logs/camera_viewer/run_*.log
+    dvr_log.enable()  # tiempos de cada descarga y consulta al DVR, en share/logs/camera_viewer/run_*.log
 
     app = QApplication(sys.argv)
     # Fuerza Fusion en vez del tema nativo del sistema (p. ej. la

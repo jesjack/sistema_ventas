@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from camera_viewer import export_clip, launcher
+from camera_viewer import export_clip, launcher, shared_paths
 
 
 def write_dirs(home: Path, videos: str) -> None:
@@ -89,6 +89,16 @@ class OwnershipTests(unittest.TestCase):
 
 
 class LauncherEnvTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # launcher._prepare_log_file() ahora llama a ensure_shared_root() (2026-09-28), que
+        # intenta "setfacl -b" vía subprocess -- estas pruebas ya mockean subprocess.Popen
+        # globalmente para inspeccionar los kwargs del proceso REAL que se lanza, y ese mismo
+        # mock rompe la llamada interna a setfacl (no se comporta como un Popen de verdad). No
+        # hace falta setfacl para lo que prueba esta clase: se lo quita del camino.
+        patch = mock.patch.object(shared_paths.shutil, "which", return_value=None)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def launch(self, environ: dict, euid: int, func=None) -> dict:
         base = Path(tempfile.mkdtemp())
         with mock.patch.dict(os.environ, environ, clear=False), mock.patch.object(os, "geteuid", return_value=euid), mock.patch.object(
@@ -154,7 +164,7 @@ class LauncherEnvTests(unittest.TestCase):
         ):
             launcher.launch_detached(base)
             launcher.launch_archiver(base)
-        logs = base / "logs" / "camera_viewer"
+        logs = base / "share" / "logs" / "camera_viewer"
         self.assertEqual(len(list(logs.glob("run_*.log"))), 1)
         self.assertEqual(len(list(logs.glob("archiver_run_*.log"))), 1)
 
