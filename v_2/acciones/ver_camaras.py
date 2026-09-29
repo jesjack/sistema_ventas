@@ -38,7 +38,7 @@ def ejecutar(ctx):
         mostrar_aviso_error(context, str(exc), titulo="No se pudo abrir cámaras")
         return
 
-    print(f"[ver_camaras] camera_viewer lanzado (pid={proceso.pid}); su log queda en logs/camera_viewer/")
+    print(f"[ver_camaras] camera_viewer lanzado (pid={proceso.pid}); su log queda en share/logs/camera_viewer/")
     _esperar_ventana(proceso, ready_marker_path(proceso.pid), aviso)
 
 
