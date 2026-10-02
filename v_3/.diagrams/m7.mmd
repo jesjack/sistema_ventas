@@ -1,0 +1,58 @@
+flowchart LR
+    USR["Usuario, teclado, escáner y ratón"]:::ext
+    SO["Sistema operativo<br/>(menú, candados)"]:::ext
+    APP2["App de otro usuario<br/>(misma App, otra instancia)"]:::app
+    APP["App"]:::app
+    SOF["soffice"]:::sof
+    UNOB["UNO"]:::uno
+    ARC["camera_viewer.archiver"]:::arc
+    CAM["camera_viewer"]:::cam
+    ADM["admin_botones"]:::adm
+    DB[("ventas.db")]:::ext
+    COMP["Carpeta de datos compartida"]:::ext
+    LOG["Archivo de log de la ejecución"]:::ext
+    IMP["Impresora de tickets y cajón"]:::ext
+    ETQ["Impresora de etiquetas"]:::ext
+    DVR["DVR y disco"]:::ext
+
+    SO -- "inicio" --> APP
+    APP <-- "candado_usuario" --> SO
+    APP <-- "candado_caja" --> COMP
+    APP -- "pedir_caja" --> APP2
+    APP2 -- "caja_liberada" --> APP
+    APP <-- "ui_app" --> USR
+    APP <-- "db" --> DB
+    APP -- "log" --> LOG
+    APP -- "imprimir_ticket, abrir_cajon" --> IMP
+    APP -- "imprimir_etiqueta" --> ETQ
+
+    APP -- "arrancar_soffice, main_ods" --> SOF
+    SOF -- "soffice_salio, log_soffice" --> APP
+    APP -- "arrancar_uno" --> UNOB
+    APP -- "bus: pintar, escribir_producto,<br/>publicar_botones, enfocar_calc,<br/>cerrar_libreoffice" --> UNOB
+    UNOB -- "bus: uno_listo, enter_pulsado,<br/>tab_pulsado, boton_pulsado,<br/>documento_cerrado" --> APP
+    UNOB -- "uno_salio, log_uno" --> APP
+    UNOB -- "api_hoja" --> SOF
+    SOF -- "urp_listo, tecla, clic,<br/>documento_murio" --> UNOB
+    USR -- "teclado_escaner_raton" --> SOF
+    SOF -- "pantalla_hoja" --> USR
+
+    APP -- "arrancar_archivador,<br/>terminar_archivador" --> ARC
+    ARC -- "archivador_salio, log_archivador" --> APP
+    ARC <-- "dvr_archivador" --> DVR
+    APP -- "arrancar_camaras" --> CAM
+    CAM -- "camaras_salio, log_camaras" --> APP
+    CAM <-- "ui_camaras" --> USR
+    CAM <-- "dvr_camaras" --> DVR
+    APP -- "arrancar_admin" --> ADM
+    ADM -- "admin_salio, log_admin" --> APP
+    ADM <-- "ui_admin" --> USR
+    ADM <-- "db_botones" --> DB
+
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef adm fill:#ede9fe,stroke:#6d28d9,color:#2e1065,stroke-width:2px
+    classDef cam fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px
+    classDef arc fill:#ffe4e6,stroke:#be123c,color:#4c0519,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

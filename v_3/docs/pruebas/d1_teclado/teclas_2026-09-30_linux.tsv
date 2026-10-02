@@ -1,0 +1,228 @@
+# inicio 2026-09-30 12:36:18 perf_ns=4435631675526
+# t_ms	tipo	KeyCode	KeyChar	Modifiers	KeyFunc
+43612.697	P	257	<Char instance 1>	0	0
+43642.019	R	257	<Char instance 1>	0	0
+43642.536	P	258	<Char instance 2>	0	0
+43643.567	R	258	<Char instance 2>	0	0
+43707.100	P	258	<Char instance 2>	0	0
+43707.909	R	258	<Char instance 2>	0	0
+43708.304	P	258	<Char instance 2>	0	0
+43709.300	R	258	<Char instance 2>	0	0
+43709.816	P	257	<Char instance 1>	0	0
+43710.301	R	257	<Char instance 1>	0	0
+43710.704	P	1280	<Char instance >	0	0
+43918.230	R	1280	<Char instance >	0	0
+48604.115	P	530	<Char instance s>	0	0
+48633.567	R	530	<Char instance s>	0	0
+48634.046	P	519	<Char instance h>	0	0
+48634.777	R	519	<Char instance h>	0	0
+48652.914	P	526	<Char instance o>	0	0
+48653.706	R	526	<Char instance o>	0	0
+48654.195	P	529	<Char instance r>	0	0
+48655.172	R	529	<Char instance r>	0	0
+48674.620	P	531	<Char instance t>	0	0
+48675.606	R	531	<Char instance t>	0	0
+48684.296	P	523	<Char instance l>	0	0
+48685.385	R	523	<Char instance l>	0	0
+48706.373	P	1280	<Char instance >	0	0
+48746.923	R	1280	<Char instance >	0	0
+55300.142	P	257	<Char instance 1>	0	0
+55325.532	R	257	<Char instance 1>	0	0
+55325.947	P	258	<Char instance 2>	0	0
+55326.608	R	258	<Char instance 2>	0	0
+55344.152	P	258	<Char instance 2>	0	0
+55345.002	R	258	<Char instance 2>	0	0
+55347.876	P	258	<Char instance 2>	0	0
+55348.314	R	258	<Char instance 2>	0	0
+55371.908	P	257	<Char instance 1>	0	0
+55373.111	R	257	<Char instance 1>	0	0
+55394.691	P	1280	<Char instance >	0	0
+55415.182	R	1280	<Char instance >	0	0
+65243.975	P	257	<Char instance 1>	0	0
+65267.398	R	257	<Char instance 1>	0	0
+65267.830	P	256	<Char instance 0>	0	0
+65268.600	R	256	<Char instance 0>	0	0
+65288.270	P	264	<Char instance 8>	0	0
+65289.348	R	264	<Char instance 8>	0	0
+65292.377	P	258	<Char instance 2>	0	0
+65293.680	R	258	<Char instance 2>	0	0
+65311.302	P	256	<Char instance 0>	0	0
+65312.237	R	256	<Char instance 0>	0	0
+65323.718	P	264	<Char instance 8>	0	0
+65324.341	R	264	<Char instance 8>	0	0
+65343.176	P	263	<Char instance 7>	0	0
+65344.857	R	263	<Char instance 7>	0	0
+65355.539	P	256	<Char instance 0>	0	0
+65356.131	R	256	<Char instance 0>	0	0
+65381.537	P	256	<Char instance 0>	0	0
+65382.595	R	256	<Char instance 0>	0	0
+65387.622	P	256	<Char instance 0>	0	0
+65388.216	R	256	<Char instance 0>	0	0
+65410.055	P	256	<Char instance 0>	0	0
+65411.400	R	256	<Char instance 0>	0	0
+65419.547	P	257	<Char instance 1>	0	0
+65420.248	R	257	<Char instance 1>	0	0
+65446.959	P	257	<Char instance 1>	0	0
+65447.990	R	257	<Char instance 1>	0	0
+65451.667	P	1280	<Char instance >	0	0
+65474.537	R	1280	<Char instance >	0	0
+80211.506	P	530	<Char instance S>	1	0
+80236.956	R	530	<Char instance S>	1	0
+80237.431	P	525	<Char instance N>	1	0
+80238.131	R	525	<Char instance N>	1	0
+80256.748	P	0	<Char instance Ñ>	1	0
+80257.691	R	0	<Char instance Ñ>	1	0
+80262.769	P	518	<Char instance G>	1	0
+80263.431	R	518	<Char instance G>	1	0
+80278.941	P	523	<Char instance L>	1	0
+80279.908	R	523	<Char instance L>	1	0
+80291.469	P	519	<Char instance H>	1	0
+80293.937	R	519	<Char instance H>	1	0
+80315.145	P	258	<Char instance 2>	0	0
+80315.693	R	258	<Char instance 2>	0	0
+80341.710	P	259	<Char instance 3>	0	0
+80343.527	R	259	<Char instance 3>	0	0
+80347.323	P	259	<Char instance 3>	0	0
+80347.896	R	259	<Char instance 3>	0	0
+80374.631	P	264	<Char instance 8>	0	0
+80375.729	R	264	<Char instance 8>	0	0
+80397.045	P	256	<Char instance 0>	0	0
+80397.818	R	256	<Char instance 0>	0	0
+80398.108	P	264	<Char instance 8>	0	0
+80398.588	R	264	<Char instance 8>	0	0
+80430.505	P	256	<Char instance 0>	0	0
+80431.527	R	256	<Char instance 0>	0	0
+80431.927	P	264	<Char instance 8>	0	0
+80432.687	R	264	<Char instance 8>	0	0
+80458.352	P	259	<Char instance 3>	0	0
+80459.687	R	259	<Char instance 3>	0	0
+80463.611	P	263	<Char instance 7>	0	0
+80464.797	R	263	<Char instance 7>	0	0
+80481.530	P	263	<Char instance 7>	0	0
+80483.533	R	263	<Char instance 7>	0	0
+80491.441	P	1280	<Char instance >	0	0
+80513.344	R	1280	<Char instance >	0	0
+93891.783	P	530	<Char instance S>	1	0
+93916.768	R	530	<Char instance S>	1	0
+93917.305	P	525	<Char instance N>	1	0
+93918.260	R	525	<Char instance N>	1	0
+93934.359	P	0	<Char instance Ñ>	1	0
+93935.404	R	0	<Char instance Ñ>	1	0
+93938.937	P	518	<Char instance G>	1	0
+93939.500	R	518	<Char instance G>	1	0
+93956.462	P	523	<Char instance L>	1	0
+93957.442	R	523	<Char instance L>	1	0
+93975.588	P	519	<Char instance H>	1	0
+93976.596	R	519	<Char instance H>	1	0
+94003.839	P	258	<Char instance 2>	0	0
+94004.788	R	258	<Char instance 2>	0	0
+94026.697	P	259	<Char instance 3>	0	0
+94027.830	R	259	<Char instance 3>	0	0
+94028.177	P	259	<Char instance 3>	0	0
+94028.910	R	259	<Char instance 3>	0	0
+94054.900	P	264	<Char instance 8>	0	0
+94055.854	R	264	<Char instance 8>	0	0
+94077.303	P	256	<Char instance 0>	0	0
+94078.295	R	256	<Char instance 0>	0	0
+94078.702	P	264	<Char instance 8>	0	0
+94079.279	R	264	<Char instance 8>	0	0
+94104.269	P	256	<Char instance 0>	0	0
+94105.578	R	256	<Char instance 0>	0	0
+94107.187	P	264	<Char instance 8>	0	0
+94108.491	R	264	<Char instance 8>	0	0
+94125.312	P	259	<Char instance 3>	0	0
+94126.298	R	259	<Char instance 3>	0	0
+94156.805	P	263	<Char instance 7>	0	0
+94157.864	R	263	<Char instance 7>	0	0
+94158.192	P	263	<Char instance 7>	0	0
+94158.600	R	263	<Char instance 7>	0	0
+94173.132	P	1280	<Char instance >	0	0
+94195.028	R	1280	<Char instance >	0	0
+117626.902	P	514	<Char instance c>	0	0
+117653.446	R	514	<Char instance c>	0	0
+117654.017	P	1284	<Char instance  >	0	0
+117654.900	R	1284	<Char instance  >	0	0
+117670.804	P	530	<Char instance s>	0	0
+117672.523	R	530	<Char instance s>	0	0
+117678.013	P	519	<Char instance h>	0	0
+117678.733	R	519	<Char instance h>	0	0
+117709.387	P	526	<Char instance o>	0	0
+117710.359	R	526	<Char instance o>	0	0
+117710.824	P	529	<Char instance r>	0	0
+117711.322	R	529	<Char instance r>	0	0
+117739.612	P	531	<Char instance t>	0	0
+117740.611	R	531	<Char instance t>	0	0
+117741.002	P	1284	<Char instance  >	0	0
+117743.387	R	1284	<Char instance  >	0	0
+117774.076	P	1280	<Char instance >	0	0
+117793.610	R	1280	<Char instance >	0	0
+334238.812	P	523	<Char instance l>	0	0
+334263.030	R	523	<Char instance l>	0	0
+334358.727	P	526	<Char instance o>	0	0
+334359.256	R	526	<Char instance o>	0	0
+334479.277	P	529	<Char instance r>	0	0
+334480.388	R	529	<Char instance r>	0	0
+334534.945	P	516	<Char instance e>	0	0
+334536.077	R	516	<Char instance e>	0	0
+334654.811	P	524	<Char instance m>	0	0
+334655.401	R	524	<Char instance m>	0	0
+334982.860	P	1280	<Char instance >	0	0
+335002.207	P	1319	<Char instance }>	0	0
+335027.695	R	1319	<Char instance }>	0	0
+335047.403	R	1280	<Char instance >	0	0
+337686.903	P	1283	<Char instance >	0	0
+337750.694	R	1283	<Char instance >	0	0
+339574.689	P	531	<Char instance t>	0	0
+339575.217	R	531	<Char instance t>	0	0
+339654.831	P	530	<Char instance s>	0	0
+339655.346	R	530	<Char instance s>	0	0
+339655.762	P	516	<Char instance e>	0	0
+339656.269	R	516	<Char instance e>	0	0
+339742.685	P	531	<Char instance t>	0	0
+339743.254	R	531	<Char instance t>	0	0
+339918.823	P	1280	<Char instance >	0	0
+339999.184	R	1280	<Char instance >	0	0
+340862.694	P	531	<Char instance t>	0	0
+340886.611	R	531	<Char instance t>	0	0
+340942.692	P	516	<Char instance e>	0	0
+340943.260	R	516	<Char instance e>	0	0
+340960.759	P	530	<Char instance s>	0	0
+340961.793	R	530	<Char instance s>	0	0
+341006.796	P	531	<Char instance t>	0	0
+341007.316	R	531	<Char instance t>	0	0
+341551.804	P	1280	<Char instance >	0	0
+341599.010	R	1280	<Char instance >	0	0
+346158.725	P	519	<Char instance h>	0	0
+346183.249	R	519	<Char instance h>	0	0
+346214.608	P	516	<Char instance e>	0	0
+346215.140	R	516	<Char instance e>	0	0
+346286.652	P	523	<Char instance l>	0	0
+346287.220	R	523	<Char instance l>	0	0
+346438.601	P	523	<Char instance l>	0	0
+346439.168	R	523	<Char instance l>	0	0
+346646.596	P	526	<Char instance o>	0	0
+346647.377	R	526	<Char instance o>	0	0
+347038.858	P	1284	<Char instance  >	0	0
+347040.444	R	1284	<Char instance  >	0	0
+347190.484	P	534	<Char instance w>	0	0
+347191.057	R	534	<Char instance w>	0	0
+347270.696	P	526	<Char instance o>	0	0
+347271.349	R	526	<Char instance o>	0	0
+347518.589	P	529	<Char instance r>	0	0
+347519.174	R	529	<Char instance r>	0	0
+347630.629	P	523	<Char instance l>	0	0
+347631.425	R	523	<Char instance l>	0	0
+347830.737	P	515	<Char instance d>	0	0
+347831.606	R	515	<Char instance d>	0	0
+347974.602	P	1280	<Char instance >	0	0
+348062.610	R	1280	<Char instance >	0	0
+350054.634	P	519	<Char instance h>	0	0
+350077.298	R	519	<Char instance h>	0	0
+350118.544	P	526	<Char instance o>	0	0
+350119.201	R	526	<Char instance o>	0	0
+350262.533	P	523	<Char instance l>	0	0
+350263.080	R	523	<Char instance l>	0	0
+350318.514	P	512	<Char instance a>	0	0
+350319.084	R	512	<Char instance a>	0	0
+350471.515	P	1280	<Char instance >	0	0
+350542.618	R	1280	<Char instance >	0	0

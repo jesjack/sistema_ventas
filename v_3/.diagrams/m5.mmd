@@ -1,0 +1,16 @@
+flowchart LR
+    iArr[/"IN arrancar_camaras"/]:::cam
+    subgraph CAM["camera_viewer"]
+        M1["Caja negra (otra instancia)"]:::cam
+    end
+    ioUi{{"E/S ui_camaras"}}:::cam
+    ioDvr{{"E/S dvr_camaras"}}:::cam
+    oSalio[\"OUT camaras_salio"\]:::cam
+    oLog[\"OUT log_camaras"\]:::cam
+    iArr --> M1
+    M1 <--> ioUi
+    M1 <--> ioDvr
+    M1 --> oSalio
+    M1 --> oLog
+    style CAM fill:#fffbeb,stroke:#b45309,stroke-width:3px,color:#451a03
+    classDef cam fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px

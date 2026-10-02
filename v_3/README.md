@@ -12,6 +12,17 @@ inventario). El objetivo es **compatibilidad, portabilidad y convenciones**:
 - **Usar herramientas y convenciones existentes** en lugar de soluciones propias para instalar,
   lanzar y administrar permisos multiusuario.
 
+## Otros objetivos
+
+- **Logs centralizados: un solo archivo por ejecución** para todo el sistema (arranque, proceso
+  UNO, App, cámaras, admin_botones, prebake), en lugar de las carpetas y archivos repartidos de
+  la V2. En la V2 hay dos lugares con varias carpetas cada uno:
+  - `logs/`: `debug/`, `admin_botones/`, `autocompletado_producto.log`…
+  - `share/logs/`: `camera_viewer/`, `prebake/`…
+- **Tracebacks legibles para una IA, no para una persona:** texto plano sin colores ni cuadros,
+  completos, con variables locales y con proceso, pid, hilo y hora. Con solo la stdlib, así que
+  `rich` desaparece.
+
 ## Diseño acordado
 
 Dos intérpretes con papeles fijos, iguales en ambos sistemas:
@@ -27,6 +38,6 @@ declarada; no se empaqueta con el proyecto.
 ## Pasos propuestos
 
 1. Mapa del corte: qué hace hoy el proceso de `v_2/main.py`, qué queda del lado UNO, qué pasa
-   al venv y qué mensajes cruzan entre ambos.
+   al venv y qué mensajes cruzan entre ambos. En curso: [`docs/mapa_v2.md`](docs/mapa_v2.md).
 2. `pyproject.toml` y un lanzador en Python que funcione igual en ambos sistemas.
 3. Mover primero lo de menos riesgo (impresión de etiquetas); el cobro y el escáner, al final.

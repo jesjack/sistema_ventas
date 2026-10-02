@@ -1,0 +1,17 @@
+flowchart LR
+    iArr[/"IN arrancar_admin"/]:::adm
+    subgraph ADM["admin_botones"]
+        D1["Ventana Qt: botones<br/>y visibilidad por usuario"]:::adm
+        D2["Guarda los cambios"]:::adm
+    end
+    ioUi{{"E/S ui_admin"}}:::adm
+    ioDb{{"E/S db_botones"}}:::adm
+    oSalio[\"OUT admin_salio"\]:::adm
+    oLog[\"OUT log_admin"\]:::adm
+    iArr --> D1 --> D2 --> ioDb
+    D1 <--> ioUi
+    D1 <--> ioDb
+    D2 --> oLog
+    D1 --> oSalio
+    style ADM fill:#f5f3ff,stroke:#6d28d9,stroke-width:3px,color:#2e1065
+    classDef adm fill:#ede9fe,stroke:#6d28d9,color:#2e1065,stroke-width:2px

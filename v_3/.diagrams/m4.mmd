@@ -1,0 +1,16 @@
+flowchart LR
+    iArr[/"IN arrancar_archivador"/]:::arc
+    iTerm[/"IN terminar_archivador"/]:::arc
+    subgraph ARC["camera_viewer.archiver"]
+        R1["Caja negra<br/>(otra instancia; tiene su propio candado de instancia única)"]:::arc
+    end
+    ioDvr{{"E/S dvr_archivador"}}:::arc
+    oSalio[\"OUT archivador_salio"\]:::arc
+    oLog[\"OUT log_archivador"\]:::arc
+    iArr --> R1
+    iTerm --> R1
+    R1 <--> ioDvr
+    R1 --> oSalio
+    R1 --> oLog
+    style ARC fill:#fff1f2,stroke:#be123c,stroke-width:3px,color:#4c0519
+    classDef arc fill:#ffe4e6,stroke:#be123c,color:#4c0519,stroke-width:2px

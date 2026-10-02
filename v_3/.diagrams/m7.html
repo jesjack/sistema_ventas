@@ -1,0 +1,2939 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Diagrama</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --dot: #d5d8de;
+    --panel: #ffffff;
+    --panel-translucent: rgba(255, 255, 255, .5);
+    --border: #d0d4db;
+    --text: #1f2328;
+    --muted: #656d76;
+    --danger: #cf222e;
+    --danger-bg: #ffebe9;
+    --warn-bg: #fff8c5;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    cursor: grab;
+    touch-action: none;
+    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  }
+  #stage.dragging { cursor: grabbing; }
+  #canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    user-select: none;
+  }
+  #canvas svg { position: relative; display: block; overflow: visible; }
+  #canvas .shadow { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+  /* Depuración paso a paso del layout */
+  .stepper {
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top));
+    left: 12px;
+    max-width: min(420px, calc(100vw - 24px));
+    padding: 4px;
+    background: var(--panel-translucent);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+    z-index: 10;
+    touch-action: manipulation;
+  }
+  .stepper .row { display: flex; gap: 4px; align-items: center; }
+  .stepper button {
+    min-width: 36px;
+    height: 32px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .stepper button:hover { background: rgba(0, 0, 0, .06); }
+  #step-label { min-width: 64px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #step-why { padding: 2px 8px 4px; font-size: 13px; }
+  #step-why:empty { display: none; }
+  #canvas .step-current > :first-child { stroke: #e11d48 !important; stroke-width: 3px !important; }
+  #canvas .junction.step-current rect { fill: #e11d48 !important; }
+  #canvas .junction { cursor: pointer; }
+  #canvas .flash > :first-child { animation: flash 1.2s ease-out; }
+  @keyframes flash {
+    0%, 50% { stroke: #e11d48; stroke-width: 4px; }
+    25%, 75% { stroke: #fb923c; stroke-width: 6px; }
+  }
+
+  .toolbar {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 4px;
+    background: var(--panel-translucent);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+    z-index: 10;
+  }
+  .toolbar button {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .toolbar button:hover { background: rgba(0, 0, 0, .06); }
+  .toolbar, #warnings { touch-action: manipulation; }
+  .toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
+  /* Recarga en vivo (diagram.py --watch) */
+  #live { padding: 0 6px; color: #1a7f37; font-size: 12px; white-space: nowrap; }
+  #live.off { color: var(--muted); }
+  #live[hidden] { display: none; }
+  #status { min-width: 48px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  #warnings {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    max-width: min(560px, calc(100vw - 24px));
+    padding: 8px 12px;
+    background: var(--warn-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    white-space: pre-wrap;
+    z-index: 10;
+  }
+
+  #error {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 24px 16px;
+    background: var(--bg);
+    z-index: 20;
+  }
+  /* Pantallas táctiles y estrechas: botones más grandes y barra respetando la zona segura. */
+  @media (pointer: coarse) {
+    .toolbar button { min-width: 40px; height: 40px; }
+    .toolbar button:hover { background: transparent; }
+    .toolbar button:active { background: rgba(0, 0, 0, .06); }
+  }
+  @media (max-width: 480px) {
+    .toolbar {
+      top: auto;
+      right: 50%;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      transform: translateX(50%);
+    }
+    #warnings {
+      top: calc(max(12px, env(safe-area-inset-top)) + 56px);
+      bottom: auto;
+      left: 12px;
+      max-height: 30vh;
+      overflow: auto;
+    }
+  }
+
+  #error[hidden], #warnings[hidden] { display: none; }
+  #error .message {
+    max-width: 900px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 12px 16px;
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    font-weight: 600;
+  }
+  #error .source {
+    max-width: 900px;
+    width: 100%;
+    margin: 0 auto;
+    overflow: auto;
+    padding: 8px 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  #error .line { padding: 0 16px 0 0; white-space: pre; }
+  #error .line::before {
+    content: attr(data-n);
+    display: inline-block;
+    width: 48px;
+    padding-right: 12px;
+    text-align: right;
+    color: var(--muted);
+  }
+  #error .line.bad { background: var(--danger-bg); }
+  #error .line.bad::before { color: var(--danger); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="canvas"></div>
+</div>
+
+<div class="toolbar">
+  <span id="live" hidden></span>
+  <span id="status" title="Zoom: rueda, pellizco o + / - · doble toque o 0 para ajustar">100%</span>
+  <span class="sep"></span>
+  <button id="btn-mermaid" title="Abrir este diagrama con Mermaid oficial en otra pestaña, para comparar">Mermaid</button>
+  <button id="btn-svg" title="Descargar como SVG">SVG</button>
+  <button id="btn-png" title="Descargar como PNG">PNG</button>
+</div>
+
+<div class="stepper">
+  <div class="row">
+    <button id="btn-step-prev" title="Paso anterior de la construcción (←)">◀</button>
+    <span id="step-label"></span>
+    <button id="btn-step-next" title="Paso siguiente de la construcción (→)">▶</button>
+  </div>
+  <div id="step-why"></div>
+</div>
+
+<div id="warnings" hidden></div>
+
+<div id="error" hidden>
+  <div class="message"></div>
+  <div class="source"></div>
+</div>
+
+<script type="application/json" id="diagram-source">"flowchart LR\n    USR[\"Usuario, teclado, escáner y ratón\"]:::ext\n    SO[\"Sistema operativo<br/>(menú, candados)\"]:::ext\n    APP2[\"App de otro usuario<br/>(misma App, otra instancia)\"]:::app\n    APP[\"App\"]:::app\n    SOF[\"soffice\"]:::sof\n    UNOB[\"UNO\"]:::uno\n    ARC[\"camera_viewer.archiver\"]:::arc\n    CAM[\"camera_viewer\"]:::cam\n    ADM[\"admin_botones\"]:::adm\n    DB[(\"ventas.db\")]:::ext\n    COMP[\"Carpeta de datos compartida\"]:::ext\n    LOG[\"Archivo de log de la ejecución\"]:::ext\n    IMP[\"Impresora de tickets y cajón\"]:::ext\n    ETQ[\"Impresora de etiquetas\"]:::ext\n    DVR[\"DVR y disco\"]:::ext\n\n    SO -- \"inicio\" --> APP\n    APP <-- \"candado_usuario\" --> SO\n    APP <-- \"candado_caja\" --> COMP\n    APP -- \"pedir_caja\" --> APP2\n    APP2 -- \"caja_liberada\" --> APP\n    APP <-- \"ui_app\" --> USR\n    APP <-- \"db\" --> DB\n    APP -- \"log\" --> LOG\n    APP -- \"imprimir_ticket, abrir_cajon\" --> IMP\n    APP -- \"imprimir_etiqueta\" --> ETQ\n\n    APP -- \"arrancar_soffice, main_ods\" --> SOF\n    SOF -- \"soffice_salio, log_soffice\" --> APP\n    APP -- \"arrancar_uno\" --> UNOB\n    APP -- \"bus: pintar, escribir_producto,<br/>publicar_botones, enfocar_calc,<br/>cerrar_libreoffice\" --> UNOB\n    UNOB -- \"bus: uno_listo, enter_pulsado,<br/>tab_pulsado, boton_pulsado,<br/>documento_cerrado\" --> APP\n    UNOB -- \"uno_salio, log_uno\" --> APP\n    UNOB -- \"api_hoja\" --> SOF\n    SOF -- \"urp_listo, tecla, clic,<br/>documento_murio\" --> UNOB\n    USR -- \"teclado_escaner_raton\" --> SOF\n    SOF -- \"pantalla_hoja\" --> USR\n\n    APP -- \"arrancar_archivador,<br/>terminar_archivador\" --> ARC\n    ARC -- \"archivador_salio, log_archivador\" --> APP\n    ARC <-- \"dvr_archivador\" --> DVR\n    APP -- \"arrancar_camaras\" --> CAM\n    CAM -- \"camaras_salio, log_camaras\" --> APP\n    CAM <-- \"ui_camaras\" --> USR\n    CAM <-- \"dvr_camaras\" --> DVR\n    APP -- \"arrancar_admin\" --> ADM\n    ADM -- \"admin_salio, log_admin\" --> APP\n    ADM <-- \"ui_admin\" --> USR\n    ADM <-- \"db_botones\" --> DB\n\n    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px\n    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px\n    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px\n    classDef adm fill:#ede9fe,stroke:#6d28d9,color:#2e1065,stroke-width:2px\n    classDef cam fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px\n    classDef arc fill:#ffe4e6,stroke:#be123c,color:#4c0519,stroke-width:2px\n    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3\n"</script>
+<script>
+// Parser: texto Mermaid (subconjunto flowchart) -> { nodes, edges, meta, warnings }
+//
+// nodes:  Map id -> { id, shape, text, line, group }   (group: id del subgraph, o null)
+// edges:  [{ index, from, to, label, arrowStart, arrowEnd, style, line }]  (orden de declaración)
+//         from/to pueden ser el id de un subgraph entero.
+// meta:   { dirs: [{ from, to, dir, line }] }
+// subgraphs: [{ id, title, parent, line }]  (orden de aparición; parent: id o null)
+//
+// Estilos (classDef, class, :::, style, linkStyle): se resuelven al final. Cada nodo o arista con
+// estilo lleva css = [[propiedad, valor], ...], que el render pasa tal cual al SVG.
+
+class DiagramError extends Error {
+  constructor(message, line) {
+    super(line ? `Línea ${line}: ${message}` : message);
+    this.name = "DiagramError";
+    this.line = line;
+  }
+}
+
+const DIRECTIONS = ["down", "right", "left", "up"];
+
+// Aperturas de forma, de la más larga a la más corta para que "((" gane a "(".
+const SHAPES = [
+  { open: "((", close: "))", shape: "circle" },
+  { open: "{{", close: "}}", shape: "hexagon" },
+  { open: "[[", close: "]]", shape: "subroutine" },
+  { open: "[(", close: ")]", shape: "cylinder" },
+  { open: "([", close: "])", shape: "stadium" },
+  { open: "[/", close: "/]", shape: "parallelogram" },
+  { open: "[\\", close: "\\]", shape: "parallelogram-alt" },
+  { open: "[", close: "]", shape: "rect" },
+  { open: "(", close: ")", shape: "round" },
+  { open: "{", close: "}", shape: "diamond" },
+];
+
+const STYLE_RE = /^(classDef|class|style|linkStyle)\s+(\S+)(?:\s+(.*))?$/;
+// Propiedades de HTML que no tienen efecto en un elemento SVG: se avisa para que no parezca un fallo.
+const HTML_ONLY_PROPS = /^(background(-.*)?|padding(-.*)?|margin(-.*)?|border(-.*)?|width|height|display|box-shadow|text-align)$/;
+const ID_RE = /^[\p{L}\p{N}_]+/u;
+
+function parseDiagram(source) {
+  const nodes = new Map();
+  const edges = [];
+  const meta = { dirs: [] };
+  const warnings = [];
+  const subgraphs = [];
+  const open = []; // pila de subgraphs abiertos
+  const styles = { classDefs: new Map(), classOf: [], style: [], linkStyle: [] };
+  let headerSeen = false;
+
+  const lines = source.split(/\r?\n/);
+  lines.forEach((rawLine, idx) => {
+    const lineNo = idx + 1;
+    const trimmed = rawLine.trim();
+    if (!trimmed) return;
+
+    if (trimmed.startsWith("%%")) {
+      parseComment(trimmed.slice(2).trim(), lineNo, meta);
+      return;
+    }
+
+    const line = stripTrailingComment(trimmed).trim();
+    if (!line) return;
+
+    if (!headerSeen && /^(graph|flowchart)\b/.test(line)) {
+      headerSeen = true;
+      return;
+    }
+    headerSeen = true;
+
+    if (/^click\b/.test(line)) {
+      warnings.push({ line: lineNo, message: "'click' ignorado" });
+      return;
+    }
+    const st = line.match(STYLE_RE);
+    if (st) {
+      parseStyleStatement(st, lineNo, styles);
+      return;
+    }
+    if (/^subgraph\b/.test(line)) {
+      const sg = parseSubgraphHeader(line, lineNo);
+      if (subgraphs.some((s) => s.id === sg.id)) throw new DiagramError(`Subgraph '${sg.id}' repetido`, lineNo);
+      sg.parent = open.length ? open[open.length - 1].id : null;
+      subgraphs.push(sg);
+      open.push(sg);
+      return;
+    }
+    if (line === "end") {
+      if (!open.length) throw new DiagramError("'end' sin 'subgraph'", lineNo);
+      open.pop();
+      return;
+    }
+    if (/^direction\b/.test(line)) {
+      warnings.push({ line: lineNo, message: "'direction' ignorada: el layout usa sus propias reglas" });
+      return;
+    }
+
+    parseStatement(line, lineNo, nodes, edges, open.length ? open[open.length - 1].id : null, styles);
+  });
+
+  if (open.length) {
+    const last = open[open.length - 1];
+    throw new DiagramError(`Falta 'end' para el subgraph '${last.id}'`, last.line);
+  }
+
+  // Cada @dir debe referirse a una arista existente.
+  for (const d of meta.dirs) {
+    const exists = edges.some((e) => e.from === d.from && e.to === d.to);
+    if (!exists) {
+      throw new DiagramError(`@dir: no existe la arista '${d.from} -> ${d.to}'`, d.line);
+    }
+  }
+
+  // Un id de subgraph usado en una arista apunta al subgraph entero, no a un nodo.
+  for (const sg of subgraphs) {
+    const node = nodes.get(sg.id);
+    if (!node) continue;
+    if (node.declared) {
+      throw new DiagramError(`'${sg.id}' es a la vez un subgraph y un nodo con forma`, node.line);
+    }
+    nodes.delete(sg.id);
+  }
+  for (const n of nodes.values()) delete n.declared;
+  resolveStyles(styles, nodes, edges, subgraphs, warnings);
+
+  return { nodes, edges, meta, warnings, subgraphs };
+}
+
+// classDef a,b props | class id1,id2 clase | style id props | linkStyle 0,2|default props
+function parseStyleStatement([, keyword, target, rest], lineNo, styles) {
+  const list = target.split(",").filter(Boolean);
+  if (keyword === "class") {
+    if (!rest) throw new DiagramError("Uso: class id1,id2 clase", lineNo);
+    for (const id of list) styles.classOf.push({ id, cls: rest.trim(), line: lineNo });
+    return;
+  }
+  if (!rest) throw new DiagramError(`Faltan las propiedades de '${keyword}'`, lineNo);
+  const props = parseProps(rest, lineNo);
+  if (keyword === "classDef") {
+    for (const name of list) styles.classDefs.set(name, { props, line: lineNo, order: styles.classDefs.size });
+  } else if (keyword === "style") {
+    for (const id of list) styles.style.push({ id, props, line: lineNo });
+  } else styles.linkStyle.push({ targets: list, props, line: lineNo });
+}
+
+// "fill:#f9f,stroke:#333,stroke-dasharray:5 5" -> [[prop, valor], ...]. Un trozo sin ':' (la coma
+// de "stroke-dasharray: 5, 5") se une a la propiedad anterior; "\," también es una coma.
+function parseProps(text, lineNo) {
+  const props = [];
+  for (const piece of text.replace(/;\s*$/, "").split(/(?<!\\),/)) {
+    const m = piece.replace(/\\,/g, ",").match(/^\s*([\w-]+)\s*:\s*(.*?)\s*$/);
+    if (m) props.push([m[1].toLowerCase(), m[2]]);
+    else if (props.length) props[props.length - 1][1] += `,${piece.trim()}`;
+    else throw new DiagramError(`Propiedad de estilo inválida: '${piece.trim()}'`, lineNo);
+  }
+  return props;
+}
+
+// Prioridad (como en Mermaid): classDef default -> clases del nodo (gana la definida más tarde)
+// -> style del nodo. Una propiedad repetida se queda con el último valor.
+function resolveStyles(styles, nodes, edges, subgraphs, warnings) {
+  const warned = new Set();
+  const warnOnce = (key, line, message) => {
+    if (warned.has(key)) return;
+    warned.add(key);
+    warnings.push({ line, message });
+  };
+  const merge = (css, props, line) => {
+    const map = new Map(css);
+    for (const [k, v] of props) {
+      if (HTML_ONLY_PROPS.test(k)) warnOnce(`prop:${k}`, line, `La propiedad '${k}' no tiene efecto en SVG: se ignora`);
+      else {
+        map.delete(k); // al final, para que el orden refleje la prioridad
+        map.set(k, v);
+      }
+    }
+    return [...map];
+  };
+  const isSubgraph = (id) => subgraphs.some((sg) => sg.id === id);
+
+  const classesOf = new Map();
+  for (const c of styles.classOf) {
+    if (nodes.has(c.id)) classesOf.set(c.id, [...(classesOf.get(c.id) || []), c]);
+    else if (isSubgraph(c.id)) warnOnce(`sg:${c.id}`, c.line, `Estilo del subgraph '${c.id}' ignorado (los subgraphs no tienen caja)`);
+    else warnings.push({ line: c.line, message: `class: no existe el nodo '${c.id}'` });
+  }
+  const def = styles.classDefs.get("default");
+  for (const n of nodes.values()) {
+    let css = def ? merge([], def.props, def.line) : [];
+    const defs = [];
+    for (const c of classesOf.get(n.id) || []) {
+      const d = styles.classDefs.get(c.cls);
+      if (d) defs.push(d);
+      else warnOnce(`cls:${c.cls}`, c.line, `La clase '${c.cls}' no tiene classDef: se ignora`);
+    }
+    for (const d of defs.sort((a, b) => a.order - b.order)) css = merge(css, d.props, d.line);
+    if (css.length) n.css = css;
+  }
+  for (const st of styles.style) {
+    const n = nodes.get(st.id);
+    if (n) n.css = merge(n.css || [], st.props, st.line);
+    else if (isSubgraph(st.id)) warnOnce(`sg:${st.id}`, st.line, `Estilo del subgraph '${st.id}' ignorado (los subgraphs no tienen caja)`);
+    else warnings.push({ line: st.line, message: `style: no existe el nodo '${st.id}'` });
+  }
+  for (const ls of styles.linkStyle) {
+    for (const t of ls.targets) {
+      const targets = t === "default" ? edges : /^\d+$/.test(t) && edges[Number(t)] ? [edges[Number(t)]] : null;
+      if (!targets) {
+        warnings.push({ line: ls.line, message: `linkStyle: no existe la flecha número '${t}' (se cuentan desde 0)` });
+        continue;
+      }
+      for (const e of targets) e.css = merge(e.css || [], ls.props, ls.line);
+    }
+  }
+}
+
+// subgraph ID["título"] | subgraph ID[título] | subgraph "título" | subgraph título
+function parseSubgraphHeader(line, lineNo) {
+  const rest = line.slice("subgraph".length).trim();
+  if (!rest) throw new DiagramError("Falta el nombre del subgraph", lineNo);
+  const m = rest.match(/^([\p{L}\p{N}_]+)\s*\[\s*("?)(.*?)\2\s*\]$/u);
+  if (m) return { id: m[1], title: m[3], line: lineNo };
+  const quoted = rest.match(/^"(.*)"$/);
+  const title = quoted ? quoted[1] : rest;
+  return { id: title, title, line: lineNo };
+}
+
+// "%% @dir a -> b : down"  (comentarios normales se ignoran)
+function parseComment(body, lineNo, meta) {
+  if (!body.startsWith("@")) return;
+  const m = body.match(/^@(\w+)\s*(.*)$/);
+  const directive = m[1];
+  const args = m[2].trim();
+
+  if (directive === "dir") {
+    const d = args.match(/^([\p{L}\p{N}_]+)\s*->\s*([\p{L}\p{N}_]+)\s*:\s*(\w+)$/u);
+    if (!d) {
+      throw new DiagramError("Formato de @dir inválido. Uso: %% @dir origen -> destino : down|right|left|up", lineNo);
+    }
+    if (!DIRECTIONS.includes(d[3])) {
+      throw new DiagramError(`Dirección '${d[3]}' inválida. Usa: ${DIRECTIONS.join(", ")}`, lineNo);
+    }
+    meta.dirs.push({ from: d[1], to: d[2], dir: d[3], line: lineNo });
+    return;
+  }
+
+  throw new DiagramError(`Metadato desconocido '@${directive}'`, lineNo);
+}
+
+// Quita "%% ..." al final de una línea, respetando el texto entre comillas.
+function stripTrailingComment(line) {
+  let inQuotes = false;
+  for (let i = 0; i < line.length - 1; i++) {
+    if (line[i] === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && line[i] === "%" && line[i + 1] === "%") return line.slice(0, i);
+  }
+  return line;
+}
+
+// nodo (arista nodo)*   p. ej. "a --> b -->|x| c"
+function parseStatement(line, lineNo, nodes, edges, group, styles) {
+  let pos = 0;
+  const skipSpaces = () => {
+    while (pos < line.length && /\s/.test(line[pos])) pos++;
+  };
+
+  skipSpaces();
+  let prev = parseNodeRef(line, pos, lineNo, nodes, group, styles);
+  pos = prev.end;
+
+  for (;;) {
+    skipSpaces();
+    if (pos >= line.length) break;
+    if (line[pos] === ";") { pos++; continue; }
+
+    const edge = parseEdge(line, pos, lineNo);
+    pos = edge.end;
+    skipSpaces();
+    if (pos >= line.length) throw new DiagramError("Falta el nodo destino de la arista", lineNo);
+
+    const next = parseNodeRef(line, pos, lineNo, nodes, group, styles);
+    pos = next.end;
+    edges.push({
+      index: edges.length,
+      from: prev.id,
+      to: next.id,
+      label: edge.label,
+      arrowStart: edge.arrowStart,
+      arrowEnd: edge.arrowEnd,
+      style: edge.style,
+      line: lineNo,
+    });
+    prev = next;
+  }
+}
+
+// id, opcionalmente seguido de forma y texto: a["texto"], a(("texto")), a{texto}...
+function parseNodeRef(line, pos, lineNo, nodes, group, styles) {
+  const idMatch = line.slice(pos).match(ID_RE);
+  if (!idMatch) throw new DiagramError(`Se esperaba un id de nodo en '${line.slice(pos)}'`, lineNo);
+  const id = idMatch[0];
+  pos += id.length;
+
+  let shape = null;
+  let text = null;
+  const spec = SHAPES.find((s) => line.startsWith(s.open, pos));
+  if (spec) {
+    pos += spec.open.length;
+    const parsed = parseShapeText(line, pos, spec.close, lineNo);
+    shape = spec.shape;
+    text = parsed.text;
+    pos = parsed.end;
+  }
+
+  // Clase de Mermaid "a:::clase".
+  const cls = line.slice(pos).match(/^:::([\w-]+)/);
+  if (cls) {
+    pos += cls[0].length;
+    if (styles) styles.classOf.push({ id, cls: cls[1], line: lineNo });
+  }
+
+  const existing = nodes.get(id);
+  if (!existing) {
+    // El nodo pertenece al subgraph donde aparece por primera vez.
+    nodes.set(id, { id, shape: shape || "rect", text: text ?? id, line: lineNo, group, declared: !!shape });
+  } else if (shape) {
+    existing.declared = true;
+    // Una definición posterior con forma sustituye a la anterior (como en Mermaid).
+    existing.shape = shape;
+    existing.text = text;
+  }
+  return { id, end: pos };
+}
+
+function parseShapeText(line, pos, close, lineNo) {
+  let text;
+  if (line[pos] === '"') {
+    const endQuote = line.indexOf('"', pos + 1);
+    if (endQuote < 0) throw new DiagramError("Comilla sin cerrar", lineNo);
+    text = line.slice(pos + 1, endQuote);
+    pos = endQuote + 1;
+    if (!line.startsWith(close, pos)) throw new DiagramError(`Se esperaba '${close}' después del texto`, lineNo);
+  } else {
+    const endIdx = line.indexOf(close, pos);
+    if (endIdx < 0) throw new DiagramError(`Falta cerrar la forma con '${close}'`, lineNo);
+    text = line.slice(pos, endIdx).trim();
+    pos = endIdx;
+  }
+  // "<br>" de Mermaid como salto de línea explícito.
+  text = text.replace(/<br\s*\/?>/gi, "\n");
+  return { text, end: pos + close.length };
+}
+
+// Texto de una etiqueta de arista: sin comillas y con "<br>" como salto de línea, como en los nodos.
+const labelText = (t) => t.replace(/^"(.*)"$/, "$1").replace(/<br\s*\/?>/gi, "\n");
+
+// Aristas soportadas:
+//   a --> b    a <--> b    a --- b    a ==> b    a -.-> b
+//   a -->|etiqueta| b      a -- etiqueta --> b
+function parseEdge(line, pos, lineNo) {
+  const rest = line.slice(pos);
+  const styleOf = (s) => (s.includes("=") ? "thick" : s.includes(".") ? "dotted" : "solid");
+
+  // Forma con texto en medio: "-- texto -->"
+  let m = rest.match(/^(<?)(--|==|-\.)\s+(.+?)\s+(-{2,}|={2,}|\.+-)(>?)/);
+  if (m && !/^(<?)(-{2,}|={2,}|-\.+-)>/.test(rest)) {
+    return {
+      label: labelText(m[3]), // -- "texto" --> : sin las comillas, como en -->|"texto"|
+      arrowStart: m[1] === "<",
+      arrowEnd: m[5] === ">",
+      style: styleOf(m[2] + m[4]),
+      end: pos + m[0].length,
+    };
+  }
+
+  m = rest.match(/^(<?)(-{2,}|={2,}|-\.+-)(>)/) || rest.match(/^()(-{3,}|={3,}|-\.+-)()/);
+  if (!m) throw new DiagramError(`Se esperaba una arista (-->) en '${rest}'`, lineNo);
+
+  let end = pos + m[0].length;
+  let label = null;
+  const labelMatch = line.slice(end).match(/^\s*\|([^|]*)\|/);
+  if (labelMatch) {
+    label = labelText(labelMatch[1].trim());
+    end += labelMatch[0].length;
+  }
+  return {
+    label,
+    arrowStart: m[1] === "<",
+    arrowEnd: m[3] === ">",
+    style: styleOf(m[2]),
+    end,
+  };
+}
+
+if (typeof module !== "undefined") module.exports = { parseDiagram, DiagramError, DIRECTIONS };
+
+// Layout: grafo parseado -> posiciones.
+//
+// Cada nodo ocupa una celda (col, row) de una rejilla. Un hijo se coloca en la celda vecina
+// de su padre según la dirección de la arista (reglas en SPEC.md). Después, el ancho de cada
+// columna y el alto de cada fila se ajustan al nodo más grande que contienen.
+//
+// Cada subgraph es un diagrama aparte, colocado a la derecha del anterior (ver SPEC.md).
+
+// En el navegador todos los scripts comparten ámbito global; en Node se importa del parser.
+const layoutDeps = typeof module !== "undefined" ? require("./parser.js") : { DiagramError };
+
+const LAYOUT_DEFAULTS = {
+  fontSize: 14,
+  fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+  lineHeight: 18,
+  colGap: 70,
+  rowGap: 60,
+  // Ancho máximo del texto antes de partirlo en líneas, por forma.
+  wrapWidth: {
+    rect: 170,
+    round: 170,
+    stadium: 170,
+    parallelogram: 170,
+    "parallelogram-alt": 170,
+    hexagon: 170,
+    subroutine: 170,
+    diamond: 110,
+    circle: 90,
+    cylinder: 110,
+  },
+  diagramGap: 120, // separación horizontal entre los diagramas de cada subgraph
+  titleGap: 16, // separación entre el título de un diagrama y sus nodos
+  // measure(texto, fuente) -> ancho en px; fuente = { size, family, weight, style }. Si no hay
+  // (p. ej. en Node), se estima por carácter.
+  measure: null,
+};
+
+const DIR_VECTORS = {
+  down: { dc: 0, dr: 1 },
+  up: { dc: 0, dr: -1 },
+  right: { dc: 1, dr: 0 },
+  left: { dc: -1, dr: 0 },
+};
+
+// Direcciones por defecto según el orden de declaración de las salidas.
+const DEFAULT_DIRS = {
+  diamond: ["right", "left", "down"],
+  other: ["down", "right", "left"],
+};
+
+const MAX_CONNECTIONS = 4; // un nodo solo tiene 4 lados: padres + hijos (incluidas referencias)
+// Un empalme se dibuja como una pastilla con el id de su dueño ("● A8"): mide lo que su texto. Las
+// medidas deben coincidir con THEME.idPill de render.js (texto monoespaciado).
+const PILL_FONT = 12;
+const PILL_HEIGHT = 18;
+const pillWidth = (text) => text.length * PILL_FONT * 0.62 + 12;
+const junctionLabel = (owner) => `\u25cf ${owner}`;
+const OPPOSITE = { down: "up", up: "down", left: "right", right: "left" };
+
+function layoutDiagram(graph, options = {}) {
+  const opts = { ...LAYOUT_DEFAULTS, ...options };
+  opts.wrapWidth = { ...LAYOUT_DEFAULTS.wrapWidth, ...options.wrapWidth };
+  const measure =
+    opts.measure || ((text, font) => text.length * (font ? font.size : opts.fontSize) * (font && font.bold ? 0.56 : 0.52));
+  const warnings = [...(graph.warnings || [])];
+
+  if (!graph.subgraphs || !graph.subgraphs.length) {
+    const single = layoutSingle(graph, measure, opts, warnings);
+    const { steps, snapshotAt } = single;
+    delete single.steps;
+    delete single.snapshotAt;
+    const at = (k) => ({ ...snapshotAt(Math.min(k, steps - 1)), titles: [], options: opts });
+    return { ...single, titles: [], warnings, options: opts, snapshotAt: at };
+  }
+
+  // Un diagrama por grupo (el nivel superior y cada subgraph), de izquierda a derecha.
+  const parts = splitBySubgraph(graph, warnings);
+  const nodes = [];
+  const edges = [];
+  const titles = [];
+  let bounds = null;
+  let cursor = 0;
+  let stepOffset = 0; // los pasos de colocación siguen la numeración entre diagramas
+  const done = []; // por diagrama: lo necesario para reconstruir sus pasos
+  for (const part of parts) {
+    const r = layoutSingle(part, measure, opts, warnings);
+    const firstStep = stepOffset;
+    for (const n of r.nodes) {
+      if (n.step === 0) n.why = `${part.title ? `diagrama «${part.title}»` : "nivel superior"}: ${n.why}`;
+      n.step += stepOffset;
+    }
+    stepOffset += r.nodes.length;
+    const titleH = part.title ? opts.lineHeight + opts.titleGap : 0;
+    const titleW = part.title ? measure(part.title, { ...baseFont(opts), weight: "600", bold: true }) : 0;
+    const dx = cursor - r.bounds.minX;
+    const dy = titleH - r.bounds.minY;
+    for (const n of r.nodes) {
+      n.x += dx;
+      n.y += dy;
+      nodes.push(n);
+    }
+    for (const e of r.edges) {
+      for (const p of e.points) {
+        p.x += dx;
+        p.y += dy;
+      }
+      if (e.labelBox) {
+        e.labelBox.x += dx;
+        e.labelBox.y += dy;
+      }
+      edges.push(e);
+    }
+    const width = Math.max(r.bounds.maxX - r.bounds.minX, titleW);
+    if (part.title) titles.push({ text: part.title, x: cursor, y: opts.lineHeight / 2 });
+    done.push({ r, firstStep, steps: r.steps, cursor, titleH, nodes: [...r.nodes], edges: [...r.edges], titles: [...titles] });
+    const b = { minX: cursor, minY: 0, maxX: cursor + width, maxY: titleH + r.bounds.maxY - r.bounds.minY };
+    bounds = bounds
+      ? { minX: bounds.minX, minY: 0, maxX: b.maxX, maxY: Math.max(bounds.maxY, b.maxY) }
+      : b;
+    cursor += width + opts.diagramGap;
+  }
+  // Paso k: los diagramas anteriores completos y el del paso k tal como estaba entonces.
+  const snapshotAt = (k) => {
+    const i = Math.max(0, done.findIndex((d) => k < d.firstStep + d.steps));
+    const cur = done[i] || done[done.length - 1];
+    const snap = cur.r.snapshotAt(Math.min(k - cur.firstStep, cur.steps - 1));
+    const dx = cur.cursor - snap.bounds.minX;
+    const dy = cur.titleH - snap.bounds.minY;
+    const moved = snap.nodes.map((n) => ({ ...n, x: n.x + dx, y: n.y + dy }));
+    const movedEdges = snap.edges.map((e) => ({
+      ...e,
+      points: e.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+      labelBox: e.labelBox && { ...e.labelBox, x: e.labelBox.x + dx, y: e.labelBox.y + dy },
+    }));
+    const before = done.slice(0, done.indexOf(cur));
+    const all = [...before.flatMap((d) => d.nodes), ...moved];
+    const xs = all.flatMap((n) => [n.x - n.w / 2, n.x + n.w / 2]);
+    const ys = all.flatMap((n) => [n.y - n.h / 2, n.y + n.h / 2]);
+    return {
+      nodes: all,
+      edges: [...before.flatMap((d) => d.edges), ...movedEdges],
+      bounds: { minX: Math.min(0, ...xs), minY: Math.min(0, ...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) },
+      titles: cur.titles,
+      options: opts,
+    };
+  };
+  return { nodes, edges, bounds: bounds || { minX: 0, minY: 0, maxX: 0, maxY: 0 }, titles, warnings, options: opts, snapshotAt };
+}
+
+// Separa el grafo en un grafo por grupo. Una arista entre dos grupos se dibuja en los dos: en
+// cada uno, el extremo ajeno se sustituye por un nodo de referencia (paralelogramo con borde
+// discontinuo) con el texto del nodo real. Una arista hacia o desde un subgraph entero se
+// dibuja solo en el grupo del nodo, con una referencia que lleva el título del subgraph.
+function splitBySubgraph(graph, warnings) {
+  const byId = new Map(graph.subgraphs.map((s) => [s.id, s]));
+  const fullTitle = (sg) => (sg.parent ? `${fullTitle(byId.get(sg.parent))} › ${sg.title}` : sg.title);
+  const groups = [null, ...graph.subgraphs.map((s) => s.id)];
+  const parts = new Map(
+    groups.map((g) => [
+      g,
+      { group: g, nodes: new Map(), edges: [], meta: { dirs: [] }, title: g ? fullTitle(byId.get(g)) : null },
+    ])
+  );
+  // Nodo absorbido: está fuera de todo subgraph y todas sus aristas van a nodos de subgraphs. Su
+  // propio diagrama solo repetiría lo que ya se ve dentro, así que no se dibuja ahí: aparece solo
+  // dentro de esos subgraphs, con su forma normal (no es referencia a nada dibujado en otro sitio).
+  const absorbed = new Set();
+  for (const n of graph.nodes.values()) {
+    if (n.group !== null) continue;
+    const own = graph.edges.filter((e) => e.from === n.id || e.to === n.id);
+    const insideOnly = own.every((e) => {
+      const other = graph.nodes.get(e.from === n.id ? e.to : e.from);
+      return other && other.group !== null;
+    });
+    if (own.length && insideOnly) absorbed.add(n.id);
+  }
+  for (const n of graph.nodes.values()) if (!absorbed.has(n.id)) parts.get(n.group).nodes.set(n.id, n);
+
+  // Aristas de cada nodo absorbido dentro de cada grupo.
+  const absorbedEdges = new Map();
+  for (const e of graph.edges) {
+    for (const [end, other] of [[e.from, e.to], [e.to, e.from]]) {
+      if (!absorbed.has(end)) continue;
+      const key = `${end}\u0000${graph.nodes.get(other).group}`;
+      absorbedEdges.set(key, (absorbedEdges.get(key) || 0) + 1);
+    }
+  }
+
+  const ref = (part, e, target) => {
+    const real = graph.nodes.get(target);
+    // Un nodo absorbido con varias aristas en este diagrama se dibuja una sola vez, como nodo
+    // normal (puede tener hasta 3 salidas, como cualquiera). Con una sola arista se trata como
+    // una referencia pegada a su destino.
+    if (absorbed.has(target) && absorbedEdges.get(`${target}\u0000${part.group}`) > 1) {
+      if (!part.nodes.has(target)) part.nodes.set(target, { ...real, group: part.group, absorbed: true });
+      return target;
+    }
+    const id = `${target}\u2197${e.index}`; // no puede chocar con un id escrito (\u2197 no es válido en ids)
+    const text = real ? real.text : byId.get(target).title;
+    // Las referencias llevan el estilo del nodo real (si es un subgraph entero, ninguno).
+    const css = real && real.css;
+    const node = absorbed.has(target)
+      ? { id, shape: real.shape, text, css, line: e.line, group: null, ref: true, absorbed: true, realId: target }
+      : { id, shape: "parallelogram", text, css, line: e.line, group: null, ref: true, realId: target };
+    part.nodes.set(id, node);
+    return id;
+  };
+  // Cada copia de una arista hereda su @dir.
+  const dirsOf = (e) => graph.meta.dirs.filter((d) => d.from === e.from && d.to === e.to);
+  // attached: la arista sale de una referencia; la referencia se coloca pegada a su destino.
+  const add = (group, e, from, to) => {
+    const part = parts.get(group);
+    part.edges.push({ ...e, from, to, attached: from !== e.from, refEdge: from !== e.from });
+    for (const d of dirsOf(e)) part.meta.dirs.push({ ...d, from, to });
+  };
+
+  for (const e of graph.edges) {
+    const a = graph.nodes.get(e.from);
+    const b = graph.nodes.get(e.to);
+    if (a && b) {
+      if (a.group === b.group) add(a.group, e, e.from, e.to);
+      else {
+        if (!absorbed.has(e.from)) add(a.group, e, e.from, ref(parts.get(a.group), e, e.to));
+        if (!absorbed.has(e.to)) add(b.group, e, ref(parts.get(b.group), e, e.from), e.to);
+      }
+    } else if (a) add(a.group, e, e.from, ref(parts.get(a.group), e, e.to));
+    else if (b) add(b.group, e, ref(parts.get(b.group), e, e.from), e.to);
+    else warnings.push({ line: e.line, message: `Arista entre dos subgraphs ('${e.from}' y '${e.to}') ignorada` });
+  }
+  return [...parts.values()].filter((p) => p.nodes.size);
+}
+
+function layoutSingle(graph, measure, opts, warnings) {
+  const nodes = new Map();
+  for (const n of graph.nodes.values()) nodes.set(n.id, { ...n, ...sizeNode(n, measure, opts) });
+
+  const edges = graph.edges.map((e) => ({ ...e }));
+  const dirs = graph.meta.dirs.map((d) => ({ ...d }));
+  addJunctions(nodes, edges, dirs, opts);
+  const ctx = assignDirections(nodes, edges, dirs, warnings);
+  const history = placeInGrid(nodes, edges, warnings, ctx);
+  const bounds = computeCoordinates(nodes, edges, measure, opts);
+  for (const e of edges) routeEdge(e, nodes.get(e.from), nodes.get(e.to), measure, opts);
+
+  // Coordenadas del diagrama tal como estaba al terminar el paso k (se calculan al pedirlas).
+  const snapshotAt = (k) => {
+    const h = history[k];
+    const snapNodes = new Map(h.pos.map(([n, col, row]) => [n.id, { ...n, col, row }]));
+    // Una flecha que más adelante se reconduce (a un empalme, una copia o un conector) no se
+    // dibuja mientras esté en diagonal o pase por encima de un nodo: es provisional.
+    const occ = new Set([...snapNodes.values()].map((n) => `${n.col},${n.row}`));
+    const provisional = (x) => {
+      if (x.orig.from === x.from && x.orig.to === x.to) return false;
+      const a = snapNodes.get(x.from);
+      const b = snapNodes.get(x.to);
+      if (a.col !== b.col && a.row !== b.row) return true;
+      const n = Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+      for (let i = 1; i < n; i++) {
+        if (occ.has(`${a.col + Math.sign(b.col - a.col) * i},${a.row + Math.sign(b.row - a.row) * i}`)) return true;
+      }
+      return false;
+    };
+    const snapEdges = h.edges.filter((x) => !provisional(x)).map((x) => ({ ...x }));
+    const b = computeCoordinates(snapNodes, snapEdges, measure, opts);
+    for (const x of snapEdges) routeEdge(x, snapNodes.get(x.from), snapNodes.get(x.to), measure, opts);
+    return { nodes: [...snapNodes.values()], edges: snapEdges, bounds: b };
+  };
+  return { nodes: [...nodes.values()], edges, bounds, steps: history.length, snapshotAt };
+}
+
+// Crea un empalme de owner y la extensión (línea sin flechas) que los une. Devuelve el empalme.
+// index: posición de la extensión en el orden de declaración (justo antes de la conexión movida).
+function addJunction(nodes, edges, owner, index, line, lineHeight) {
+  let id = `${owner.id}\u25cf`; // no puede chocar con un id escrito (\u25cf no es válido en ids)
+  while (nodes.has(id)) id += "\u25cf";
+  const junction = {
+    id,
+    shape: "junction",
+    text: "",
+    lines: [],
+    w: pillWidth(junctionLabel(owner.junctionOf || owner.realId || owner.id)),
+    h: PILL_HEIGHT,
+    lineHeight,
+    line,
+    group: owner.group,
+    junctionOf: owner.junctionOf || owner.realId || owner.id,
+  };
+  nodes.set(id, junction);
+  edges.push({ index, from: owner.id, to: id, label: null, arrowStart: false, arrowEnd: false, style: "solid", bus: true, line });
+  return junction;
+}
+
+// Cambia el extremo `from` (un nodo) de la arista e por `to` (un empalme), con su @dir si lo hay.
+function moveEnd(e, from, to, dirs = []) {
+  for (const d of dirs) if (d.from === e.from && d.to === e.to) d[e.from === from ? "from" : "to"] = to;
+  if (e.from === from) e.from = to;
+  else e.to = to;
+}
+
+// Un nodo solo tiene 4 lados. Si tiene más conexiones (padres + hijos, contando las referencias
+// de su diagrama), conserva las 3 primeras en orden de declaración y la 4ª es una extensión: una
+// línea sin flecha hasta un punto de empalme, del que salen las demás. El empalme tiene 3 lados
+// libres; si no le bastan, se queda con 2 y encadena otro empalme, y así sucesivamente.
+function addJunctions(nodes, edges, dirs, opts) {
+  const touching = (id) =>
+    edges.filter((e) => (e.from === id || e.to === id) && e.from !== e.to).sort((a, b) => a.index - b.index);
+  const queue = [...nodes.keys()];
+  while (queue.length) {
+    const id = queue.shift();
+    const conns = touching(id);
+    if (conns.length <= MAX_CONNECTIONS) continue;
+    const moved = conns.slice(MAX_CONNECTIONS - 1);
+    // La extensión ocupa el sitio de la 4ª conexión en el orden de declaración; un @dir de una
+    // conexión movida pasa a la rama que sale del empalme.
+    const j = addJunction(nodes, edges, nodes.get(id), moved[0].index - 0.5, moved[0].line, opts.lineHeight);
+    for (const e of moved) moveEnd(e, id, j.id, dirs);
+    queue.push(j.id);
+  }
+}
+
+// ---------------------------------------------------------------- tamaño de nodos
+
+function wrapText(text, maxWidth, measure) {
+  const lines = [];
+  for (const paragraph of String(text).split("\n")) {
+    let current = "";
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (current && measure(candidate) > maxWidth) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    }
+    lines.push(current);
+  }
+  return lines;
+}
+
+// ---------------------------------------------------------------- fuentes
+
+const baseFont = (opts) => ({ size: opts.fontSize, family: opts.fontFamily, weight: "normal", style: "normal", bold: false });
+
+// Tamaño en px de un valor CSS de font-size (px, pt, em, rem, %); null si no se entiende.
+function fontSizePx(value, base) {
+  const m = String(value).trim().match(/^(\d*\.?\d+)\s*(px|pt|em|rem|%)?$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  return { px: n, "": n, pt: (n * 4) / 3, em: n * base, rem: n * base, "%": (n * base) / 100 }[m[2] || ""];
+}
+
+// Medidas de texto según el css de un nodo o arista: el layout tiene que medir con la misma
+// fuente con la que se pinta, o el texto no cabe en la forma.
+function textMetrics(css, measure, opts) {
+  const font = baseFont(opts);
+  let spacing = 0;
+  for (const [k, v] of css || []) {
+    if (k === "font-size") font.size = fontSizePx(v, opts.fontSize) || font.size;
+    else if (k === "font-family") font.family = v;
+    else if (k === "font-weight") font.weight = v;
+    else if (k === "font-style") font.style = v;
+    else if (k === "letter-spacing") spacing = fontSizePx(v, font.size) || 0;
+  }
+  font.bold = /bold|^[6-9]00$/.test(font.weight);
+  const k = font.size / opts.fontSize;
+  return {
+    font,
+    scale: k,
+    lineHeight: opts.lineHeight * k,
+    measure: (text) => measure(text, font) + spacing * text.length,
+  };
+}
+
+function sizeNode(node, rawMeasure, opts) {
+  const tm = textMetrics(node.css, rawMeasure, opts);
+  const measure = tm.measure;
+  const lines = wrapText(node.text, opts.wrapWidth[node.shape] * tm.scale, measure);
+  const tw = Math.max(...lines.map((l) => measure(l)), 0);
+  const th = lines.length * tm.lineHeight;
+  let w;
+  let h;
+  switch (node.shape) {
+    case "circle": {
+      const d = Math.max(Math.hypot(tw, th) + 16, 60);
+      w = h = d;
+      break;
+    }
+    case "diamond":
+      // El rectángulo del texto debe caber dentro del rombo: tw/w + th/h <= 1
+      w = Math.max(tw * 1.7 + 20, 80);
+      h = Math.max(th * 2.4 + 16, 60);
+      break;
+    case "cylinder": {
+      w = Math.max(tw + 32, 80);
+      const ry = w * 0.12;
+      h = Math.max(th + 20, 40) + 2 * ry;
+      break;
+    }
+    case "stadium":
+      // Los extremos son semicírculos: se deja medio alto a cada lado para que el texto no toque la curva.
+      h = Math.max(th + 20, 40);
+      w = Math.max(tw + h * 0.8 + 16, 90);
+      break;
+    case "hexagon":
+    case "parallelogram":
+    case "parallelogram-alt": {
+      // skew: desplazamiento horizontal de los lados inclinados (lo usa también render.js). En el
+      // hexágono son las puntas laterales; el texto cabe igual que en el paralelogramo.
+      h = Math.max(th + 20, 40);
+      const skew = h * 0.35;
+      w = Math.max(tw + 32 + skew, 90);
+      return { lines, w, h, skew, lineHeight: tm.lineHeight };
+    }
+    case "subroutine": // rectángulo con una franja a cada lado: 10 px más por lado
+      w = Math.max(tw + 52, 110);
+      h = Math.max(th + 20, 40);
+      break;
+    default:
+      w = Math.max(tw + 32, 90);
+      h = Math.max(th + 20, 40);
+  }
+  return { lines, w, h, lineHeight: tm.lineHeight };
+}
+
+// ---------------------------------------------------------------- direcciones
+
+// Las referencias entrantes (arista "attached": ref -> nodo) ocupan un hueco del nodo destino como si
+// fueran una salida más, en el orden de declaración de las aristas (salvo la que hace de padre, arriba).
+// e.slot es el lado del nodo donde va la referencia; e.dir sigue siendo la dirección de la flecha.
+function assignDirections(nodes, edges, metaDirs, warnings = []) {
+  const ctx = { nodes, edges, warnings, overrides: new Map(metaDirs.map((d) => [`${d.from}\u0000${d.to}`, d])) };
+  const deferred = [];
+  for (const node of nodes.values()) {
+    if (node.ref && edges.some((e) => e.attached && e.from === node.id)) continue;
+    deferred.push(...assignSlots(node, ctx));
+  }
+  for (const d of deferred) resolveDeferred(d, ctx);
+  return ctx;
+}
+
+// Reparte los lados de un nodo entre sus conexiones. anchor = { edge, side }: una salida que ya
+// tiene lado fijo porque el nodo se colocó pegado a ese hijo (ver placeInGrid).
+function assignSlots(node, ctx, anchor = null) {
+  const { nodes, edges, overrides } = ctx;
+  const out = edges.filter((e) => e.from === node.id);
+  const att = edges.filter((e) => e.refEdge && e.to === node.id);
+  for (const e of [...out, ...att]) {
+    delete e.dir;
+    delete e.slot;
+    if (e.refEdge) e.attached = true;
+  }
+
+  const used = new Map(); // lado del nodo -> arista que lo ocupa
+  const other = (e) => (e.attached ? nodeLabel(nodes.get(e.from)) : `'${e.to}'`);
+  const take = (edge, side, line) => {
+    if (used.has(side)) {
+      throw new layoutDeps.DiagramError(
+        `El nodo '${node.id}' tiene dos ${used.get(side).attached || edge.attached ? "conexiones" : "salidas"} ` +
+          `hacia '${side}': ${other(used.get(side))} y ${other(edge)}`,
+        line
+      );
+    }
+    used.set(side, edge);
+    if (edge.attached) {
+      edge.slot = side;
+      edge.dir = OPPOSITE[side];
+    } else edge.dir = side;
+  };
+
+  if (anchor) take(anchor.edge, anchor.side, anchor.edge.line);
+  // Primero los @dir explícitos (en una referencia, el @dir es la dirección de la flecha
+  // ref -> nodo, así que la referencia va al lado opuesto); luego el resto recibe los
+  // valores por defecto libres, en orden de declaración.
+  const conns = [...out, ...att].sort((a, b) => a.index - b.index);
+  // Un @dir es una preferencia: se usa si ese lado está libre y, si no, la conexión toma un lado
+  // por defecto como cualquier otra, con un aviso. Nunca es error ni provoca un choque (al colocar,
+  // la cascada de la regla 10 puede moverla igual que a las demás).
+  for (const e of conns) {
+    const o = overrides.get(`${e.from}\u0000${e.to}`);
+    if (!o || e.dir) continue;
+    e.prefDir = o;
+    const side = e.attached ? OPPOSITE[o.dir] : o.dir;
+    if (!used.has(side)) take(e, side, o.line);
+    else dirIgnored(ctx, o, "otra conexión de ese nodo ya pedía ese lado");
+  }
+  // Un nodo sin padre real (p. ej. el primero de un subgraph) toma su primera referencia
+  // entrante como padre: va arriba y el flujo sigue hacia abajo, como en "iArr --> S1 --> S2".
+  // Si el nodo está anclado a su primer hijo, ese hijo hace de padre y la referencia es una salida más.
+  const hasRealParent = anchor || edges.some((e) => !e.attached && e.to === node.id && e.from !== node.id);
+  const firstAtt = att.find((e) => !e.dir);
+  if (!hasRealParent && firstAtt && !used.has("up")) take(firstAtt, "up", firstAtt.line);
+
+  const defaults = DEFAULT_DIRS[node.shape === "diamond" ? "diamond" : "other"];
+  const free = defaults.filter((d) => !used.has(d));
+  let pendingOut = out.filter((e) => !e.dir).length;
+  const deferred = [];
+  for (const e of conns) {
+    if (e.dir) continue;
+    if (!e.attached) {
+      // Sin hueco por defecto (solo pasa si el ancla ocupó uno): cualquier lado libre.
+      take(e, free.shift() || ["down", "right", "left", "up"].find((d) => !used.has(d)), e.line);
+      pendingOut--;
+    } else if (free.length > pendingOut) {
+      // Una referencia solo toma un hueco si quedan suficientes para las salidas reales.
+      take(e, free.shift(), e.line);
+    } else deferred.push({ e, node, used });
+  }
+  return deferred;
+}
+
+// Aviso (una vez por @dir) cuando no se puede respetar.
+function dirIgnored(ctx, o, why) {
+  ctx.ignoredDirs = ctx.ignoredDirs || new Set();
+  if (ctx.ignoredDirs.has(o)) return;
+  ctx.ignoredDirs.add(o);
+  ctx.warnings.push({ line: o.line, message: `@dir ${o.from} -> ${o.to} : ${o.dir} no se pudo respetar (${why})` });
+}
+
+// Referencia sin hueco: prueba cualquier lado libre (también arriba, si no llega por ahí
+// ninguna arista); si no queda ninguno, se dibuja suelta.
+function resolveDeferred({ e, node, used }, { edges, overrides }) {
+  const busy = new Set(used.keys());
+  for (const x of edges) if (!x.attached && x.to === node.id && x.dir) busy.add(OPPOSITE[x.dir]);
+  for (const x of edges) if (x.attached && x.to === node.id && x.slot) busy.add(x.slot);
+  const side = ["down", "right", "left", "up"].find((d) => !busy.has(d));
+  if (side) {
+    e.slot = side;
+    e.dir = OPPOSITE[side];
+  } else {
+    e.attached = false;
+    const o = overrides.get(`${e.from}\u0000${e.to}`);
+    e.dir = o ? o.dir : "down";
+  }
+}
+
+const nodeLabel = (n) =>
+  n.junctionOf ? `el empalme de '${n.junctionOf}'` : n.absorbed ? `'${n.realId || n.id}'` : n.ref ? `la referencia a '${n.text.replace(/\n/g, " ")}'` : `'${n.id}'`;
+
+// ---------------------------------------------------------------- rejilla
+
+function placeInGrid(nodes, edges, warnings, ctx) {
+  const occupied = new Map(); // "col,row" -> nodo
+  // Las referencias no cuentan como entrada: las pegadas se colocan junto a su destino y las
+  // sueltas (sin lado libre) al final, cuando su destino ya está colocado.
+  const hasIncoming = new Set(edges.filter((e) => !e.refEdge).map((e) => e.to));
+  const isAttachedRef = (n) => edges.some((e) => e.attached && e.from === n.id);
+  let nextComponentCol = 0;
+
+  // Para depurar el layout en el visor: cada nodo guarda en qué orden se colocó (step) y por qué (why).
+  let step = 0;
+  const SIDE_NAME = { down: "abajo", right: "la derecha", left: "la izquierda", up: "arriba" };
+  const SIDE_AT = { down: "debajo", right: "a la derecha", left: "a la izquierda", up: "encima" };
+  const who = (n) =>
+    n.junctionOf ? `empalme de '${n.junctionOf}'` : n.ref && !n.absorbed ? `ref. a '${n.realId}'` : `'${n.realId || n.id}'`;
+  // Celdas reservadas para hijos que aún no se han colocado (clave -> id del hijo): al expandir un
+  // nodo se reservan las celdas de todos sus hijos antes de bajar por ninguna rama, para que un
+  // descendiente de un hermano anterior no se las quite (el recorrido es en profundidad).
+  const pending = new Map();
+  // Una celda está bloqueada si tiene un nodo, si está reservada para otro, o si la atraviesa una
+  // flecha recta ya trazada (sus dos extremos colocados): nadie se coloca encima de una línea.
+  const crossedBy = (key) => {
+    const [c, r] = key.split(",").map(Number);
+    return edges.some((x) => {
+      const a = nodes.get(x.from);
+      const b = nodes.get(x.to);
+      if (!a || !b || a.col === undefined || b.col === undefined) return false;
+      if (a.col === b.col && a.col === c) return r > Math.min(a.row, b.row) && r < Math.max(a.row, b.row);
+      if (a.row === b.row && a.row === r) return c > Math.min(a.col, b.col) && c < Math.max(a.col, b.col);
+      return false;
+    });
+  };
+  const blocked = (key, forId) =>
+    occupied.has(key) || (pending.has(key) && pending.get(key) !== forId) || crossedBy(key);
+  // Historia para el paso a paso del visor: history[k] = estado de la rejilla al terminar el paso k
+  // (posición de cada nodo colocado y flechas entre nodos colocados, con sus extremos de entonces).
+  // Se guarda justo antes de que el paso siguiente cambie nada (closeStep), así una inserción o
+  // un nodo movido aparecen en el paso que los provocó.
+  const history = [];
+  const snapshot = () => ({
+    pos: [...nodes.values()].filter((n) => n.col !== undefined).map((n) => [n, n.col, n.row]),
+    edges: edges
+      .filter((x) => nodes.has(x.from) && nodes.has(x.to) && nodes.get(x.from).col !== undefined && nodes.get(x.to).col !== undefined)
+      .map((x) => ({ ...x, orig: x })),
+  });
+  const closeStep = () => {
+    if (step > 0 && !history[step - 1]) history[step - 1] = snapshot();
+  };
+  const place = (node, col, row, why = "") => {
+    closeStep();
+    for (const [k, id] of pending) if (id === node.id) pending.delete(k);
+    node.col = col;
+    node.row = row;
+    node.step = step++;
+    node.why = why;
+    const key = `${col},${row}`;
+    if (occupied.has(key)) {
+      // TODO (SPEC): resolver choques entre ramas. Por ahora solo se avisa.
+      warnings.push({
+        line: node.line,
+        message: `Choque: ${nodeLabel(node)} ocupa la misma posición que ${nodeLabel(occupied.get(key))}`,
+      });
+    } else {
+      occupied.set(key, node);
+    }
+  };
+
+  // Coloca un hijo (o una referencia pegada) junto a su padre, en el lado que le tocó. Si esa celda
+  // ya está ocupada (p. ej. por el propio padre del padre), prueba los demás lados del padre que
+  // no estén reservados para otra conexión: abajo, derecha, izquierda, arriba. Un @dir se respeta.
+  const sideOf = (e) => (e.attached ? e.slot : e.dir);
+  const cellAt = (n, side) => `${n.col + DIR_VECTORS[side].dc},${n.row + DIR_VECTORS[side].dr}`;
+  const placeNextTo = (parent, node, e) => {
+    let side = sideOf(e);
+    const wanted = side;
+    if (blocked(cellAt(parent, side), node.id)) {
+      const reserved = new Set(
+        edges.filter((x) => x !== e && (x.from === parent.id || (x.attached && x.to === parent.id))).map(sideOf)
+      );
+      const alt = ["down", "right", "left", "up"].find((d) => !reserved.has(d) && !blocked(cellAt(parent, d), node.id));
+      if (alt) {
+        side = alt;
+        if (e.attached) {
+          e.slot = alt;
+          e.dir = OPPOSITE[alt];
+        } else e.dir = alt;
+      } else {
+        if (e.prefDir) dirIgnored(ctx, e.prefDir, "ese lado estaba ocupado");
+        return makeRoom(parent, node, e, wanted);
+      }
+    }
+    if (side !== wanted && e.prefDir) dirIgnored(ctx, e.prefDir, "ese lado estaba ocupado");
+    const v = DIR_VECTORS[side];
+    const kind = node.copyOf
+      ? `copia de ${who(nodes.get(node.copyOf))} (el original está lejos${node.shape === "junction" ? "" : " y no tiene hijos"}), hija de`
+      : e.attached ? "pegado a" : e.from === parent.id ? "hijo de" : "padre de";
+    const moved = side !== wanted ? ` (el lado de ${SIDE_NAME[wanted]} estaba ocupado)` : "";
+    place(node, parent.col + v.dc, parent.row + v.dr, `${kind} ${who(parent)}, ${SIDE_AT[side]}${moved}`);
+    return [];
+  };
+  // Un nodo sin ningún lado libre en su padre. Cascada finita, de lo más local a lo más global:
+  //  1. Extensión en línea recta por el lado de un hermano (sin colocar, o colocado pero hoja con
+  //     una sola conexión, que se puede mover) o por un lado libre, hasta un empalme a 1..8 celdas
+  //     que tenga sitio: el hermano va recto si puede (si no, a otro lado libre del empalme) y el
+  //     nodo a un lado libre. La línea no atraviesa nodos.
+  //  2. Si ninguna dirección sirve: se inserta una fila o columna junto al padre (la que menos
+  //     flechas alarga) y el nodo va directamente a la celda que queda libre. Siempre funciona.
+  const MAX_REACH = 8;
+  const conns = (id) => edges.filter((x) => x.from === id || x.to === id);
+  const makeRoom = (parent, node, e, wanted) => {
+    const isFree = (key, ...ok) => !occupied.has(key) && (!pending.has(key) || ok.includes(pending.get(key))) && !crossedBy(key);
+    for (const d of ["down", "right", "left", "up"]) {
+      const sibEdge = edges.find(
+        (x) => x !== e && sideOf(x) === d && (x.from === parent.id || (x.attached && x.to === parent.id))
+      );
+      const sib = sibEdge && nodes.get(sibEdge.attached ? sibEdge.from : sibEdge.to);
+      const key1 = cellAt(parent, d);
+      const sibHere = sib && sib.col !== undefined && `${sib.col},${sib.row}` === key1;
+      const movable = sibHere && conns(sib.id).length === 1;
+      if (!(isFree(key1, node.id, sib && sib.id) || movable)) continue;
+      if (sib && sib.col !== undefined && !sibHere) continue; // el hermano está en otro sitio: no aplica
+      const v = DIR_VECTORS[d];
+      for (let k = 1; k <= MAX_REACH; k++) {
+        const jc = { col: parent.col + v.dc * k, row: parent.row + v.dr * k };
+        const jkey = `${jc.col},${jc.row}`;
+        if (k > 1 && !isFree(jkey)) break; // la línea no puede atravesar un nodo
+        const free = ["down", "right", "left", "up"].filter((x) => {
+          if (x === OPPOSITE[d]) return false;
+          const key = `${jc.col + DIR_VECTORS[x].dc},${jc.row + DIR_VECTORS[x].dr}`;
+          return isFree(key, node.id, sib && sib.id);
+        });
+        if (free.length < (sib ? 2 : 1)) continue;
+        const sibSide = sib ? (free.includes(d) ? d : free[0]) : null;
+        const nodeSide = free.find((x) => x !== sibSide);
+        return applyRoom({ parent, node, e, wanted, d, k, jc, sibEdge: sib && sibEdge, sib, sibSide, nodeSide });
+      }
+    }
+    return insertLine(parent, node, e, wanted);
+  };
+  const applyRoom = ({ parent, node, e, wanted, d, k, jc, sibEdge, sib, sibSide, nodeSide }) => {
+    closeStep();
+    const j = addJunction(nodes, edges, parent, Math.min(e.index, sibEdge ? sibEdge.index : e.index) - 0.5, e.line, parent.lineHeight);
+    edges[edges.length - 1].dir = d;
+    if (sib && sib.col !== undefined) {
+      occupied.delete(`${sib.col},${sib.row}`);
+      sib.col = undefined;
+    }
+    const v = DIR_VECTORS[d];
+    place(j, jc.col, jc.row, `extensión desde ${who(parent)} hacia ${SIDE_NAME[d]}${k > 1 ? ` (${k} celdas)` : ""}: ${who(node)} no tenía lado libre`);
+    if (sib) {
+      moveEnd(sibEdge, parent.id, j.id);
+      setSide(sibEdge, j, sibSide);
+      const key = cellAt(j, sibSide);
+      for (const [kk, id] of pending) if (id === sib.id) pending.delete(kk);
+      if (sib.why !== undefined && sib.step !== undefined) {
+        // Ya estaba colocado: se mueve al empalme (conserva su paso, actualiza el motivo).
+        const sv = DIR_VECTORS[sibSide];
+        sib.col = j.col + sv.dc;
+        sib.row = j.row + sv.dr;
+        sib.why += ` → movido ${SIDE_AT[sibSide]} del empalme de ${who(parent)} para dejar sitio`;
+        occupied.set(key, sib);
+      } else pending.set(key, sib.id);
+    }
+    moveEnd(e, parent.id, j.id);
+    setSide(e, j, nodeSide);
+    const sv = DIR_VECTORS[nodeSide];
+    const kind = node.copyOf ? `copia de ${who(nodes.get(node.copyOf))}, hija de` : e.attached ? "pegado a" : "hijo de";
+    place(node, j.col + sv.dc, j.row + sv.dr, `${kind} ${who(parent)} a través de su extensión, ${SIDE_AT[nodeSide]} del empalme (el lado de ${SIDE_NAME[wanted]} estaba ocupado)`);
+    return [j];
+  };
+  // Hace sitio junto a parent cuando no queda nada más (último paso de la cascada). Se desplaza
+  // una celda hacia un lado el **mínimo bloque de nodos** necesario para liberar las celdas que
+  // hacen falta: los que las ocupan, los que estos empujan en cadena, los unidos a un nodo movido
+  // por una flecha perpendicular al desplazamiento (si no, quedaría en diagonal) y los extremos de
+  // las líneas sobre las que caería un nodo movido. Las flechas paralelas solo se alargan. Gana el
+  // lado que mueve menos nodos; si ninguno sirve sin mover al propio padre, se desplaza todo lo que
+  // queda más allá (como insertar una fila o columna entera).
+  const insertLine = (parent, node, e, wanted) => {
+    closeStep();
+    const key = (c, r) => `${c},${r}`;
+    const isPlaced = (n) => n && n.col !== undefined;
+    const placedEdges = edges.filter((x) => isPlaced(nodes.get(x.from)) && isPlaced(nodes.get(x.to)));
+    const ends = (x) => [nodes.get(x.from), nodes.get(x.to)];
+    const linesAt = (c, r) =>
+      placedEdges.filter((x) => {
+        const [a, b] = ends(x);
+        if (a.col === b.col && a.col === c) return r > Math.min(a.row, b.row) && r < Math.max(a.row, b.row);
+        if (a.row === b.row && a.row === r) return c > Math.min(a.col, b.col) && c < Math.max(a.col, b.col);
+        return false;
+      });
+    const beyond = (n, d) =>
+      d === "down" ? n.row > parent.row : d === "up" ? n.row < parent.row : d === "right" ? n.col > parent.col : n.col < parent.col;
+    const throughOf = (d) => {
+      const v = DIR_VECTORS[d];
+      return edges.find((x) => {
+        if (x === e || (x.from !== parent.id && x.to !== parent.id)) return false;
+        const o = nodes.get(x.from === parent.id ? x.to : x.from);
+        if (!isPlaced(o)) return false;
+        return Math.sign(o.col - parent.col) === v.dc && Math.sign(o.row - parent.row) === v.dr && (v.dc ? o.row === parent.row : o.col === parent.col);
+      });
+    };
+    // Conjunto mínimo a desplazar hacia d para dejar libres `cells` (sin nodos ni líneas); null si
+    // haría falta mover algo que no está más allá del padre.
+    const pushPlan = (d, cells, ignore) => {
+      const v = DIR_VECTORS[d];
+      const vertical = v.dr !== 0;
+      const S = new Set();
+      const queue = [];
+      const add = (n) => {
+        if (!n || S.has(n.id)) return true;
+        if (!beyond(n, d)) return false;
+        S.add(n.id);
+        queue.push(n);
+        return true;
+      };
+      for (const [c, r] of cells) {
+        if (!add(occupied.get(key(c, r)))) return null;
+        for (const x of linesAt(c, r)) {
+          if (x === ignore) continue;
+          const [a, b] = ends(x);
+          if (!add(a) || !add(b)) return null;
+        }
+      }
+      while (queue.length) {
+        const n = queue.shift();
+        const nc = n.col + v.dc;
+        const nr = n.row + v.dr;
+        if (!add(occupied.get(key(nc, nr)))) return null; // empuje en cadena
+        for (const x of linesAt(nc, nr)) {
+          // caería encima de una línea: sus extremos se mueven con él
+          const [a, b] = ends(x);
+          if (!add(a) || !add(b)) return null;
+        }
+        for (const x of placedEdges) {
+          if (x.from !== n.id && x.to !== n.id) continue;
+          const o = nodes.get(x.from === n.id ? x.to : x.from);
+          const perpendicular = vertical ? o.row === n.row : o.col === n.col;
+          if (perpendicular && !add(o)) return null;
+        }
+      }
+      return S;
+    };
+    // Comprueba un plan con las posiciones finales: al mover un extremo de una flecha paralela al
+    // desplazamiento, esa flecha se alarga sobre la celda que deja libre; ninguna celda necesaria
+    // puede quedar ocupada ni cruzada por una línea (salvo la flecha del padre que se reconduce).
+    const cellsFreeAfter = (S, v, cells, ignore) => {
+      const at = (n) => (S.has(n.id) ? { col: n.col + v.dc, row: n.row + v.dr } : n);
+      const occ = new Set([...nodes.values()].filter(isPlaced).map((n) => `${at(n).col},${at(n).row}`));
+      return cells.every(([c, r]) => {
+        if (occ.has(`${c},${r}`)) return false;
+        return !placedEdges.some((x) => {
+          if (x === ignore) return false;
+          const a = at(nodes.get(x.from));
+          const b = at(nodes.get(x.to));
+          if (a.col === b.col && a.col === c) return r > Math.min(a.row, b.row) && r < Math.max(a.row, b.row);
+          if (a.row === b.row && a.row === r) return c > Math.min(a.col, b.col) && c < Math.max(a.col, b.col);
+          return false;
+        });
+      });
+    };
+    const plans = [];
+    for (const d of ["down", "right", "left", "up"]) {
+      const v = DIR_VECTORS[d];
+      const through = throughOf(d);
+      const jc = { col: parent.col + v.dc, row: parent.row + v.dr };
+      const laterals = through ? (v.dr ? ["right", "left"] : ["down", "up"]) : [null];
+      for (const lateral of laterals) {
+        const cells = [[jc.col, jc.row]];
+        if (lateral) cells.push([jc.col + DIR_VECTORS[lateral].dc, jc.row + DIR_VECTORS[lateral].dr]);
+        const S = pushPlan(d, cells, through);
+        if (S && cellsFreeAfter(S, v, cells, through)) plans.push({ d, v, through, lateral, S });
+      }
+    }
+    plans.sort((a, b) => a.S.size - b.S.size);
+    let plan = plans[0];
+    let whole = false;
+    if (!plan) {
+      // Ningún bloque local sirve: todo lo que queda más allá del padre (fila o columna entera).
+      whole = true;
+      const d = "down";
+      const through = throughOf(d);
+      const S = new Set([...nodes.values()].filter((n) => isPlaced(n) && beyond(n, d)).map((n) => n.id));
+      plan = { d, v: DIR_VECTORS[d], through, lateral: through ? "right" : null, S };
+    }
+    const { d, v, through, lateral, S } = plan;
+    const moved = [...S].map((id) => nodes.get(id));
+    // Las reservas de celdas de hijos aún sin colocar se mueven con su padre.
+    const parentOf = (id) => {
+      const x = edges.find((y) => (id.startsWith("copy:") ? `copy:${y.index}` === id : y.from === id || y.to === id));
+      if (!x) return null;
+      return id.startsWith("copy:") ? nodes.get(x.from) : nodes.get(x.from === id ? x.to : x.from);
+    };
+    const pend = [...pending];
+    pending.clear();
+    for (const [k, id] of pend) {
+      const par = parentOf(id);
+      const [c, r] = k.split(",").map(Number);
+      pending.set(par && S.has(par.id) ? key(c + v.dc, r + v.dr) : k, id);
+    }
+    for (const n of moved) occupied.delete(key(n.col, n.row));
+    for (const n of moved) {
+      n.col += v.dc;
+      n.row += v.dr;
+      occupied.set(key(n.col, n.row), n);
+    }
+    const what = whole
+      ? `se desplazó todo lo que quedaba ${SIDE_AT[d] === "debajo" ? "debajo" : SIDE_AT[d]} (${moved.length} nodos)`
+      : `se desplazaron ${moved.length} nodo${moved.length === 1 ? "" : "s"} ${SIDE_NAME[d] === "abajo" ? "hacia abajo" : SIDE_NAME[d] === "arriba" ? "hacia arriba" : `hacia ${SIDE_NAME[d]}`}`;
+    const kind = node.copyOf ? `copia de ${who(nodes.get(node.copyOf))}, hija de` : e.attached ? "pegado a" : "hijo de";
+    if (through) {
+      const j = addJunction(nodes, edges, parent, Math.min(e.index, through.index) - 0.5, e.line, parent.lineHeight);
+      edges[edges.length - 1].dir = d;
+      place(j, parent.col + v.dc, parent.row + v.dr, `empalme junto a ${who(parent)}: ${who(node)} no tenía sitio y ${what}`);
+      moveEnd(through, parent.id, j.id);
+      setSide(through, j, d);
+      moveEnd(e, parent.id, j.id);
+      setSide(e, j, lateral);
+      const sv = DIR_VECTORS[lateral];
+      place(node, j.col + sv.dc, j.row + sv.dr, `${kind} ${who(parent)} a través de un empalme, ${SIDE_AT[lateral]} de él (no había sitio cerca: ${what})`);
+      return [j];
+    }
+    setSide(e, parent, d);
+    place(node, parent.col + v.dc, parent.row + v.dr, `${kind} ${who(parent)}, ${SIDE_AT[d]} (no había sitio cerca: ${what}; el lado de ${SIDE_NAME[wanted]} estaba ocupado)`);
+    return [];
+  };
+
+
+
+
+  // Un nodo sin padre real que no es el primero en colocarse no forma un grupo desconectado si
+  // alguno de sus hijos ya está colocado: se pega al primero de ellos (en orden de declaración) en
+  // su primer lado libre. Ese hijo hace de padre, sin cambiar el sentido de la flecha; las
+  // referencias entrantes del nodo pasan a ser salidas más. Un @dir en esa arista elige el lado.
+  const findAnchor = (node) => {
+    if (edges.some((e) => !e.refEdge && e.to === node.id)) return null; // tiene padre real
+    const edge = edges
+      .filter((e) => e.from === node.id && !nodes.get(e.to).ref && nodes.get(e.to).col !== undefined)
+      .sort((a, b) => a.index - b.index)[0];
+    const child = edge && nodes.get(edge.to);
+    if (!child) return null;
+    const o = ctx.overrides.get(`${edge.from}\u0000${edge.to}`);
+    if (o) return { edge, child, cell: OPPOSITE[o.dir] };
+    // Lados del nodo comprometidos por sus otros @dir: el hijo no puede quedar en ninguno de ellos.
+    const committed = new Set();
+    for (const x of edges) {
+      if (x === edge) continue;
+      const ox = ctx.overrides.get(`${x.from}\u0000${x.to}`);
+      if (!ox) continue;
+      if (x.from === node.id) committed.add(ox.dir);
+      else if (x.attached && x.to === node.id) committed.add(OPPOSITE[ox.dir]);
+    }
+    const order = [...DEFAULT_DIRS[child.shape === "diamond" ? "diamond" : "other"], "up"];
+    const cell = order.find(
+      (d) => !committed.has(OPPOSITE[d]) && !blocked(`${child.col + DIR_VECTORS[d].dc},${child.row + DIR_VECTORS[d].dr}`, node.id)
+    );
+    return cell ? { edge, child, cell } : null;
+  };
+
+  // Raíces: primero los nodos sin aristas entrantes (en orden de declaración), luego el resto,
+  // por si queda algún ciclo sin alcanzar.
+  const all = [...nodes.values()];
+  const real = all.filter((n) => !n.ref);
+  const roots = [...real.filter((n) => !hasIncoming.has(n.id)), ...real, ...all.filter((n) => n.ref)];
+
+  // Coloca los hijos directos (y referencias pegadas) de parent; devuelve los nodos nuevos a recorrer.
+  // Qué nodo representa un nodo (una referencia, una copia o el original tienen la misma identidad;
+  // un empalme o su copia, la de su dueño). Si el padre ya tiene pegado un representante del nodo
+  // que necesita, la flecha va a ese en vez de crear otra referencia, copia o conector.
+  const identity = (n) => (n.shape === "junction" ? `\u25cf${n.junctionOf}` : n.realId || n.id);
+  // También vale una celda reservada para un representante que aún no se ha colocado (con el
+  // recorrido en profundidad, el hermano que lo colocará puede no haberlo hecho todavía).
+  const twinNextTo = (parent, target) => {
+    for (const d of ["down", "right", "left", "up"]) {
+      const key = cellAt(parent, d);
+      const m = occupied.get(key) || (pending.has(key) && nodes.get(pending.get(key)));
+      if (m && m !== target && m !== parent && identity(m) === identity(target)) return { node: m, side: d };
+    }
+    return null;
+  };
+  const reuseTwin = (e, parent, twin, why) => {
+    const old = nodes.get(e.to);
+    for (const [k, id] of pending) if (id === old.id || id === `copy:${e.index}`) pending.delete(k);
+    if (old.col === undefined && edges.every((x) => x === e || (x.from !== old.id && x.to !== old.id))) nodes.delete(old.id);
+    e.to = twin.node.id;
+    e.dir = twin.side;
+    twin.node.why += ` · también recibe la flecha de ${who(parent)} (${why})`;
+  };
+
+  const expand = (parent, each) => {
+    const placed = [];
+    for (const e of edges) {
+      const mine = e.attached ? e.to === parent.id : e.from === parent.id;
+      if (!mine) continue;
+      const other = nodes.get(e.attached ? e.from : e.to);
+      const willCopy = other.col !== undefined && !e.attached && farLeaf(parent, other);
+      if (other.col !== undefined && !willCopy) continue;
+      if (other.shape === "junction" && other.col === undefined && !e.bus) continue;
+      const key = cellAt(parent, sideOf(e));
+      if (!blocked(key)) pending.set(key, willCopy ? `copy:${e.index}` : other.id);
+    }
+    for (const e of edges) {
+      if (e.attached && e.to === parent.id) {
+        const ref = nodes.get(e.from);
+        if (ref.col === undefined) {
+          const extra = placeNextTo(parent, ref, e);
+          placed.push(...extra);
+          if (each) extra.forEach(each);
+        }
+        continue;
+      }
+      if (e.from !== parent.id || e.attached) continue;
+      let child = nodes.get(e.to);
+      // Un empalme solo lo coloca su dueño, por su extensión: una rama que llega a él espera.
+      if (child.shape === "junction" && child.col === undefined && !e.bus) continue;
+      // Referencia aún sin colocar: si el padre ya tiene pegado un representante del mismo nodo, se usa.
+      if (child.col === undefined && child.ref && !e.bus) {
+        const twin = twinNextTo(parent, child);
+        if (twin) {
+          reuseTwin(e, parent, twin, "ya tenía una referencia igual al lado");
+          continue;
+        }
+      }
+      if (child.col !== undefined) {
+        if (e.bus) continue; // la extensión a un empalme propio nunca se copia
+        // Hijo ya colocado lejos y sin hijos: se le pone una copia aquí, en su turno (regla 12).
+        const leaf = farLeaf(parent, child);
+        if (!leaf) continue; // TODO (SPEC): bucles / varios padres
+        const twin = twinNextTo(parent, leaf);
+        if (twin) {
+          reuseTwin(e, parent, twin, "en vez de otra copia");
+          continue;
+        }
+        child = copyOfLeaf(leaf, e);
+      }
+      const extra = placeNextTo(parent, child, e);
+      placed.push(child, ...extra);
+      if (each) [child, ...extra].forEach(each);
+    }
+    return placed;
+  };
+  // Recorrido en profundidad, en orden de declaración: cada nodo termina toda su rama antes de
+  // pasar a su siguiente hermano (los hermanos ya tienen su lado reservado).
+  const visit = (u) => expand(u, visit);
+  const placeRoot = (root, anchor, retry = false) => {
+    const later = retry ? " (aplazado y reintentado)" : "";
+    if (anchor) {
+      const v = DIR_VECTORS[anchor.cell];
+      place(
+        root,
+        anchor.child.col + v.dc,
+        anchor.child.row + v.dr,
+        `sin padre: pegado a su hijo ${who(anchor.child)}, ${SIDE_AT[anchor.cell]}${later}`
+      );
+      assignSlots(root, ctx, { edge: anchor.edge, side: OPPOSITE[anchor.cell] }).forEach((d) => resolveDeferred(d, ctx));
+    } else {
+      place(root, nextComponentCol, 0, step ? `inicio de un grupo nuevo, aparte${later}` : "nodo inicial");
+    }
+
+    visit(root);
+
+    // El siguiente componente desconectado va a la derecha de todo lo colocado.
+    const maxCol = Math.max(...[...nodes.values()].filter((n) => n.col !== undefined).map((n) => n.col));
+    nextComponentCol = maxCol + 2;
+  };
+
+  // Grupo que no se puede pegar por su inicio: se busca la primera conexión (en orden de
+  // declaración) entre cualquier nodo del grupo y un nodo ya colocado, y el grupo se reconstruye
+  // desde ese punto: su nodo va junto a la pareja ya colocada y el resto se recorre desde ahí
+  // siguiendo las aristas en cualquier sentido (las flechas no cambian), cada nodo en el primer
+  // lado libre del anterior. Con a->b->c ya colocado, A->B->C y C->c queda a,b,c,C,B,A.
+  const isPlaced = (n) => n.col !== undefined;
+  const sidesOf = (n) => [...DEFAULT_DIRS[n.shape === "diamond" ? "diamond" : "other"], "up"];
+  const groupOf = (root) => {
+    const group = new Set([root.id]);
+    const queue = [root];
+    while (queue.length) {
+      const u = queue.shift();
+      for (const e of edges) {
+        const w = e.attached && e.to === u.id ? nodes.get(e.from) : !e.attached && e.from === u.id ? nodes.get(e.to) : null;
+        if (!w || isPlaced(w) || group.has(w.id)) continue;
+        if (w.shape === "junction" && !e.bus) continue; // el empalme entra al grupo con su dueño
+        group.add(w.id);
+        if (!w.ref) queue.push(w);
+      }
+    }
+    return group;
+  };
+  // Simula la reconstrucción del grupo desde start, colocado en la celda (col, row): devuelve las
+  // posiciones y aristas resultantes y cuántos choques habría, sin tocar nada.
+  const simulateGroup = (group, start, col, row, extraTaken = []) => {
+    const taken = new Set([...occupied.keys(), ...pending.keys(), ...extraTaken]);
+    const pos = new Map([[start.id, { col, row }]]);
+    const sides = []; // [arista, nodo u, lado de u donde queda el otro extremo]
+    let collisions = taken.has(`${col},${row}`) ? 1 : 0;
+    taken.add(`${col},${row}`);
+    const free = (p, d) => {
+      const key = `${p.col + DIR_VECTORS[d].dc},${p.row + DIR_VECTORS[d].dr}`;
+      return !taken.has(key) && !crossedBy(key);
+    };
+    // En profundidad, como el recorrido normal (visit en placeRoot).
+    const visit = (u) => {
+      const pu = pos.get(u.id);
+      const conns = edges
+        .filter((e) => (e.from === u.id || e.to === u.id) && e.from !== e.to)
+        .sort((a, b) => a.index - b.index);
+      for (const e of conns) {
+        const w = nodes.get(e.from === u.id ? e.to : e.from);
+        if (!group.has(w.id) || pos.has(w.id)) continue;
+        if (w.shape === "junction" && !e.bus) continue; // lo coloca su dueño, por su extensión
+        const d = sidesOf(u).find((x) => free(pu, x));
+        // Sin lado libre no se fuerza (sería un choque): el nodo se queda fuera de la reconstrucción
+        // y lo coloca después el recorrido normal, con la cascada para hacer sitio (regla 10).
+        if (!d) continue;
+        const p = { col: pu.col + DIR_VECTORS[d].dc, row: pu.row + DIR_VECTORS[d].dr };
+        taken.add(`${p.col},${p.row}`);
+        pos.set(w.id, p);
+        sides.push([e, u, d]);
+        if (!w.ref) visit(w);
+      }
+    };
+    visit(start);
+    // Diagonales que dejaría: flechas entre el grupo y lo ya colocado que no quedan en la misma
+    // fila o columna (salvo hacia hojas o empalmes, que luego se copian junto al padre).
+    let diagonals = 0;
+    for (const x of edges) {
+      const inA = pos.get(x.from);
+      const inB = pos.get(x.to);
+      if (!!inA === !!inB) continue;
+      const other = nodes.get(inA ? x.to : x.from);
+      if (other.col === undefined) continue;
+      if (inA && farLeaf({ col: inA.col, row: inA.row }, other)) continue;
+      const p = inA || inB;
+      if (p.col !== other.col && p.row !== other.row) diagonals++;
+    }
+    return { pos, sides, collisions, diagonals };
+  };
+  const placeGroupByLink = (root) => {
+    const group = groupOf(root);
+    const links = edges
+      .filter((e) => !e.refEdge && (group.has(e.from) ? isPlaced(nodes.get(e.to)) : group.has(e.to) && isPlaced(nodes.get(e.from))))
+      .sort((a, b) => a.index - b.index);
+    // Se prueban todas las conexiones y todos los lados libres de su pareja; gana la opción con
+    // menos choques y, a igualdad, la primera (en orden de declaración y de lados).
+    let best = null;
+    for (const link of links) {
+      const start = nodes.get(group.has(link.from) ? link.from : link.to);
+      const partner = nodes.get(group.has(link.from) ? link.to : link.from);
+      for (const cell of sidesOf(partner)) {
+        if (blocked(cellAt(partner, cell), start.id)) continue;
+        const v = DIR_VECTORS[cell];
+        const sim = simulateGroup(group, start, partner.col + v.dc, partner.row + v.dr);
+        const better = (a, b) => a.collisions < b.collisions || (a.collisions === b.collisions && a.diagonals < b.diagonals);
+        if (!best || better(sim, best.sim)) best = { sim, link, start, cell };
+        if (best.sim.collisions === 0 && best.sim.diagonals === 0) break;
+      }
+      if (best && best.sim.collisions === 0 && best.sim.diagonals === 0) break;
+    }
+    // Si ninguna opción encaja sin pisar nodos, se vuelve a la primera conexión y se extiende la
+    // línea de su pareja hasta un empalme (como en addJunctions), que da 3 lados libres para el
+    // grupo. La extensión puede cruzar varias celdas vacías en línea recta hasta un sitio donde
+    // el grupo quepa: gana la opción con menos choques (dirección en orden, luego más corta).
+    // Si la pareja de la primera conexión no tiene ningún lado libre por donde sacar la extensión,
+    // se usa la siguiente conexión, y así; a igualdad de choques gana la conexión anterior.
+    if (!best || best.sim.collisions > 0) {
+      let ext = null;
+      for (const link of links) {
+        const opt = planExtension(group, link);
+        if (opt && (!ext || opt.sim.collisions < ext.sim.collisions)) ext = opt;
+        if (ext && ext.sim.collisions === 0) break;
+      }
+      return ext ? applyExtension(ext) : false;
+    }
+    const how = `grupo reconstruido desde la conexión ${who(best.start)} – ${who(nodes.get(best.link.from === best.start.id ? best.link.to : best.link.from))}`;
+    for (const [id, p] of best.sim.pos) place(nodes.get(id), p.col, p.row, id === best.start.id ? how : `${how}: sigue el recorrido`);
+    setSide(best.link, best.start, OPPOSITE[best.cell]);
+    for (const [e, u, d] of best.sim.sides) setSide(e, u, d);
+    // Cada nodo del grupo se expande en su turno (copias de hojas lejanas, regla 12).
+    for (const id of best.sim.pos.keys()) if (!nodes.get(id).ref) visit(nodes.get(id));
+    const maxCol = Math.max(...[...nodes.values()].filter(isPlaced).map((n) => n.col));
+    nextComponentCol = maxCol + 2;
+    return true;
+  };
+  const MAX_EXTENSION = 8; // celdas que puede cruzar una extensión
+  const planExtension = (group, link) => {
+    const start = nodes.get(group.has(link.from) ? link.from : link.to);
+    const partner = nodes.get(group.has(link.from) ? link.to : link.from);
+    let best = null;
+    for (const d of sidesOf(partner)) {
+      const v = DIR_VECTORS[d];
+      const path = [];
+      for (let k = 1; k <= MAX_EXTENSION; k++) {
+        const jc = { col: partner.col + v.dc * k, row: partner.row + v.dr * k };
+        const key = `${jc.col},${jc.row}`;
+        if (blocked(key)) break; // la línea no puede atravesar un nodo
+        path.push(key);
+        for (const s2 of ["down", "right", "left", "up"]) {
+          if (s2 === OPPOSITE[d]) continue; // por ahí llega la extensión
+          const sv = DIR_VECTORS[s2];
+          const sim = simulateGroup(group, start, jc.col + sv.dc, jc.row + sv.dr, path);
+          if (!best || sim.collisions < best.sim.collisions) best = { sim, d, jc, s2 };
+          if (best.sim.collisions === 0) break;
+        }
+        if (best && best.sim.collisions === 0) break;
+      }
+      if (best && best.sim.collisions === 0) break;
+    }
+    return best && { ...best, link, start, partner };
+  };
+  const applyExtension = ({ sim, d, jc, s2, link, partner, start }) => {
+    // Empalme nuevo de la pareja; la conexión pasa a salir de él.
+    const junction = addJunction(nodes, edges, partner, link.index - 0.5, link.line, partner.lineHeight);
+    edges[edges.length - 1].dir = d;
+    moveEnd(link, partner.id, junction.id);
+    const k = Math.abs(jc.col - partner.col) + Math.abs(jc.row - partner.row);
+    place(junction, jc.col, jc.row, `extensión desde ${who(partner)} hacia ${SIDE_NAME[d]} (${k} celda${k > 1 ? "s" : ""}): el grupo no cabía`);
+    for (const [id, p] of sim.pos) {
+      place(nodes.get(id), p.col, p.row, id === start.id ? `junto al empalme de ${who(partner)}` : `grupo unido por la extensión de ${who(partner)}: sigue el recorrido`);
+    }
+    setSide(link, junction, s2);
+    for (const [e, u, side] of sim.sides) setSide(e, u, side);
+    for (const id of sim.pos.keys()) if (!nodes.get(id).ref) visit(nodes.get(id));
+    const maxCol = Math.max(...[...nodes.values()].filter(isPlaced).map((n) => n.col));
+    nextComponentCol = maxCol + 2;
+    return true;
+  };
+
+  // Una flecha hacia una hoja (nodo sin hijos) que quedó lejos de su padre se dibuja hacia una
+  // copia de la hoja junto al padre, en vez de tirar una línea larga: preferentemente en el lado
+  // que le tocaba a esa flecha, si no en el primero libre. Sin lado libre, se queda la línea.
+  // Una flecha hacia un empalme de una hoja cuenta como flecha hacia la hoja.
+  // Tiene hijos si alguna flecha sale de él o de alguno de sus empalmes (a los de una hoja, como
+  // ioDb, solo le llegan flechas).
+  const hasChildren = (id) => edges.some((x) => x.from === id && (!x.bus || hasChildren(x.to)));
+  const near = (a, b) => Math.abs(a.col - b.col) + Math.abs(a.row - b.row) === 1;
+  // Qué copiar para una flecha u -> target lejana: la hoja (target, o el dueño hoja de un empalme)
+  // o, si target es un empalme cuyo dueño tiene hijos, el propio empalme (su pastilla dice de quién es).
+  const farLeaf = (u, target) => {
+    if (near(u, target) || target.ref) return null;
+    if (target.shape === "junction") {
+      const owner = nodes.get(target.junctionOf);
+      return owner && !owner.ref && !hasChildren(owner.id) ? owner : target;
+    }
+    return hasChildren(target.id) ? null : target;
+  };
+  let copies = 0;
+  const copyOfLeaf = (leaf, e) => {
+    const copy = { ...leaf, id: `${leaf.id}\u29c9${++copies}`, copyOf: leaf.id };
+    if (leaf.shape !== "junction") copy.realId = leaf.realId || leaf.id; // un empalme se identifica por junctionOf
+    delete copy.col;
+    delete copy.row;
+    nodes.set(copy.id, copy);
+    for (const [k, id] of pending) if (id === `copy:${e.index}`) pending.set(k, copy.id);
+    e.to = copy.id;
+    return copy;
+  };
+  // Respaldo al final: flechas que no pasaron por expand (p. ej. de grupos reconstruidos). Los
+  // empalmes que se quedan sin ramas se quitan.
+  const copyLeaves = () => {
+    for (const e of [...edges].sort((a, b) => a.index - b.index)) {
+      if (e.bus || e.attached) continue;
+      const u = nodes.get(e.from);
+      const leaf = farLeaf(u, nodes.get(e.to));
+      if (!leaf) continue;
+      const side = [e.dir, ...sidesOf(u)].find((d) => d && !blocked(cellAt(u, d)));
+      if (!side) continue;
+      const copy = copyOfLeaf(leaf, e);
+      e.dir = side;
+      const v = DIR_VECTORS[side];
+      place(copy, u.col + v.dc, u.row + v.dr, `copia de ${who(leaf)} junto a ${who(u)}, ${SIDE_AT[side]}: el original está lejos y no tiene hijos`);
+    }
+    pruneJunctions();
+  };
+  const pruneJunctions = () => {
+    for (let removed = true; removed; ) {
+      removed = false;
+      for (const j of [...nodes.values()]) {
+        if (j.shape !== "junction") continue;
+        // Solo se quita un empalme que ya no tiene ramas: como mucho le queda la extensión que
+        // llega (una copia de empalme tiene su flecha, que es una rama).
+        const own = edges.filter((x) => x.from === j.id || x.to === j.id);
+        if (own.length > 1 || own.some((x) => !x.bus)) continue;
+        for (const x of own) edges.splice(edges.indexOf(x), 1);
+        nodes.delete(j.id);
+        occupied.delete(`${j.col},${j.row}`);
+        removed = true;
+      }
+    }
+  };
+
+  // Revisión final: una flecha que haya quedado en diagonal o pasando por encima de un nodo (p. ej.
+  // la del segundo padre de un nodo colocado junto al primero) termina en un punto junto a su
+  // origen con la pastilla de su destino (● F3), como una copia de empalme. Si el origen no tiene
+  // sitio se usa la cascada de siempre (placeNextTo).
+  const badLine = (x) => {
+    const a = nodes.get(x.from);
+    const b = nodes.get(x.to);
+    if (a.col !== b.col && a.row !== b.row) return true;
+    const n = Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+    const dc = Math.sign(b.col - a.col);
+    const dr = Math.sign(b.row - a.row);
+    for (let i = 1; i < n; i++) if (occupied.has(`${a.col + dc * i},${a.row + dr * i}`)) return true;
+    return false;
+  };
+  const fixLongLinks = () => {
+    let connectors = 0;
+    for (const x of [...edges].sort((a, b) => a.index - b.index)) {
+      if (x.bus || x.attached || !edges.includes(x)) continue;
+      const u = nodes.get(x.from);
+      const target = nodes.get(x.to);
+      if (!u || !target || u.col === undefined || target.col === undefined || !badLine(x)) continue;
+      const twin = twinNextTo(u, target);
+      if (twin) {
+        reuseTwin(x, u, twin, "en vez de un conector");
+        continue;
+      }
+      const owner = target.junctionOf || target.realId || target.id;
+      const dot = {
+        id: `${target.id}\u2192${++connectors}`,
+        shape: "junction",
+        text: "",
+        lines: [],
+        w: pillWidth(junctionLabel(owner)),
+        h: PILL_HEIGHT,
+        lineHeight: target.lineHeight,
+        line: x.line,
+        group: target.group,
+        junctionOf: owner,
+        copyOf: target.id,
+      };
+      nodes.set(dot.id, dot);
+      x.to = dot.id;
+      placeNextTo(u, dot, x);
+      dot.why = `conector hacia '${owner}': la flecha desde ${who(u)} quedaba en diagonal o pasaba por encima de un nodo. ${dot.why}`;
+    }
+    pruneJunctions();
+  };
+
+  // Fija la geometría de una arista sabiendo en qué lado de u está el otro extremo.
+  const setSide = (e, u, side) => {
+    if (e.attached) {
+      e.slot = e.to === u.id ? side : OPPOSITE[side];
+      e.dir = OPPOSITE[e.slot];
+    } else e.dir = e.from === u.id ? side : OPPOSITE[side];
+  };
+
+  // Un nodo sin padre que todavía no puede pegarse a ningún hijo se aplaza: quizá otro grupo
+  // coloque después alguno de sus hijos. Al final se reintenta hasta que no haya avances, y los
+  // que sigan sin poder pegarse empiezan un grupo nuevo, en su orden.
+  // Los nodos con padre que no se alcanzaron (ciclos) y las referencias sueltas van después de los
+  // aplazados: un aplazado puede ser justo el padre que los alcanza.
+  const waiting = [];
+  const starts = roots.filter((n) => !n.ref && !hasIncoming.has(n.id));
+  for (const root of starts) {
+    if (root.col !== undefined || isAttachedRef(root)) continue;
+    const anchor = findAnchor(root);
+    if (!anchor && occupied.size) waiting.push(root);
+    else placeRoot(root, anchor);
+  }
+  // Primero se reintenta el anclaje simple (el inicio junto a un hijo ya colocado); si no basta,
+  // se reconstruye el grupo desde su primera conexión con lo ya colocado (placeGroupByLink).
+  for (let progress = true; progress; ) {
+    progress = false;
+    for (const root of waiting) {
+      if (root.col !== undefined) continue;
+      const anchor = findAnchor(root);
+      if (anchor) placeRoot(root, anchor, true);
+      else if (!placeGroupByLink(root)) continue;
+      progress = true;
+    }
+  }
+  for (const root of waiting) if (root.col === undefined) placeRoot(root, null, true);
+  for (const root of roots) {
+    if (root.col !== undefined || isAttachedRef(root)) continue;
+    placeRoot(root, findAnchor(root));
+  }
+  copyLeaves();
+  fixLongLinks();
+  history[step - 1] = snapshot(); // el último paso, ya con la limpieza de empalmes
+  // Los empalmes que se quitaron al final (sin ramas) desaparecen de toda la historia y los pasos
+  // se renumeran, para que el paso k siga teniendo k+1 nodos.
+  const alive = new Set(nodes.keys());
+  const keep = history.filter((h, k) => {
+    const placedAt = h.pos.find(([n]) => n.step === k);
+    return placedAt && alive.has(placedAt[0].id);
+  });
+  for (const h of keep) {
+    h.pos = h.pos.filter(([n]) => alive.has(n.id));
+    h.edges = h.edges.filter((x) => alive.has(x.from) && alive.has(x.to));
+  }
+  [...nodes.values()].sort((a, b) => a.step - b.step).forEach((n, i) => (n.step = i));
+  return keep;
+}
+
+// ---------------------------------------------------------------- coordenadas
+
+function computeCoordinates(nodes, edges, measure, opts) {
+  const colWidth = new Map();
+  const rowHeight = new Map();
+  for (const n of nodes.values()) {
+    colWidth.set(n.col, Math.max(colWidth.get(n.col) || 0, n.w));
+    rowHeight.set(n.row, Math.max(rowHeight.get(n.row) || 0, n.h));
+  }
+
+  // Los huecos entre columnas/filas vecinas crecen si una etiqueta de arista no cabe.
+  const colGapAfter = new Map();
+  const rowGapAfter = new Map();
+  for (const e of edges) {
+    if (!e.label) continue;
+    const a = nodes.get(e.from);
+    const b = nodes.get(e.to);
+    const tm = textMetrics(e.css, measure, opts);
+    const labelLines = e.label.split("\n");
+    const labelW = Math.max(...labelLines.map((l) => tm.measure(l))) + 24;
+    const labelH = tm.lineHeight * labelLines.length + 16;
+    if (a.row === b.row && Math.abs(a.col - b.col) === 1) {
+      const c = Math.min(a.col, b.col);
+      colGapAfter.set(c, Math.max(colGapAfter.get(c) || 0, labelW));
+    } else if (a.col === b.col && Math.abs(a.row - b.row) === 1) {
+      const r = Math.min(a.row, b.row);
+      rowGapAfter.set(r, Math.max(rowGapAfter.get(r) || 0, labelH));
+    }
+  }
+
+  const centers = (sizes, gapAfter, baseGap) => {
+    const keys = [...sizes.keys()];
+    const min = Math.min(...keys);
+    const max = Math.max(...keys);
+    const result = new Map();
+    let cursor = 0;
+    for (let k = min; k <= max; k++) {
+      const size = sizes.get(k) || 0; // columnas/filas vacías no ocupan espacio
+      result.set(k, cursor + size / 2);
+      if (sizes.has(k)) cursor += size + Math.max(baseGap, gapAfter.get(k) || 0);
+    }
+    return result;
+  };
+
+  const colX = centers(colWidth, colGapAfter, opts.colGap);
+  const rowY = centers(rowHeight, rowGapAfter, opts.rowGap);
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes.values()) {
+    n.x = colX.get(n.col);
+    n.y = rowY.get(n.row);
+    minX = Math.min(minX, n.x - n.w / 2);
+    maxX = Math.max(maxX, n.x + n.w / 2);
+    minY = Math.min(minY, n.y - n.h / 2);
+    maxY = Math.max(maxY, n.y + n.h / 2);
+  }
+  if (!nodes.size) minX = minY = maxX = maxY = 0;
+  return { minX, minY, maxX, maxY };
+}
+
+// ---------------------------------------------------------------- aristas
+
+// Distancia del centro al borde de la forma en la dirección (ux, uy) unitaria.
+function borderDistance(node, ux, uy) {
+  const hw = node.w / 2;
+  const hh = node.h / 2;
+  const ax = Math.abs(ux);
+  const ay = Math.abs(uy);
+  switch (node.shape) {
+    case "circle":
+      return hw;
+    case "diamond":
+      return 1 / (ax / hw + ay / hh);
+    case "parallelogram":
+    case "parallelogram-alt": {
+      // A media altura los lados inclinados quedan a skew/2 hacia dentro.
+      const sx = hw - node.skew / 2;
+      return Math.min(ax ? sx / ax : Infinity, ay ? hh / ay : Infinity);
+    }
+    default:
+      return Math.min(ax ? hw / ax : Infinity, ay ? hh / ay : Infinity);
+  }
+}
+
+function routeEdge(edge, a, b, measure, opts) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const da = borderDistance(a, ux, uy);
+  const db = borderDistance(b, ux, uy);
+  edge.points = [
+    { x: a.x + ux * da, y: a.y + uy * da },
+    { x: b.x - ux * db, y: b.y - uy * db },
+  ];
+  if (edge.label) {
+    const [p, q] = edge.points;
+    const tm = textMetrics(edge.css, measure, opts);
+    const lines = edge.label.split("\n"); // "<br>" en la etiqueta: varias líneas
+    edge.labelBox = {
+      x: (p.x + q.x) / 2,
+      y: (p.y + q.y) / 2,
+      w: Math.max(...lines.map((l) => tm.measure(l))) + 12,
+      h: tm.lineHeight * lines.length + 4,
+      lineHeight: tm.lineHeight,
+    };
+  }
+}
+
+if (typeof module !== "undefined") module.exports = { layoutDiagram, wrapText, LAYOUT_DEFAULTS };
+
+// Render: resultado del layout -> texto SVG autocontenido (estilos en línea, listo para exportar).
+
+const THEME = {
+  background: null, // null = transparente: el diagrama se funde con el fondo del visor
+  nodeFill: "#ffffff",
+  nodeStroke: "#1f2328",
+  nodeStrokeWidth: 1.5,
+  text: "#1f2328",
+  edge: "#1f2328",
+  edgeWidth: 1.5,
+  labelText: "#1f2328",
+  labelBackground: "#ffffff",
+  title: "#656d76", // título de cada subgraph, encima de su diagrama
+  refDash: "5 3", // borde de los nodos de referencia a otro diagrama
+  // Pastilla con el id de cada nodo, en su esquina superior izquierda (renderSvg con { ids: true }).
+  // (las medidas deben coincidir con PILL_FONT / PILL_HEIGHT de layout.js, que reserva el sitio de
+  // los empalmes)
+  idPill: { fill: "#57606a", text: "#ffffff", fontSize: 12, height: 18 },
+  padding: 40,
+  // Sombra difuminada bajo todas las formas. null = sin sombra.
+  shadow: { dx: 0, dy: 1, blur: 1.5, color: "#000000", opacity: 0.18 },
+};
+
+function escapeXml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+const fmt = (n) => Number(n.toFixed(2));
+
+// css de Mermaid ([[prop, valor], ...]) -> atributo style. El CSS de style gana a los atributos
+// de presentación (fill="..."), así que lo que no se indique queda con los valores del tema.
+const styleAttr = (css) => (css && css.length ? ` style="${escapeXml(css.map(([k, v]) => `${k}:${v}`).join(";"))}"` : "");
+
+// Reparte el css de un nodo: el texto recibe las propiedades de fuente y "color" (que en SVG es
+// el relleno del texto), el grupo la opacidad, y la forma todo lo demás.
+function splitCss(css = []) {
+  const shape = [];
+  const text = [];
+  const group = [];
+  for (const [k, v] of css) {
+    if (k === "color") text.push(["fill", v]);
+    else if (/^(font|letter|word|text)-/.test(k)) text.push([k, v]);
+    else if (k === "opacity") group.push([k, v]);
+    else shape.push([k, v]);
+  }
+  return { shape, text, group };
+}
+const cssValue = (css, key) => {
+  const hit = (css || []).filter(([k]) => k === key).pop();
+  return hit && hit[1];
+};
+
+// Área del SVG: la caja del layout más el margen.
+function frame(layout, theme) {
+  const { bounds } = layout;
+  const pad = theme.padding;
+  const x0 = bounds.minX - pad;
+  const y0 = bounds.minY - pad;
+  const width = bounds.maxX - bounds.minX + 2 * pad;
+  const height = bounds.maxY - bounds.minY + 2 * pad;
+  const open = (attrs = "") =>
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(width)} ${fmt(height)}" ` +
+    `width="${fmt(width)}" height="${fmt(height)}"${attrs}>`;
+  return { x0, y0, width, height, open };
+}
+
+// Con { shadow: false } se omite la sombra: el visor la dibuja aparte (ver renderShadowSvg).
+// Con { ids: true } cada nodo lleva una pastilla con su id.
+function renderSvg(layout, theme = THEME, { shadow = true, ids = false } = {}) {
+  const { nodes, edges, options: opts } = layout;
+  const f = frame(layout, theme);
+  // Una punta de flecha por cada color de línea (el marcador no hereda el color de la línea).
+  const markers = new Map([[theme.edge, "arrow"]]);
+  for (const e of edges) {
+    const c = cssValue(e.css, "stroke");
+    if (c && !markers.has(c)) markers.set(c, `arrow-${markers.size}`);
+  }
+
+  const parts = [];
+  parts.push(f.open(` font-family="${escapeXml(opts.fontFamily)}" font-size="${opts.fontSize}"`));
+  parts.push(
+    `<defs>` +
+      [...markers]
+        // Una punta para el final y otra invertida para el inicio (flechas <-->), con orient="auto":
+        // "auto-start-reverse" es de SVG 2 y algunos programas (p. ej. resvg) no lo entienden.
+        .map(
+          ([color, id]) =>
+            `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" ` +
+            `markerUnits="userSpaceOnUse" orient="auto">` +
+            `<path d="M0,0 L10,5 L0,10 z" fill="${escapeXml(color)}"/></marker>` +
+            `<marker id="${id}-inicio" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="8" markerHeight="8" ` +
+            `markerUnits="userSpaceOnUse" orient="auto">` +
+            `<path d="M10,0 L0,5 L10,10 z" fill="${escapeXml(color)}"/></marker>`
+        )
+        .join("") +
+      (theme.shadow && shadow ? shadowFilter(f, theme.shadow) : "") +
+      `</defs>`
+  );
+  if (theme.background) {
+    parts.push(`<rect x="${fmt(f.x0)}" y="${fmt(f.y0)}" width="${fmt(f.width)}" height="${fmt(f.height)}" fill="${theme.background}"/>`);
+  }
+
+  if (theme.shadow && shadow) parts.push(renderShadows(layout, theme));
+
+  // Aristas debajo de los nodos, etiquetas encima de todo.
+  parts.push(`<g class="edges">`);
+  for (const e of edges) parts.push(renderEdge(e, theme, markers.get(cssValue(e.css, "stroke") || theme.edge)));
+  parts.push(`</g><g class="nodes">`);
+  for (const n of nodes) parts.push(renderNode(n, theme, opts));
+  parts.push(`</g><g class="labels">`);
+  for (const e of edges) if (e.labelBox) parts.push(renderLabel(e, theme));
+  parts.push(`</g>`);
+  if (layout.titles && layout.titles.length) {
+    parts.push(`<g class="titles">`);
+    for (const t of layout.titles) {
+      parts.push(
+        `<text x="${fmt(t.x)}" y="${fmt(t.y)}" dominant-baseline="central" font-weight="600" fill="${theme.title}">` +
+          `${escapeXml(t.text)}</text>`
+      );
+    }
+    parts.push(`</g>`);
+  }
+  if (ids) parts.push(renderIdPills(nodes, theme));
+  parts.push(`</svg>`);
+  return parts.join("\n");
+}
+
+// Solo la sombra, como SVG del mismo tamaño que el diagrama. El visor la pinta una vez en un
+// mapa de bits y la pone debajo del SVG sin sombra: un filtro de desenfoque dentro del SVG se
+// recalcula en cada repintado y con zoom alto hacía caer los fps; el mapa de bits solo se escala
+// (al ser difusa no se nota la pérdida de resolución).
+function renderShadowSvg(layout, theme = THEME) {
+  const f = frame(layout, theme);
+  return `${f.open()}<defs>${shadowFilter(f, theme.shadow)}</defs>${renderShadows(layout, theme)}</svg>`;
+}
+
+// Región del filtro en coordenadas del diagrama: con la predeterminada (relativa a la caja del
+// elemento) una línea recta horizontal o vertical tiene alto o ancho 0 y desaparece.
+function shadowFilter(f, sh) {
+  return (
+    `<filter id="shadow" filterUnits="userSpaceOnUse" x="${fmt(f.x0)}" y="${fmt(f.y0)}" ` +
+    `width="${fmt(f.width)}" height="${fmt(f.height)}"><feGaussianBlur stdDeviation="${sh.blur}"/></filter>`
+  );
+}
+
+// Copia de todas las formas en el color de la sombra, desplazada y difuminada. Va en un solo
+// grupo debajo del resto, así nunca tapa una línea o un nodo.
+function renderShadows({ nodes, edges }, theme) {
+  const sh = theme.shadow;
+  const edgeTheme = { ...theme, edge: sh.color };
+  const style = `fill="${sh.color}" stroke="${sh.color}" stroke-width="${theme.nodeStrokeWidth}"`;
+  const parts = [
+    `<g class="shadows" transform="translate(${sh.dx} ${sh.dy})" opacity="${sh.opacity}" filter="url(#shadow)">`,
+  ];
+  // La sombra solo copia la geometría: del css de la línea, solo el grosor.
+  for (const e of edges) {
+    const css = (e.css || []).filter(([k]) => k === "stroke-width");
+    parts.push(renderEdge({ ...e, css, arrowStart: false, arrowEnd: false }, edgeTheme));
+  }
+  const arc = `fill="none" stroke="${sh.color}" stroke-width="${theme.nodeStrokeWidth}"`;
+  for (const n of nodes) parts.push(nodeShape(n, style, arc));
+  for (const e of edges) {
+    if (!e.labelBox) continue;
+    const b = e.labelBox;
+    parts.push(`<rect x="${fmt(b.x - b.w / 2)}" y="${fmt(b.y - b.h / 2)}" width="${fmt(b.w)}" height="${fmt(b.h)}" rx="3" ${style}/>`);
+  }
+  parts.push(`</g>`);
+  return parts.join("");
+}
+
+// Pastillas encima de todo, centradas en la esquina superior izquierda de la caja de cada nodo.
+// Referencias y nodos absorbidos muestran el id del nodo real. Los empalmes no llevan: son ellos
+// mismos una pastilla con el id de su dueño.
+function renderIdPills(nodes, theme) {
+  const p = theme.idPill;
+  const parts = [`<g class="ids" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="${p.fontSize}">`];
+  for (const n of nodes) {
+    if (n.shape === "junction") continue; // el empalme ya es una pastilla (renderNode)
+    const id = n.realId || n.id;
+    const w = id.length * p.fontSize * 0.62 + 8; // monoespaciada: ancho fijo por carácter
+    const { x, y, centered } = pillAnchor(n);
+    const left = centered ? x - w / 2 : x - 4;
+    parts.push(
+      `<g class="id-pill" data-id="${escapeXml(n.id)}"><rect x="${fmt(left)}" y="${fmt(y - p.height / 2)}" width="${fmt(w)}" height="${p.height}" ` +
+        `rx="${p.height / 2}" fill="${p.fill}"/>` +
+        `<text x="${fmt(left + w / 2)}" y="${fmt(y)}" text-anchor="middle" dominant-baseline="central" fill="${p.text}">` +
+        `${escapeXml(id)}</text></g>`
+    );
+  }
+  parts.push(`</g>`);
+  return parts.join("");
+}
+
+// Punto del contorno de la forma donde se ancla su pastilla: la "esquina superior izquierda" de la
+// forma real. En rombos y círculos esa esquina está en un lado inclinado, así que la pastilla se
+// centra sobre ella; en las demás empieza en la esquina.
+function pillAnchor(n) {
+  const hw = n.w / 2;
+  const hh = n.h / 2;
+  switch (n.shape) {
+    case "diamond":
+      return { x: n.x - hw / 2, y: n.y - hh / 2, centered: true };
+    case "circle":
+      return { x: n.x - hw * Math.SQRT1_2, y: n.y - hh * Math.SQRT1_2, centered: true };
+    case "hexagon":
+    case "parallelogram":
+      return { x: n.x - hw + n.skew, y: n.y - hh };
+    default:
+      return { x: n.x - hw, y: n.y - hh };
+  }
+}
+
+function renderEdge(e, theme, marker = "arrow") {
+  const [p, q] = e.points;
+  const width = e.style === "thick" ? theme.edgeWidth * 2 : theme.edgeWidth;
+  const dash = e.style === "dotted" ? ` stroke-dasharray="4 4"` : "";
+  const start = e.arrowStart ? ` marker-start="url(#${marker}-inicio)"` : "";
+  const end = e.arrowEnd ? ` marker-end="url(#${marker})"` : "";
+  // "color" de linkStyle es el color de la etiqueta, no de la línea.
+  const css = (e.css || []).filter(([k]) => k !== "color" && !/^(font|letter|word|text)-/.test(k));
+  return (
+    `<line data-from="${escapeXml(e.from)}" data-to="${escapeXml(e.to)}" x1="${fmt(p.x)}" y1="${fmt(p.y)}" ` +
+    `x2="${fmt(q.x)}" y2="${fmt(q.y)}" stroke="${theme.edge}" stroke-width="${width}"${dash}${start}${end}${styleAttr(css)}/>`
+  );
+}
+
+function renderNode(n, theme, opts) {
+  // Empalme: una pastilla con el id de su dueño ("● A8"); las flechas llegan a su borde.
+  if (n.shape === "junction") {
+    const p = theme.idPill;
+    return (
+      `<g class="junction" data-id="${escapeXml(n.id)}">${nodeShape(n, `fill="${p.fill}"`, "")}` +
+      `<text x="${fmt(n.x)}" y="${fmt(n.y)}" text-anchor="middle" dominant-baseline="central" fill="${p.text}" ` +
+      `font-family="ui-monospace, Menlo, Consolas, monospace" font-size="${p.fontSize}">` +
+      `${escapeXml(`\u25cf ${n.junctionOf}`)}</text></g>`
+    );
+  }
+  const css = splitCss(n.css);
+  // Las referencias siempre llevan borde discontinuo, aunque su clase diga otra cosa.
+  if (n.ref && !n.absorbed) css.shape.push(["stroke-dasharray", theme.refDash]);
+  const base = `stroke="${theme.nodeStroke}" stroke-width="${theme.nodeStrokeWidth}"`;
+  const style = `fill="${theme.nodeFill}" ${base}${styleAttr(css.shape)}`;
+  const arc = `fill="none" ${base}${styleAttr([...css.shape, ["fill", "none"]])}`;
+  const shape = nodeShape(n, style, arc);
+  // En el cilindro el texto se centra en el cuerpo, bajo la tapa.
+  const textY = n.shape === "cylinder" ? n.y + n.w * 0.06 : n.y;
+  const text = renderText(n.lines, n.x, textY, theme.text, n.lineHeight || opts.lineHeight, css.text);
+  return `<g class="node" data-id="${escapeXml(n.id)}"${styleAttr(css.group)}>${shape}${text}</g>`;
+}
+
+// arcStyle: atributos de la tapa del cilindro (una línea sin relleno).
+function nodeShape(n, style, arcStyle) {
+  const hw = n.w / 2;
+  const hh = n.h / 2;
+  let shape;
+  switch (n.shape) {
+    case "circle":
+      shape = `<circle cx="${fmt(n.x)}" cy="${fmt(n.y)}" r="${fmt(hw)}" ${style}/>`;
+      break;
+    case "subroutine": {
+      // Subrutina [[ ]]: rectángulo con una línea vertical cerca de cada lado.
+      const l = n.x - hw;
+      const r = n.x + hw;
+      const t = n.y - hh;
+      const b = n.y + hh;
+      shape =
+        `<rect x="${fmt(l)}" y="${fmt(t)}" width="${fmt(n.w)}" height="${fmt(n.h)}" rx="2" ${style}/>` +
+        `<path d="M${fmt(l + 10)},${fmt(t)} V${fmt(b)} M${fmt(r - 10)},${fmt(t)} V${fmt(b)}" ${arcStyle}/>`;
+      break;
+    }
+    case "junction":
+      shape = `<rect x="${fmt(n.x - hw)}" y="${fmt(n.y - hh)}" width="${fmt(n.w)}" height="${fmt(n.h)}" rx="${fmt(hh)}" ${style}/>`;
+      break;
+    case "diamond":
+      shape =
+        `<polygon points="${fmt(n.x)},${fmt(n.y - hh)} ${fmt(n.x + hw)},${fmt(n.y)} ` +
+        `${fmt(n.x)},${fmt(n.y + hh)} ${fmt(n.x - hw)},${fmt(n.y)}" ${style}/>`;
+      break;
+    case "hexagon": {
+      const k = n.skew;
+      const pts = [
+        [n.x - hw + k, n.y - hh], [n.x + hw - k, n.y - hh], [n.x + hw, n.y],
+        [n.x + hw - k, n.y + hh], [n.x - hw + k, n.y + hh], [n.x - hw, n.y],
+      ];
+      shape = `<polygon points="${pts.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(" ")}" ${style}/>`;
+      break;
+    }
+    case "parallelogram":
+    case "parallelogram-alt": {
+      const l = n.x - hw;
+      const r = n.x + hw;
+      const t = n.y - hh;
+      const b = n.y + hh;
+      const k = n.skew;
+      // parallelogram = [/ /] (inclinado a la derecha); alt = [\ \] (a la izquierda).
+      const pts =
+        n.shape === "parallelogram"
+          ? [[l + k, t], [r, t], [r - k, b], [l, b]]
+          : [[l, t], [r - k, t], [r, b], [l + k, b]];
+      shape = `<polygon points="${pts.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(" ")}" ${style}/>`;
+      break;
+    }
+    case "cylinder": {
+      const ry = n.w * 0.12;
+      const top = n.y - hh + ry;
+      const bottom = n.y + hh - ry;
+      const l = n.x - hw;
+      const r = n.x + hw;
+      shape =
+        `<path d="M${fmt(l)},${fmt(top)} L${fmt(l)},${fmt(bottom)} A${fmt(hw)},${fmt(ry)} 0 0 0 ${fmt(r)},${fmt(bottom)} ` +
+        `L${fmt(r)},${fmt(top)} A${fmt(hw)},${fmt(ry)} 0 0 0 ${fmt(l)},${fmt(top)} Z" ${style}/>` +
+        `<path d="M${fmt(l)},${fmt(top)} A${fmt(hw)},${fmt(ry)} 0 0 0 ${fmt(r)},${fmt(top)}" ${arcStyle}/>`;
+      break;
+    }
+    default: {
+      const rx = n.shape === "stadium" ? hh : n.shape === "round" ? 12 : 2;
+      shape = `<rect x="${fmt(n.x - hw)}" y="${fmt(n.y - hh)}" width="${fmt(n.w)}" height="${fmt(n.h)}" rx="${rx}" ${style}/>`;
+    }
+  }
+  return shape;
+}
+
+function renderText(lines, x, y, color, lineHeight, css) {
+  const firstY = y - ((lines.length - 1) * lineHeight) / 2;
+  const spans = lines
+    .map((l, i) => `<tspan x="${fmt(x)}" y="${fmt(firstY + i * lineHeight)}">${escapeXml(l)}</tspan>`)
+    .join("");
+  return `<text text-anchor="middle" dominant-baseline="central" fill="${color}"${styleAttr(css)}>${spans}</text>`;
+}
+
+// Una línea: el texto tal cual; varias ("<br>"): una por tspan, centradas en la caja.
+function labelSpans(label, b) {
+  const lines = label.split("\n");
+  if (lines.length === 1) return escapeXml(label);
+  const lh = b.lineHeight || 18;
+  const first = b.y - ((lines.length - 1) * lh) / 2;
+  return lines.map((l, i) => `<tspan x="${fmt(b.x)}" y="${fmt(first + i * lh)}">${escapeXml(l)}</tspan>`).join("");
+}
+
+function renderLabel(e, theme) {
+  const b = e.labelBox;
+  return (
+    `<g class="label" data-from="${escapeXml(e.from)}" data-to="${escapeXml(e.to)}"><rect x="${fmt(b.x - b.w / 2)}" y="${fmt(b.y - b.h / 2)}" width="${fmt(b.w)}" height="${fmt(b.h)}" ` +
+    `rx="3" fill="${theme.labelBackground}"/>` +
+    `<text x="${fmt(b.x)}" y="${fmt(b.y)}" text-anchor="middle" dominant-baseline="central" fill="${theme.labelText}"` +
+    `${styleAttr(splitCss(e.css).text)}>` +
+    labelSpans(e.label, b) +
+    `</text></g>`
+  );
+}
+
+if (typeof module !== "undefined") module.exports = { renderSvg, renderShadowSvg, THEME };
+
+// Visor: monta el diagrama en la página, zoom con la rueda, arrastre, gestos táctiles y exportación.
+// Con `live` (diagram.py --watch) pide al servidor el código nuevo cuando cambia el .mmd y vuelve
+// a dibujar sin recargar la pestaña.
+
+const DiagramViewer = (() => {
+  const MIN_SCALE = 0.1;
+  const MAX_SCALE = 8;
+
+  function start({ source: initialSource, title, live }) {
+    const stage = document.getElementById("stage");
+    const canvas = document.getElementById("canvas");
+    const status = document.getElementById("status");
+    document.title = title;
+
+    // Estado del diagrama montado; mount() lo reemplaza entero cuando llega código nuevo.
+    // Si el código tiene un error, result queda en null y los controles no hacen nada.
+    let source = initialSource;
+    let result = null;
+    let svg = null;
+    let size = null;
+    let generation = 0; // para descartar la sombra de un montaje anterior que llegue tarde
+
+    // ---- vista: translate(tx, ty) scale(s) con origen arriba a la izquierda
+    const view = { s: 1, tx: 0, ty: 0 };
+    const apply = () => {
+      canvas.style.transform = `translate(${view.tx}px, ${view.ty}px) scale(${view.s})`;
+      // La cuadrícula de puntos del fondo se mueve y escala con el diagrama.
+      const grid = 24 * view.s;
+      stage.style.backgroundSize = `${grid}px ${grid}px`;
+      stage.style.backgroundPosition = `${view.tx}px ${view.ty}px`;
+      status.textContent = `${Math.round(view.s * 100)}%`;
+    };
+    const fit = () => {
+      if (!size) return;
+      const r = stage.getBoundingClientRect();
+      view.s = Math.min(r.width / size.w, r.height / size.h, 1);
+      view.tx = (r.width - size.w * view.s) / 2;
+      view.ty = (r.height - size.h * view.s) / 2;
+      apply();
+    };
+    const zoomAt = (factor, cx, cy) => {
+      const s = clamp(view.s * factor, MIN_SCALE, MAX_SCALE);
+      const f = s / view.s;
+      view.tx = cx - (cx - view.tx) * f;
+      view.ty = cy - (cy - view.ty) * f;
+      view.s = s;
+      apply();
+    };
+    const center = () => {
+      const r = stage.getBoundingClientRect();
+      return [r.width / 2, r.height / 2];
+    };
+
+    // Mientras hay un gesto en curso el diagrama se sube a su propia capa (will-change) y el
+    // navegador solo mueve/escala esa imagen, sin volver a pintar el SVG (y sus sombras) en
+    // cada fotograma. Al terminar se quita para que se vuelva a pintar nítido a la escala final.
+    let motionTimer = 0;
+    const beginMotion = () => {
+      clearTimeout(motionTimer);
+      canvas.style.willChange = "transform";
+    };
+    const endMotion = () => {
+      clearTimeout(motionTimer);
+      motionTimer = setTimeout(() => (canvas.style.willChange = ""), 150);
+    };
+
+    stage.addEventListener(
+      "wheel",
+      (ev) => {
+        ev.preventDefault();
+        beginMotion();
+        endMotion();
+        const r = stage.getBoundingClientRect();
+        // deltaMode 1 = líneas (algunos ratones); se normaliza a píxeles.
+        const delta = ev.deltaY * (ev.deltaMode === 1 ? 16 : 1);
+        zoomAt(Math.exp(-delta * 0.0015), ev.clientX - r.left, ev.clientY - r.top);
+      },
+      { passive: false }
+    );
+
+    // ---- gestos: un dedo (o ratón) arrastra; dos dedos hacen zoom y arrastran a la vez.
+    // Se usa el centro y la separación de los dos primeros punteros: en cada movimiento el
+    // diagrama se desplaza lo que se movió el centro y se escala lo que cambió la separación.
+    const pointers = new Map();
+    let gesture = null; // { x, y, d } del último movimiento
+    let lastTap = { time: 0, x: 0, y: 0 };
+    let tapStart = null;
+    const snapshot = () => {
+      const pts = [...pointers.values()].slice(0, 2);
+      const r = stage.getBoundingClientRect();
+      const x = pts.reduce((acc, p) => acc + p.x, 0) / pts.length - r.left;
+      const y = pts.reduce((acc, p) => acc + p.y, 0) / pts.length - r.top;
+      const d = pts.length === 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1 : 0;
+      return { x, y, d };
+    };
+    stage.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "mouse" && ev.button !== 0) return;
+      stage.setPointerCapture(ev.pointerId);
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      stage.classList.add("dragging");
+      beginMotion();
+      gesture = snapshot();
+      tapStart = pointers.size === 1 ? { x: ev.clientX, y: ev.clientY, time: ev.timeStamp } : null;
+    });
+    stage.addEventListener("pointermove", (ev) => {
+      if (!pointers.has(ev.pointerId)) return;
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      const g = snapshot();
+      view.tx += g.x - gesture.x;
+      view.ty += g.y - gesture.y;
+      if (g.d && gesture.d) zoomAt(g.d / gesture.d, g.x, g.y);
+      else apply();
+      gesture = g;
+    });
+    const release = (ev) => {
+      if (!pointers.delete(ev.pointerId)) return;
+      if (pointers.size) gesture = snapshot();
+      else {
+        stage.classList.remove("dragging");
+        endMotion();
+      }
+      // Doble toque (táctil) = ajustar; en ratón ya lo cubre dblclick.
+      if (ev.type === "pointerup" && ev.pointerType !== "mouse" && tapStart && !pointers.size) {
+        const moved = Math.hypot(ev.clientX - tapStart.x, ev.clientY - tapStart.y);
+        const quick = ev.timeStamp - tapStart.time < 300;
+        if (moved < 10 && quick) {
+          const near = Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 40;
+          if (ev.timeStamp - lastTap.time < 350 && near) {
+            fit();
+            lastTap.time = 0;
+          } else {
+            lastTap = { time: ev.timeStamp, x: ev.clientX, y: ev.clientY };
+          }
+        }
+      }
+      if (!pointers.size) tapStart = null;
+    };
+    stage.addEventListener("pointerup", release);
+    stage.addEventListener("pointercancel", release);
+    stage.addEventListener("dblclick", fit);
+
+    // ---- teclado y botones
+    window.addEventListener("keydown", (ev) => {
+      if (ev.key === "0") fit();
+      else if (ev.key === "+" || ev.key === "=") zoomAt(1.2, ...center());
+      else if (ev.key === "-") zoomAt(1 / 1.2, ...center());
+    });
+    document.getElementById("btn-mermaid").onclick = () => openInMermaid(source, title);
+    // ---- depuración: ver cómo se construye el diagrama, nodo a nodo, en el orden en que el layout
+    // los colocó (n.step) y con el motivo (n.why). Una flecha aparece cuando sus dos extremos están.
+    let order = [];
+    let total = 0;
+    let shown = 0;
+    const stepLabel = document.getElementById("step-label");
+    const stepWhy = document.getElementById("step-why");
+    const shadowCanvas = () => canvas.querySelector("canvas.shadow");
+    // En un paso intermedio se dibuja el diagrama tal como estaba al terminar ese paso
+    // (result.snapshotAt): las inserciones de filas/columnas y los nodos movidos aparecen en el
+    // paso que los provocó. Para que el dibujo no salte, el primer nodo se mantiene fijo en pantalla.
+    let shownSvg = null;
+    let shownLayout = null;
+    let anchorId = null;
+    const localPos = (layout, el, id) => {
+      const n = layout.nodes.find((x) => x.id === id);
+      const vb = el.viewBox.baseVal;
+      return n && { x: n.x - vb.x, y: n.y - vb.y };
+    };
+    const showLayout = (layout, el) => {
+      const before = localPos(shownLayout, shownSvg, anchorId);
+      if (el !== shownSvg) shownSvg.replaceWith(el);
+      const after = localPos(layout, el, anchorId);
+      if (before && after) {
+        view.tx += (before.x - after.x) * view.s;
+        view.ty += (before.y - after.y) * view.s;
+        apply();
+      }
+      shownSvg = el;
+      shownLayout = layout;
+    };
+    const showStep = (k) => {
+      if (!result) return;
+      shown = Math.max(1, Math.min(total, k));
+      const all = shown === total;
+      const current = all ? null : order[shown - 1];
+      if (all) showLayout(result, svg);
+      else {
+        const snap = result.snapshotAt(shown - 1);
+        const tmp = document.createElement("div");
+        tmp.innerHTML = renderSvg(snap, THEME, { shadow: false, ids: true });
+        showLayout(snap, tmp.firstElementChild);
+        const el = shownSvg.querySelector(`g.node[data-id="${CSS.escape(current.id)}"], g.junction[data-id="${CSS.escape(current.id)}"]`);
+        if (el) el.classList.add("step-current");
+      }
+      const sh = shadowCanvas();
+      if (sh) sh.style.display = all ? "" : "none"; // la sombra es la del diagrama final
+      stepLabel.textContent = `${shown} / ${total}`;
+      stepWhy.textContent = current ? `${current.realId || current.junctionOf || current.id}: ${current.why}` : "";
+      if (current) keepVisible(shownLayout.nodes.find((n) => n.id === current.id) || current);
+    };
+    const keepVisible = (n) => {
+      const vb = shownSvg.viewBox.baseVal;
+      const r = stage.getBoundingClientRect();
+      const sx = view.tx + (n.x - vb.x) * view.s;
+      const sy = view.ty + (n.y - vb.y) * view.s;
+      if (sx < 40 || sx > r.width - 40 || sy < 120 || sy > r.height - 60) {
+        view.tx = r.width / 2 - (n.x - vb.x) * view.s;
+        view.ty = r.height / 2 - (n.y - vb.y) * view.s;
+        apply();
+      }
+    };
+    document.getElementById("btn-step-prev").onclick = () => showStep(shown - 1);
+    document.getElementById("btn-step-next").onclick = () => showStep(shown + 1);
+    window.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowLeft") showStep(shown - 1);
+      else if (ev.key === "ArrowRight") showStep(shown + 1);
+      else if (ev.key === "Home") showStep(1);
+      else if (ev.key === "End") showStep(total);
+    });
+
+    // ---- tocar la pastilla de un empalme (o conector) lleva, con una animación, hasta su nodo
+    // dueño, que parpadea. Si hay copias de ese nodo, va al original. Un arrastre no cuenta.
+    let downAt = null;
+    // El elemento tocado se guarda al apoyar el dedo: el arrastre captura el puntero y el click
+    // posterior llega al lienzo, no a la pastilla.
+    stage.addEventListener("pointerdown", (ev) => (downAt = { x: ev.clientX, y: ev.clientY, target: ev.target }), true);
+    stage.addEventListener("click", (ev) => {
+      if (downAt && Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 6) return;
+      const t = downAt && downAt.target;
+      const pill = t && t.closest && t.closest("g.junction");
+      if (!pill || !shownLayout) return;
+      const j = shownLayout.nodes.find((n) => n.id === pill.dataset.id);
+      if (!j) return;
+      const owner = j.junctionOf;
+      const candidates = shownLayout.nodes.filter((n) => n.shape !== "junction" && (n.realId || n.id) === owner);
+      const target = candidates.find((n) => n.id === owner) || candidates.find((n) => !n.copyOf) || candidates[0];
+      if (target) flyTo(target);
+    });
+    let flight = 0;
+    const flyTo = (n) => {
+      const vb = shownSvg.viewBox.baseVal;
+      const r = stage.getBoundingClientRect();
+      const from = { tx: view.tx, ty: view.ty };
+      const to = { tx: r.width / 2 - (n.x - vb.x) * view.s, ty: r.height / 2 - (n.y - vb.y) * view.s };
+      const start = performance.now();
+      const id = ++flight;
+      const frame = (now) => {
+        if (id !== flight) return; // otro toque empezó otra animación
+        const t = Math.min(1, (now - start) / 450);
+        const k = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // suave al salir y al llegar
+        view.tx = from.tx + (to.tx - from.tx) * k;
+        view.ty = from.ty + (to.ty - from.ty) * k;
+        apply();
+        if (t < 1) requestAnimationFrame(frame);
+        else flash(n.id);
+      };
+      requestAnimationFrame(frame);
+    };
+    const flash = (id) => {
+      const el = shownSvg.querySelector(`g.node[data-id="${CSS.escape(id)}"]`);
+      if (!el) return;
+      el.classList.remove("flash");
+      void el.getBoundingClientRect(); // reinicia la animación si ya estaba
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 1300);
+    };
+
+    // Lo exportado sale como se ve (pastillas incluidas: los empalmes se refieren a los nodos por su
+    // id), con la sombra difuminada real dentro del SVG.
+    const exportSvg = () => renderSvg(result, THEME, { ids: true });
+    document.getElementById("btn-svg").onclick = () =>
+      result && download(new Blob([exportSvg()], { type: "image/svg+xml" }), `${title}.svg`);
+    document.getElementById("btn-png").onclick = () => result && exportPng(exportSvg(), size, title);
+
+    // En móvil "resize" salta cada vez que aparece o se oculta la barra del navegador:
+    // se conserva el punto que estaba en el centro en lugar de volver a ajustar.
+    let stageSize = stage.getBoundingClientRect();
+    window.addEventListener("resize", () => {
+      const r = stage.getBoundingClientRect();
+      view.tx += (r.width - stageSize.width) / 2;
+      view.ty += (r.height - stageSize.height) / 2;
+      stageSize = r;
+      apply();
+    });
+
+    // ---- montar (o volver a montar) el diagrama a partir de su código.
+    // Al volver a montar se conserva la vista (zoom y desplazamiento) sin re-ajustar; para que el
+    // dibujo no salte si el diagrama crece por arriba o por la izquierda, el primer nodo colocado
+    // se mantiene en el mismo punto de la pantalla (como en el paso a paso). Si se estaba en un
+    // paso intermedio se vuelve al diagrama completo: con otro código los pasos ya no son los
+    // mismos (cambian el orden y el número de nodos) y conservar el número confundiría.
+    let fitted = false;
+    const mount = (src) => {
+      source = src;
+      let next;
+      try {
+        const graph = parseDiagram(src);
+        next = layoutDiagram(graph, { measure: makeMeasure() });
+      } catch (err) {
+        result = null;
+        showError(err, src);
+        return;
+      }
+      hideError();
+      const nextOrder = [...next.nodes].sort((a, b) => a.step - b.step);
+      const nextAnchor = nextOrder[0] && nextOrder[0].id;
+      const before = shownSvg && shownSvg.isConnected ? localPos(shownLayout, shownSvg, nextAnchor) : null;
+
+      result = next;
+      generation++;
+      canvas.innerHTML = renderSvg(result, THEME, { shadow: false, ids: true });
+      svg = canvas.querySelector("svg");
+      size = { w: parseFloat(svg.getAttribute("width")), h: parseFloat(svg.getAttribute("height")) };
+      if (THEME.shadow) {
+        const gen = generation;
+        paintShadow(renderShadowSvg(result), size, canvas, () => gen === generation);
+      }
+      showWarnings(result.warnings);
+
+      order = nextOrder;
+      total = order.length;
+      anchorId = nextAnchor;
+      shownSvg = svg;
+      shownLayout = result;
+      const after = before && localPos(result, svg, anchorId);
+      if (after) {
+        view.tx += (before.x - after.x) * view.s;
+        view.ty += (before.y - after.y) * view.s;
+      }
+      showStep(total);
+      if (!fitted) fit();
+      else apply();
+      fitted = true;
+    };
+    mount(initialSource);
+    if (live) watchSource(live.version, mount);
+  }
+
+  // ---- recarga en vivo: se pregunta al servidor cada segundo si hay una versión nueva del código
+  // (GET /source?v=N responde 204 si sigue igual, o {version, source} si cambió). Es un sondeo
+  // corto y no SSE ni una petición larga porque es lo más robusto en móvil: si el navegador
+  // congela la pestaña en segundo plano o el servidor se reinicia, la siguiente petición sin más
+  // vuelve a funcionar. Con la pestaña oculta no se pregunta; al volver se pregunta enseguida.
+  function watchSource(version, onChange) {
+    const badge = document.getElementById("live");
+    const POLL_MS = 1000;
+    let timer = 0;
+    let busy = false;
+    const setOnline = (ok) => {
+      badge.hidden = false;
+      badge.classList.toggle("off", !ok);
+      badge.textContent = ok ? "● en vivo" : "○ sin conexión";
+      badge.title = ok
+        ? "Recarga en vivo: el diagrama se actualiza al guardar el .mmd"
+        : "No se puede contactar con diagram.py --watch; se sigue intentando";
+    };
+    const check = async () => {
+      clearTimeout(timer);
+      if (busy) return;
+      busy = true;
+      try {
+        const res = await fetch(`source?v=${version}`, { cache: "no-store" });
+        if (res.status === 200) {
+          const data = await res.json();
+          version = data.version;
+          onChange(data.source);
+        } else if (res.status !== 204) throw new Error(`HTTP ${res.status}`);
+        setOnline(true);
+      } catch (err) {
+        setOnline(false);
+      } finally {
+        busy = false;
+        if (!document.hidden) timer = setTimeout(check, POLL_MS);
+      }
+    };
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) check();
+      else clearTimeout(timer);
+    });
+    setOnline(true);
+    check();
+  }
+
+  // Pinta la sombra una sola vez en un <canvas> debajo del SVG (ver renderShadowSvg en render.js).
+  // Resolución: hasta 3 px por unidad, limitada a ~6 Mpx para no gastar memoria en diagramas grandes.
+  // isCurrent: si ya se montó otro diagrama cuando la imagen termina de cargar, no se añade.
+  function paintShadow(shadowSvg, size, parent, isCurrent = () => true) {
+    const k = Math.min(3, Math.sqrt(6e6 / (size.w * size.h)));
+    const c = document.createElement("canvas");
+    c.className = "shadow";
+    c.width = Math.ceil(size.w * k);
+    c.height = Math.ceil(size.h * k);
+    c.style.width = `${size.w}px`;
+    c.style.height = `${size.h}px`;
+    const url = URL.createObjectURL(new Blob([shadowSvg], { type: "image/svg+xml" }));
+    const img = new Image();
+    img.onload = () => {
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      if (isCurrent()) parent.prepend(c);
+    };
+    img.src = url;
+  }
+
+  // Abre el mismo código en una pestaña nueva dibujado con Mermaid oficial (librería desde
+  // jsDelivr; hace falta internet), para comparar. Ahí funciona el zoom normal del navegador.
+  function openInMermaid(source, title) {
+    const esc = (t) => t.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+    const page = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)} · Mermaid</title>
+<style>
+  body { margin: 0; padding: 16px; background: #f4f5f7; color: #1f2328; font: 14px system-ui, sans-serif; }
+  .mermaid svg { max-width: none !important; height: auto; }
+  #msg { color: #656d76; }
+</style></head><body>
+<p id="msg">Mermaid oficial · cargando…</p>
+<pre class="mermaid">${esc(source)}</pre>
+<script type="module">
+  const msg = document.getElementById("msg");
+  try {
+    const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+    await mermaid.run();
+    msg.textContent = "Mermaid oficial";
+  } catch (err) {
+    msg.textContent = "No se pudo cargar o dibujar con Mermaid (¿sin internet?): " + err.message;
+  }
+<\/script></body></html>`; // <\/script: si no, cerraría el <script> del HTML generado
+    const url = URL.createObjectURL(new Blob([page], { type: "text/html" }));
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // Mide texto con la fuente con la que se va a pintar (la del nodo si su estilo la cambia).
+  function makeMeasure() {
+    const ctx = document.createElement("canvas").getContext("2d");
+    const base = `${LAYOUT_DEFAULTS.fontSize}px ${LAYOUT_DEFAULTS.fontFamily}`;
+    return (text, font) => {
+      ctx.font = base; // si la fuente del nodo no es válida, el canvas la ignora: que no herede la anterior
+      if (font) ctx.font = `${font.style} ${font.weight} ${font.size}px ${font.family}`;
+      return ctx.measureText(text).width;
+    };
+  }
+
+  function exportPng(svgText, size, title, scale = 2) {
+    const url = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = Math.ceil(size.w * scale);
+      c.height = Math.ceil(size.h * scale);
+      const ctx = c.getContext("2d");
+      // El SVG no tiene fondo; en el PNG se pinta blanco para que se lea en cualquier visor
+      // (muchas galerías muestran lo transparente en negro).
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0, size.w, size.h);
+      URL.revokeObjectURL(url);
+      c.toBlob((blob) => download(blob, `${title}.png`), "image/png");
+    };
+    img.src = url;
+  }
+
+  function download(blob, filename) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function showError(err, source) {
+    const panel = document.getElementById("error");
+    panel.hidden = false;
+    panel.querySelector(".message").textContent = err.message;
+    const pre = panel.querySelector(".source");
+    pre.textContent = ""; // con recarga en vivo el panel puede mostrarse varias veces
+    source.split(/\r?\n/).forEach((text, i) => {
+      const row = document.createElement("div");
+      row.className = i + 1 === err.line ? "line bad" : "line";
+      row.dataset.n = i + 1;
+      row.textContent = text || " ";
+      pre.appendChild(row);
+    });
+    pre.querySelector(".bad")?.scrollIntoView({ block: "center" });
+    if (!(err instanceof DiagramError)) console.error(err);
+  }
+
+  function hideError() {
+    document.getElementById("error").hidden = true;
+  }
+
+  function showWarnings(warnings) {
+    const box = document.getElementById("warnings");
+    box.hidden = !warnings.length;
+    if (!warnings.length) return;
+    box.textContent = warnings.map((w) => (w.line ? `Línea ${w.line}: ${w.message}` : w.message)).join("\n");
+  }
+
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  return { start };
+})();
+
+</script>
+<script>
+  DiagramViewer.start({
+    source: JSON.parse(document.getElementById("diagram-source").textContent),
+    title: "m7",
+    live: null,
+  });
+</script>
+</body>
+</html>
