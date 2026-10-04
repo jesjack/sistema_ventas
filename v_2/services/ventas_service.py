@@ -22,8 +22,8 @@ class VentasService(ServicioBD):
         with self._connect() as con:
             cur = con.cursor()
             cur.execute(
-                "INSERT INTO ventas (fecha, hora, total, recibido, cambio) VALUES (?,?,?,?,?)",
-                (fecha, hora, float(total), float(recibido), float(cambio)),
+                "INSERT INTO ventas (fecha, hora, total, recibido, cambio, sesion_id) VALUES (?,?,?,?,?,?)",
+                (fecha, hora, float(total), float(recibido), float(cambio), self.sesion_id),
             )
             venta_id = cur.lastrowid
 
@@ -45,8 +45,8 @@ class VentasService(ServicioBD):
         with self._connect() as con:
             cur = con.cursor()
             cur.execute(
-                "INSERT INTO eventos_especiales (fecha, hora, evento, detalle) VALUES (?,?,?,?)",
-                (fecha, hora, str(evento), None if detalle is None else str(detalle)),
+                "INSERT INTO eventos_especiales (fecha, hora, evento, detalle, sesion_id) VALUES (?,?,?,?,?)",
+                (fecha, hora, str(evento), None if detalle is None else str(detalle), self.sesion_id),
             )
             event_id = cur.lastrowid
             con.commit()

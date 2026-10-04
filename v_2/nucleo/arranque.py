@@ -192,16 +192,7 @@ def _registrar_usuario(usuarios, context):
 
 
 def _modo_normal(base_dir, context, desktop, documento, hoja, sheet_admin, controlador):
-    ventas_service = VentasService()
     usuarios = UsuariosService()
-    catalogo = CatalogoService()
-    codigos_barras = CodigosBarrasService()
-    table_manager = TableManager(
-        ventas_service,
-        cobro_provider=lambda total: solicitar_monto_cliente(total, context),
-        imprimir_ticket=imprimir_ticket_venta,
-    )
-
     usuario_id, usuario_es_nuevo = _registrar_usuario(usuarios, context)
 
     seguimiento_sesion = None
@@ -212,6 +203,19 @@ def _modo_normal(base_dir, context, desktop, documento, hoja, sheet_admin, contr
             print(f"No se pudo iniciar el seguimiento de usuario: {exc}")
         else:
             atexit.register(seguimiento_sesion.cerrar)
+
+    # Los servicios que registran algo se crean despues de abrir la sesion para firmar
+    # cada venta, apertura, producto, codigo e impresion con ella. Sin sesion se registra
+    # igual, solo que sin autor (sesion_id NULL).
+    sesion_id = None if seguimiento_sesion is None else seguimiento_sesion.sesion_id
+    ventas_service = VentasService(sesion_id=sesion_id)
+    catalogo = CatalogoService(sesion_id=sesion_id)
+    codigos_barras = CodigosBarrasService(sesion_id=sesion_id)
+    table_manager = TableManager(
+        ventas_service,
+        cobro_provider=lambda total: solicitar_monto_cliente(total, context),
+        imprimir_ticket=imprimir_ticket_venta,
+    )
 
     # Es una consulta sqlite local barata.
     ruta_ods = base_dir / "share" / "main.ods"

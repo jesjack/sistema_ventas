@@ -104,6 +104,78 @@ class TestCodigosBarras(BaseConDb):
             self.codigos.registrar_codigo_barras(" ", self.mayon, 5)
 
 
+class TestAutoria(BaseConDb):
+    """Cada registro del POS queda firmado con la sesión que lo hizo (y, por ella, con el usuario)."""
+
+    def _sesion(self):
+        usuarios = UsuariosService(self.db)
+        usuario_id, _ = usuarios.asegurar_usuario_sistema(
+            {"nombre_usuario": "ana", "sistema_operativo": "Linux", "nombre_equipo": "pc", "dominio": ""}
+        )
+        return usuarios.iniciar_sesion_sistema(usuario_id, pid=1)
+
+    def _fila(self, consulta):
+        with sqlite3.connect(self.db) as con:
+            return con.execute(consulta).fetchone()
+
+    def test_ventas_eventos_catalogo_codigos_e_impresiones_llevan_la_sesion(self):
+        sesion = self._sesion()
+        ventas = VentasService(self.db, sesion_id=sesion)
+        catalogo = CatalogoService(self.db, sesion_id=sesion)
+        codigos = CodigosBarrasService(self.db, sesion_id=sesion)
+
+        ventas.registrar_venta([("blusa", 50.0, 1, 50.0)], recibido=50, cambio=0)
+        ventas.registrar_evento_especial("APERTURA DE CAJA")
+        blusa = catalogo.agregar_producto_autocompletado("blusa")
+        codigos.registrar_codigo_barras("blu", blusa, 50)
+        codigos.registrar_impresion("blu", 3, horizontal=True, codificador="code128")
+
+        for tabla in ("ventas", "eventos_especiales", "catalogo_autocompletado", "codigos_barras_registrados"):
+            self.assertEqual(self._fila(f"SELECT sesion_id FROM {tabla}"), (sesion,), tabla)
+        self.assertEqual(
+            self._fila("SELECT codigo_barras, copias, horizontal, codificador, sesion_id FROM impresiones_codigos_barras"),
+            ("blu", 3, 1, "code128", sesion),
+        )
+
+    def test_editar_producto_guarda_quien_y_cuando(self):
+        catalogo = CatalogoService(self.db)
+        blusa = catalogo.agregar_producto_autocompletado("blusa basica")
+        self.assertEqual(self._fila("SELECT actualizado_en, actualizado_sesion_id FROM catalogo_autocompletado"), (None, None))
+
+        sesion = self._sesion()
+        with mock.patch("services.catalogo_service.ahora_local", return_value="2026-10-03 18:00:00"):
+            CatalogoService(self.db, sesion_id=sesion).editar_producto_autocompletado(blusa, "blusa básica")
+
+        self.assertEqual(
+            self._fila("SELECT actualizado_en, actualizado_sesion_id FROM catalogo_autocompletado"),
+            ("2026-10-03 18:00:00", sesion),
+        )
+
+    def test_creado_en_se_escribe_en_hora_local(self):
+        with mock.patch("services.catalogo_service.ahora_local", return_value="2026-10-01 19:01:51"):
+            blusa = CatalogoService(self.db).agregar_producto_autocompletado("blusa")
+        with mock.patch("services.codigos_barras_service.ahora_local", return_value="2026-10-01 19:02:13"):
+            CodigosBarrasService(self.db).registrar_codigo_barras("blu", blusa, 50)
+
+        self.assertEqual(self._fila("SELECT creado_en FROM catalogo_autocompletado"), ("2026-10-01 19:01:51",))
+        self.assertEqual(self._fila("SELECT creado_en FROM codigos_barras_registrados"), ("2026-10-01 19:02:13",))
+
+    def test_migracion_pasa_creado_en_viejo_a_hora_local_una_sola_vez(self):
+        # Base con el esquema de antes: creado_en en UTC (CURRENT_TIMESTAMP) y sin sesion_id.
+        with sqlite3.connect(self.db) as con:
+            con.execute(
+                "CREATE TABLE catalogo_autocompletado (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " producto TEXT NOT NULL UNIQUE COLLATE NOCASE, creado_en TEXT DEFAULT CURRENT_TIMESTAMP)"
+            )
+            con.execute("INSERT INTO catalogo_autocompletado (producto, creado_en) VALUES ('blusa', '2026-10-02 01:01:51')")
+
+        esperado = self._fila("SELECT datetime('2026-10-02 01:01:51', 'localtime')")
+        VentasService(self.db)
+        VentasService(self.db)  # el esquema se asegura cada vez; la conversión no debe repetirse
+
+        self.assertEqual(self._fila("SELECT creado_en, sesion_id FROM catalogo_autocompletado"), esperado + (None,))
+
+
 class TestUsuariosYBotones(BaseConDb):
     def test_usuario_nuevo_y_sesion(self):
         usuarios = UsuariosService(self.db)

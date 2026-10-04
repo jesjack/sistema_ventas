@@ -5,7 +5,7 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 
-from services.servicio_bd import ServicioBD
+from services.servicio_bd import ServicioBD, ahora_local
 
 
 @dataclass(frozen=True)
@@ -103,10 +103,39 @@ class CodigosBarrasService(ServicioBD):
         with self._connect() as con:
             cur = con.cursor()
             cur.execute(
-                "INSERT INTO codigos_barras_registrados (codigo_barras, producto_id, precio_venta) VALUES (?,?,?)",
-                (codigo, int(producto_id), float(precio_venta)),
+                """
+                INSERT INTO codigos_barras_registrados (codigo_barras, producto_id, precio_venta, creado_en, sesion_id)
+                VALUES (?,?,?,?,?)
+                """,
+                (codigo, int(producto_id), float(precio_venta), ahora_local(), self.sesion_id),
             )
             codigo_id = cur.lastrowid
             con.commit()
 
         return codigo_id
+
+    def registrar_impresion(self, codigo_barras, copias, horizontal=False, codificador=None):
+        """Deja constancia de que se mandó a imprimir una etiqueta (esté o no registrado el código)."""
+        fecha, hora = ahora_local().split(" ")
+        with self._connect() as con:
+            cur = con.cursor()
+            cur.execute(
+                """
+                INSERT INTO impresiones_codigos_barras
+                    (fecha, hora, codigo_barras, copias, horizontal, codificador, sesion_id)
+                VALUES (?,?,?,?,?,?,?)
+                """,
+                (
+                    fecha,
+                    hora,
+                    str(codigo_barras).strip(),
+                    int(copias),
+                    1 if horizontal else 0,
+                    None if codificador is None else str(codificador),
+                    self.sesion_id,
+                ),
+            )
+            impresion_id = cur.lastrowid
+            con.commit()
+
+        return impresion_id

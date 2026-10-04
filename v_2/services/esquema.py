@@ -127,7 +127,47 @@ def asegurar_esquema(db_path=None):
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS impresiones_codigos_barras (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha         TEXT NOT NULL,
+                hora          TEXT NOT NULL,
+                codigo_barras TEXT NOT NULL,
+                copias        INTEGER NOT NULL,
+                horizontal    INTEGER NOT NULL DEFAULT 0,
+                codificador   TEXT,
+                sesion_id     INTEGER REFERENCES sesiones_sistema(id)
+            )
+            """
+        )
+        _asegurar_autoria(cur)
         con.commit()
+
+
+def _asegurar_autoria(cur):
+    # Quién hizo cada cosa queda explícito: la sesión del POS (y por ella el usuario y el
+    # equipo) se guarda en cada fila. Antes se deducía cruzando la hora con
+    # sesiones_sistema, y eso falla con sesiones encimadas o un POS abierto toda la noche.
+    # Las filas viejas se quedan con sesion_id NULL: no se les inventa autor.
+    for tabla in ("ventas", "eventos_especiales"):
+        if not tabla_tiene_columnas(cur, tabla, {"sesion_id"}):
+            cur.execute(f"ALTER TABLE {tabla} ADD COLUMN sesion_id INTEGER REFERENCES sesiones_sistema(id)")
+
+    for tabla in ("catalogo_autocompletado", "codigos_barras_registrados"):
+        if not tabla_tiene_columnas(cur, tabla, {"sesion_id"}):
+            cur.execute(f"ALTER TABLE {tabla} ADD COLUMN sesion_id INTEGER REFERENCES sesiones_sistema(id)")
+            # creado_en se llenaba con el CURRENT_TIMESTAMP de SQLite, que es UTC, mientras que
+            # el resto de la base usa hora local; desde ahora los servicios la escriben en hora
+            # local, y las filas viejas se convierten una sola vez, aquí (solo corre la vez
+            # que se agrega sesion_id).
+            cur.execute(f"UPDATE {tabla} SET creado_en = datetime(creado_en, 'localtime') WHERE creado_en IS NOT NULL")
+
+    if not tabla_tiene_columnas(cur, "catalogo_autocompletado", {"actualizado_en"}):
+        cur.execute("ALTER TABLE catalogo_autocompletado ADD COLUMN actualizado_en TEXT")
+        cur.execute(
+            "ALTER TABLE catalogo_autocompletado ADD COLUMN actualizado_sesion_id INTEGER REFERENCES sesiones_sistema(id)"
+        )
 
 
 def _migrar_autorizaciones_codigos(cur):

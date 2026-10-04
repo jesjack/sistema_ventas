@@ -6,7 +6,7 @@ import re
 import sqlite3
 import unicodedata
 
-from services.servicio_bd import ServicioBD
+from services.servicio_bd import ServicioBD, ahora_local
 
 
 PREPOSICIONES_CATALOGO = {
@@ -135,8 +135,8 @@ class CatalogoService(ServicioBD):
             with self._connect() as con:
                 cur = con.cursor()
                 cur.execute(
-                    "INSERT INTO catalogo_autocompletado (producto) VALUES (?)",
-                    (nombre,),
+                    "INSERT INTO catalogo_autocompletado (producto, creado_en, sesion_id) VALUES (?, ?, ?)",
+                    (nombre, ahora_local(), self.sesion_id),
                 )
                 producto_id = cur.lastrowid
                 con.commit()
@@ -154,8 +154,12 @@ class CatalogoService(ServicioBD):
             with self._connect() as con:
                 cur = con.cursor()
                 cur.execute(
-                    "UPDATE catalogo_autocompletado SET producto = ? WHERE id = ?",
-                    (nombre, int(producto_id)),
+                    """
+                    UPDATE catalogo_autocompletado
+                    SET producto = ?, actualizado_en = ?, actualizado_sesion_id = ?
+                    WHERE id = ?
+                    """,
+                    (nombre, ahora_local(), self.sesion_id, int(producto_id)),
                 )
                 cambios = cur.rowcount
                 con.commit()

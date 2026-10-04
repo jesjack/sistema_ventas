@@ -25,3 +25,10 @@ def ejecutar(ctx):
         print(f"Codigo de barras enviado a impresion: {codigo} ({copias} copias, {codificador})")
     except Exception as exc:
         print(f"No se pudo imprimir el codigo de barras: {exc}")
+        return
+
+    # Aparte del try de arriba: si la base falla, la etiqueta ya salió y no hay que decir lo contrario.
+    try:
+        ctx.codigos_barras.registrar_impresion(codigo, copias, horizontal=horizontal, codificador=codificador)
+    except Exception as exc:
+        print(f"No se pudo registrar la impresion del codigo de barras: {exc}")
