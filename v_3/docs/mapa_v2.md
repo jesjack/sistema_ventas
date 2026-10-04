@@ -393,3 +393,52 @@ soffice si UNO no arranca en 30 s). La lista completa de 68 pines está en ese a
     los errores van al log y admin_botones solo ofrece las válidas. Una prueba verifica que
     cada botón de la base apunte a una acción existente.
 
+## 5. Pendientes abiertos (2026-10-03)
+
+Lo que queda sin decidir o sin medir después de cerrar D1–D20. Los diagramas de
+`diagramas/` lo marcan como supuesto o nota donde aplica.
+
+**Por decidir**
+
+1. **¿Quién es "el administrador" en la V3?** En la V2 es una constante en el código
+   (`ADMIN_RAIZ = "jesjack"` en `nucleo/config.py`). La V3 lo necesita para el menú de
+   administración (`flujo_01h`), para configurar el código de caja (`flujo_01p`) y para el aviso
+   de `flujo_01a`. Propuesta: una marca de administrador en la tabla de usuarios de `ventas.db`,
+   que `sistema-ventas instalar` asigna a quien instala y que se cambia desde el menú, en vez de
+   un nombre escrito en el código.
+2. **camera_viewer abierto desde una ejecución anterior.** Como sobrevive al cierre del POS (D11),
+   la App nueva no es su padre. Falta definir cómo sabe si ya está abierto, cómo le pide saltar a
+   una fecha y hora (`abrir_en_fecha_hora`) y qué significa `camaras_salio`. **Se define con la
+   instancia de cámaras.** El log ya está resuelto (D20: `log_actual`).
+3. **Caja con código sin administrador presente.** Si al arrancar no hay código configurado y el
+   usuario no es el administrador, solo se avisa y la caja con código queda bloqueada. Solo
+   debería pasar si se borró la configuración, porque `instalar` ya pide el código.
+
+**Por medir o probar (con el prototipo)**
+
+4. **D6. Foco:** que el diálogo de cobro Qt, abierto desde un Enter, aparezca al frente con el
+   teclado activo, y que el foco vuelva a Calc y a B4 al cerrarlo.
+5. **D13. Macros sin avisos:** que el perfil propio de LibreOffice con la carpeta de `main.ods`
+   como ubicación de confianza deje correr las macros sin preguntar.
+6. **D20. Versión mínima de LibreOffice:** probar versiones viejas descargadas del archivo
+   oficial, extraídas aparte con perfil propio (UNO, teclado de D1, pintar tablas, macros).
+7. **D1 en Windows y con el POS cargado:** repetir la medición del teclado con
+   `pruebas/d1_teclado/escucha_teclado.py`.
+8. **Instalador de uv en Linux:** el script oficial lo deja en la carpeta personal del
+   administrador. Debería bastar, porque los usuarios usan `sistema-ventas` desde
+   `UV_TOOL_BIN_DIR`; hay que confirmarlo al instalar.
+
+**Supuestos de los diagramas que siguen en pie**
+
+9. Enter se consume en UNO (a diferencia del Tab, D14).
+10. Se conserva "¿venta en curso?" además del descarte de Enter de D17.
+11. El ticket abre el cajón como en la V2 (`print_sale`); el cobro sin ticket lo abre con una
+    tarea propia y sin evento APERTURA DE CAJA.
+
+**Fuera de la V3, pero detectado aquí**
+
+12. El código de apertura de caja de la V2 (`7410`, en `nucleo/config.py`) es público en el
+    repositorio de GitHub. Conviene cambiarlo en la V2.
+13. Lector de códigos con distribución de teclado de EE. UU.: `SN:GLH…` llega como `SNÑGLH…`
+    (D1). Se corrige configurando el lector en español o traduciendo esos caracteres.
+
