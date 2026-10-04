@@ -1,0 +1,43 @@
+%% placa
+%% Placa de la V3: solo los bloques y los cables entre pines (no es un flujo). El almacenamiento no aparece: son cilindros.
+flowchart LR
+    USR["Usuario: pantalla, teclado,<br/>escáner y ratón"]:::ext
+    SO["Sistema operativo (menú)"]:::ext
+    APP["App"]:::app
+    SOF["soffice + Basic"]:::sof
+    UNOB["UNO"]:::uno
+    CAM["camera_viewer"]:::cam
+    IMP["Impresora de tickets y cajón"]:::ext
+    ETQ["Impresora de etiquetas"]:::ext
+    DVR["DVR"]:::ext
+
+    SO -- "inicio" --> APP
+    APP -- "ventana_qt" --> USR
+    USR -- "respuesta_usuario" --> APP
+    APP -- "imprimir_ticket, abrir_cajon" --> IMP
+    IMP -- "ticket_resultado, cajon_resultado" --> APP
+    APP -- "imprimir_etiqueta" --> ETQ
+    ETQ -- "etiqueta_resultado" --> APP
+    APP -- "arrancar_soffice, terminar_soffice" --> SOF
+    SOF -- "soffice_salio, log_soffice" --> APP
+    APP -- "arrancar_uno" --> UNOB
+    APP -- "configurar, pintar, escribir_producto,<br/>publicar_botones, enfocar_calc,<br/>cerrar_libreoffice" --> UNOB
+    UNOB -- "uno_listo, enter_pulsado,<br/>tab_pulsado, boton_pulsado,<br/>documento_cerrado" --> APP
+    UNOB -- "uno_salio, log_uno" --> APP
+    UNOB -- "urp_conectar, api_hoja,<br/>tecla_respuesta, invocar_macro" --> SOF
+    SOF -- "urp_listo, api_respuesta,<br/>tecla, documento_murio" --> UNOB
+    USR -- "teclado_raton" --> SOF
+    SOF -- "pantalla_hoja" --> USR
+    APP -- "arrancar_camaras, abrir_en_fecha_hora" --> CAM
+    CAM -- "camaras_salio" --> APP
+    CAM -- "ventana_camaras" --> USR
+    USR -- "respuesta_camaras" --> CAM
+    CAM -- "dvr_camaras_pedir" --> DVR
+    DVR -- "dvr_camaras_datos" --> CAM
+
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

@@ -1,0 +1,32 @@
+%% chip: App
+%% 6. Primer arranque de cada usuario (resumen de flujo_01a y flujo_01b): candado, perfil propio y main.ods.
+flowchart TD
+    iInicio(("IN inicio<br/>← Usuario (menú)")):::ext
+    K1[("Candado del usuario:<br/>lo crea y lo toma (D8)")]
+    D1{"¿Lo obtuvo?"}
+    T9(["Sigue como en flujo_01a<br/>(aviso: ya está abierto)"])
+    P0{"¿Existe el perfil propio de<br/>LibreOffice del usuario?"}
+    P1["Arma el perfil: la carpeta de main.ods<br/>como ubicación de confianza (D13, hay que probarlo)"]
+    PF[("Perfil de LibreOffice<br/>del usuario: lo crea")]
+    B1["Copia la plantilla de main.ods (D7)"]
+    M0[("main.ods del usuario:<br/>escribe la copia")]
+    T1(["Sigue el arranque normal<br/>(flujo_01a y flujo_01b)"])
+
+    iInicio --> K1
+    K1 --> D1
+    D1 -- "No" --> T9
+    D1 -- "Sí" --> P0
+    P0 -- "No" --> P1
+    P1 --> PF
+    PF --> B1
+    P0 -- "Sí" --> B1
+    B1 --> M0
+    M0 --> T1
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef per fill:#e0f2fe,stroke:#0369a1,color:#082f49,stroke-width:2px
+    classDef ges fill:#e7e5e4,stroke:#57534e,color:#1c1917,stroke-width:2px
+    classDef uv fill:#fce7f3,stroke:#be185d,color:#500724,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

@@ -1,0 +1,41 @@
+%% chip: App
+%% 1b. Abrir LibreOffice: perfil propio (D13), copia de main.ods (D7), prebake (D4) y arranque de soffice.
+flowchart TD
+    T0(["Abrir LibreOffice"])
+    P0{"¿Existe el perfil propio de<br/>LibreOffice del usuario?"}
+    P1["Arma el perfil: la carpeta de main.ods como<br/>ubicación de confianza (D13, hay que probarlo)"]
+    PF[("Perfil de LibreOffice<br/>del usuario: lo crea")]
+    B1["Copia la plantilla de main.ods,<br/>con su Module1 (D7, D13)"]
+    M0[("main.ods del usuario:<br/>escribe la copia")]
+    DB1[("ventas.db:<br/>lee las filas del modo")]
+    B2["Hornea las tablas del modo<br/>con odfpy (D4)"]
+    M1[("main.ods del usuario:<br/>guarda lo horneado")]
+    B3["Arma los argumentos: perfil propio, pipe<br/>del usuario, --norestore y ruta de main.ods"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oSof(("OUT arrancar_soffice<br/>→ soffice")):::sof
+    S1[["Conectar UNO (1c)"]]
+    T1(["Regresa"])
+
+    T0 --> P0
+    P0 -- "No" --> P1
+    P1 --> PF
+    PF --> B1
+    P0 -- "Sí" --> B1
+    B1 --> M0
+    M0 --> DB1
+    DB1 --> B2
+    B2 --> M1
+    M1 --> B3
+    B3 --> PAR1
+    PAR1 --> oSof
+    PAR1 --> S1
+    S1 --> T1
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

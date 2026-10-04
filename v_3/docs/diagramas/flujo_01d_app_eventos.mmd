@@ -1,0 +1,77 @@
+%% chip: App
+%% 1d. Eventos mientras App está abierta: cada camino empieza en un IN o en un temporizador.
+flowchart TD
+    TW(["Espera el siguiente evento"])
+    iEnter(("IN enter_pulsado<br/>← UNO")):::uno
+    S1[["Atender Enter (1e)"]]
+    iTab(("IN tab_pulsado<br/>← UNO")):::uno
+    D1{"¿B4 está vacía? (D14)"}
+    DB1[("ventas.db: busca el<br/>texto en el catálogo")]
+    D2{"¿Hay coincidencias?"}
+    E2["Arma el selector Qt<br/>con las coincidencias"]
+    oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR1(("IN respuesta_usuario<br/>← Usuario<br/>(selector de Tab)")):::ext
+    D3{"¿Eligió un producto?"}
+    E3["Arma el producto para B4 y el foco<br/>sin mover el cursor (queda en PRECIO)"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oEsc(("OUT escribir_producto<br/>→ UNO")):::uno
+    oEnf1(("OUT enfocar_calc<br/>→ UNO")):::uno
+    E4["Arma el foco sin mover el cursor"]
+    oEnf2(("OUT enfocar_calc<br/>→ UNO")):::uno
+    iBoton(("IN boton_pulsado<br/>← UNO")):::uno
+    S2[["Atender botón (1g)"]]
+    Tturno(["Cada ~3 s (D8, D20)"])
+    S5[["Comprobar turno (1l)"]]
+    iDoc(("IN documento_cerrado<br/>← UNO")):::uno
+    E6["Anota el motivo:<br/>cierre normal o caída"]
+    iUnoSalio(("IN uno_salio<br/>← UNO<br/>(con el sistema andando)")):::uno
+    D4{"¿soffice sigue vivo?"}
+    S3[["Conectar UNO (1c)"]]
+    iSofSalio(("IN soffice_salio<br/>← soffice")):::sof
+    S4[["Tras salir soffice (1j)"]]
+    iCamS(("IN camaras_salio<br/>← camera_viewer")):::cam
+    E9["Registra la salida de camera_viewer"]
+    Tsen(["Llega la señal de un hilo de trabajo (D18)"])
+    S6[["Resultado de un hilo de trabajo (1n)"]]
+
+    iEnter --> S1
+    S1 --> TW
+    iTab --> D1
+    D1 -- "Sí" --> TW
+    D1 -- "No" --> DB1
+    DB1 --> D2
+    D2 -- "No" --> TW
+    D2 -- "Sí" --> E2
+    E2 --> oQt1
+    iR1 --> D3
+    D3 -- "Sí" --> E3
+    E3 --> PAR1
+    PAR1 --> oEsc
+    PAR1 --> oEnf1
+    D3 -- "No" --> E4
+    E4 --> oEnf2
+    iBoton --> S2
+    S2 --> TW
+    Tturno --> S5
+    S5 --> TW
+    iDoc --> E6
+    E6 --> TW
+    iUnoSalio --> D4
+    D4 -- "Sí: relanza solo UNO" --> S3
+    S3 --> TW
+    D4 -- "No" --> TW
+    iSofSalio --> S4
+    S4 --> TW
+    iCamS --> E9
+    E9 --> TW
+    Tsen --> S6
+    S6 --> TW
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

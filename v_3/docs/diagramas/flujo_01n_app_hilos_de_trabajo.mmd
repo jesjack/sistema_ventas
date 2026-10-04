@@ -1,0 +1,87 @@
+%% chip: App
+%% 1n. Hilos de trabajo con tiempo máximo (D18) y, en el hilo principal, qué se hace con su señal.
+flowchart TD
+    T0(["Hilo de trabajo"])
+    W1{"¿Qué tarea?"}
+    W2["Arma el ticket con la<br/>apertura del cajón"]
+    oTicket(("OUT imprimir_ticket<br/>→ impresora de tickets")):::ext
+    W3["Arma la etiqueta"]
+    oEtq(("OUT imprimir_etiqueta<br/>→ impresora de etiquetas")):::ext
+    W4["Arma la apertura del cajón"]
+    oCajon(("OUT abrir_cajon<br/>→ impresora de tickets")):::ext
+    iTicket(("IN ticket_resultado<br/>← impresora de tickets")):::ext
+    W5["Emite la señal: resultado del ticket"]
+    iEtq(("IN etiqueta_resultado<br/>← impresora de etiquetas")):::ext
+    W6["Emite la señal: resultado de la etiqueta"]
+    iCajon(("IN cajon_resultado<br/>← impresora de tickets")):::ext
+    W7["Emite la señal: resultado del cajón"]
+    Tlim(["Pasa el tiempo máximo sin respuesta"])
+    W8["Emite la señal: tiempo agotado"]
+    TF(["Fin del hilo de trabajo"])
+
+    R0(["Resultado de un hilo de trabajo<br/>(en el hilo principal)"])
+    X1{"¿De qué tarea?"}
+    X2{"¿Se imprimió?"}
+    X3["Registra el fallo de impresión"]
+    TE(["Regresa"])
+    X4["Arma el aviso con el resultado"]
+    oQt(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR(("IN respuesta_usuario<br/>← Usuario<br/>(aviso de etiqueta)")):::ext
+    X5["Vuelve a Calc"]
+    oEnf(("OUT enfocar_calc<br/>→ UNO")):::uno
+    X6{"¿Se abrió?"}
+    X7["Evento: APERTURA DE CAJA"]
+    X8["Evento: FALLO AL ABRIR CAJA"]
+    X9["Arma el registro del evento"]
+    DB1[("ventas.db:<br/>registra el evento")]
+    X10["Arma la fila del evento"]
+    oPin(("OUT pintar<br/>→ UNO")):::uno
+    X11{"¿Se abrió?"}
+    X12["Registra el fallo del cajón<br/>(la venta ya quedó registrada)"]
+
+    T0 --> W1
+    W1 -- "ticket" --> W2
+    W2 --> oTicket
+    W1 -- "etiqueta" --> W3
+    W3 --> oEtq
+    W1 -- "cajón" --> W4
+    W4 --> oCajon
+    iTicket --> W5
+    W5 --> TF
+    iEtq --> W6
+    W6 --> TF
+    iCajon --> W7
+    W7 --> TF
+    Tlim --> W8
+    W8 --> TF
+
+    R0 --> X1
+    X1 -- "ticket" --> X2
+    X2 -- "Sí" --> TE
+    X2 -- "No o tiempo agotado" --> X3
+    X3 --> TE
+    X1 -- "etiqueta" --> X4
+    X4 --> oQt
+    iR --> X5
+    X5 --> oEnf
+    X1 -- "cajón con evento" --> X6
+    X6 -- "Sí" --> X7
+    X6 -- "No o tiempo agotado" --> X8
+    X7 --> X9
+    X8 --> X9
+    X9 --> DB1
+    DB1 --> X10
+    X10 --> oPin
+    X1 -- "cajón sin evento (venta sin ticket)" --> X11
+    X11 -- "Sí" --> TE
+    X11 -- "No o tiempo agotado" --> X12
+    X12 --> TE
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

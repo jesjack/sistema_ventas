@@ -1,0 +1,38 @@
+%% chip: App
+%% 1p. Configurar el código de apertura de caja (D20): solo el administrador; se guarda como hash en ventas.db.
+flowchart TD
+    T0(["Configurar código de caja"])
+    C1["Arma el diálogo: código nuevo<br/>y su confirmación"]
+    oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR1(("IN respuesta_usuario<br/>← Usuario<br/>(código nuevo)")):::ext
+    D1{"¿Canceló?"}
+    D2{"¿No está vacío y los<br/>dos campos coinciden?"}
+    C2["Arma el aviso: los códigos<br/>no coinciden o están vacíos"]
+    oQt2(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR2(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: código inválido)")):::ext
+    S1[["Comprobar turno (1l)"]]
+    C3["Calcula el hash del código<br/>(hashlib, nunca en texto plano)"]
+    DB1[("ventas.db: guarda el hash<br/>en la configuración")]
+    T1(["Regresa"])
+
+    T0 --> C1
+    C1 --> oQt1
+    iR1 --> D1
+    D1 -- "Sí" --> T1
+    D1 -- "No" --> D2
+    D2 -- "No" --> C2
+    C2 --> oQt2
+    iR2 --> C1
+    D2 -- "Sí" --> S1
+    S1 --> C3
+    C3 --> DB1
+    DB1 --> T1
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

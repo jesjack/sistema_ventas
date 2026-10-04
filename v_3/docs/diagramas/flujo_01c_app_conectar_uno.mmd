@@ -1,0 +1,51 @@
+%% chip: App
+%% 1c. Conectar UNO: canal multiprocessing.connection (D18), configuración (D14), botones y modo.
+flowchart TD
+    T0(["Conectar UNO"])
+    C0["intentos de UNO = 0"]
+    C1["Abre el canal con clave (multiprocessing.connection);<br/>arma los argumentos de UNO (D18)"]
+    oUno(("OUT arrancar_uno<br/>→ UNO")):::uno
+    iListo(("IN uno_listo<br/>← UNO")):::uno
+    C2["Arma la configuración:<br/>consumir_tab (D14)"]
+    PAR0["═══ en paralelo ═══"]:::par
+    oConf(("OUT configurar<br/>→ UNO")):::uno
+    DB1[("ventas.db: lee los botones<br/>visibles del usuario")]
+    C3["Arma la lista de botones<br/>y el mensaje del modo y la fecha"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oPub(("OUT publicar_botones<br/>→ UNO")):::uno
+    oPin(("OUT pintar<br/>→ UNO")):::uno
+    T1(["Regresa"])
+    iUnoSalio(("IN uno_salio<br/>← UNO<br/>(antes de uno_listo)")):::uno
+    D2{"¿Menos de 2 intentos?"}
+    C4["Suma un intento"]
+    Tlim(["Pasan 30 s sin uno_listo"])
+    C5["Registra que UNO no arranca"]
+    oTermSof(("OUT terminar_soffice<br/>→ soffice")):::sof
+
+    T0 --> C0
+    C0 --> C1
+    C1 --> oUno
+    iListo --> C2
+    C2 --> PAR0
+    PAR0 --> oConf
+    PAR0 --> DB1
+    DB1 --> C3
+    C3 --> PAR1
+    PAR1 --> oPub
+    PAR1 --> oPin
+    PAR1 --> T1
+    iUnoSalio --> D2
+    D2 -- "Sí" --> C4
+    C4 --> C1
+    D2 -- "No" --> C5
+    Tlim --> C5
+    C5 --> oTermSof
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

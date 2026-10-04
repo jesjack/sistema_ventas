@@ -1,0 +1,104 @@
+%% chip: App
+%% 4. sistema-ventas instalar (como administrador): LibreOffice, grupo y carpeta compartida (D19), código de caja y acceso directo (D16, D20).
+flowchart TD
+    iInst(("IN instalar_sistema<br/>← Administrador")):::per
+    I1{"¿Tiene permisos de administrador?"}
+    I2["Arma el mensaje: hace falta<br/>una terminal de administrador"]
+    oFin1(("OUT instalar_termino<br/>→ Administrador")):::per
+    I3["Busca LibreOffice: PATH o registro (D9)"]
+    I4[/"Lee si LibreOffice está instalado y, en Linux,<br/>si python3 puede importar uno"/]
+    I5{"¿Falta algo? (versión mínima:<br/>por definir, D20)"}
+    I6["Arma los paquetes que faltan<br/>(la versión que ofrezca el sistema)"]
+    oPaq(("OUT instalar_paquete<br/>→ gestor de paquetes")):::ges
+    iPaqOk(("IN paquete_instalado<br/>← gestor de paquetes")):::ges
+    I7[/"Vuelve a revisar LibreOffice<br/>y python3-uno"/]
+    I7d{"¿Ya está todo?"}
+    I7m["Arma el mensaje: no se pudo<br/>instalar LibreOffice"]
+    oFin2(("OUT instalar_termino<br/>→ Administrador")):::per
+    I8["Prepara la carpeta de datos<br/>compartida (platformdirs, D9)"]
+    I9{"¿Linux o Windows?"}
+    I10["Usa el grupo tpv_yaeli si existe o lo crea; la carpeta<br/>con ese grupo, setgid y sin permisos para otros (D19)"]
+    I11["Usa o crea el grupo local; la carpeta en<br/>C:\ProgramData con ACL para ese grupo (D19)"]
+    I12["Arma la carpeta con sus permisos"]
+    C1[("Carpeta de datos compartida:<br/>la crea con su grupo o permisos")]
+    I20["Arma la pregunta: qué usuarios agregar al grupo"]
+    oPreg1(("OUT pregunta_admin<br/>→ Administrador")):::per
+    iResp1(("IN respuesta_admin<br/>← Administrador<br/>(usuarios)")):::per
+    I21["Agrega esos usuarios al grupo"]
+    I22{"¿Linux o Windows?"}
+    I23["Nota: cada usuario agregado vuelve<br/>a iniciar sesión una vez (D19)"]
+    I24["Revisa la base de datos"]
+    I13{"¿Ya existe ventas.db?"}
+    DB1[("ventas.db: crea el esquema")]
+    I14["Las migraciones quedan para<br/>el arranque de App (D16)"]
+    DBh[("ventas.db: lee si hay código de<br/>apertura de caja configurado")]
+    Dh{"¿Hay código configurado?"}
+    I26["Arma la pregunta del código<br/>de apertura de caja (D20)"]
+    oPreg2(("OUT pregunta_admin<br/>→ Administrador")):::per
+    iResp2(("IN respuesta_admin<br/>← Administrador<br/>(código de caja)")):::per
+    I27["Calcula el hash del código (hashlib)"]
+    DBg[("ventas.db: guarda el hash<br/>en la configuración")]
+    I28["Sigue con el acceso directo"]
+    I15{"¿Linux o Windows?"}
+    I16["Arma la entrada del menú<br/>del sistema (.desktop)"]
+    I17["Arma el acceso directo del menú<br/>Inicio de todos los usuarios"]
+    I18["Escribe el acceso directo"]
+    C2[("Acceso directo:<br/>lo escribe")]
+    I19["Arma el resumen de la instalación"]
+    oFin3(("OUT instalar_termino<br/>→ Administrador")):::per
+
+    iInst --> I1
+    I1 -- "No" --> I2
+    I2 --> oFin1
+    I1 -- "Sí" --> I3
+    I3 --> I4
+    I4 --> I5
+    I5 -- "Sí" --> I6
+    I6 --> oPaq
+    iPaqOk --> I7
+    I7 --> I7d
+    I7d -- "No" --> I7m
+    I7m --> oFin2
+    I7d -- "Sí" --> I8
+    I5 -- "No" --> I8
+    I8 --> I9
+    I9 -- "Linux" --> I10
+    I10 --> I12
+    I9 -- "Windows" --> I11
+    I11 --> I12
+    I12 --> C1
+    C1 --> I20
+    I20 --> oPreg1
+    iResp1 --> I21
+    I21 --> I22
+    I22 -- "Linux" --> I23
+    I23 --> I24
+    I22 -- "Windows" --> I24
+    I24 --> I13
+    I13 -- "No" --> DB1
+    DB1 --> I14
+    I13 -- "Sí" --> I14
+    I14 --> DBh
+    DBh --> Dh
+    Dh -- "Sí" --> I28
+    Dh -- "No" --> I26
+    I26 --> oPreg2
+    iResp2 --> I27
+    I27 --> DBg
+    DBg --> I28
+    I28 --> I15
+    I15 -- "Linux" --> I16
+    I16 --> I18
+    I15 -- "Windows" --> I17
+    I17 --> I18
+    I18 --> C2
+    C2 --> I19
+    I19 --> oFin3
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef per fill:#e0f2fe,stroke:#0369a1,color:#082f49,stroke-width:2px
+    classDef ges fill:#e7e5e4,stroke:#57534e,color:#1c1917,stroke-width:2px
+    classDef uv fill:#fce7f3,stroke:#be185d,color:#500724,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

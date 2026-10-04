@@ -144,6 +144,11 @@ Con los diálogos en App, casi todo son **avisos de un solo sentido**. App ya no
   `normal` o `ventas_dia` con su fecha); agrega una fila de evento; escribe este producto en B4;
   publica esta lista de botones; devuelve el foco a Calc y a B4; cierra LibreOffice.
 
+Pines de detalle que agregó `diagrama_flujo_v3.md` (2026-10-02) y que este resumen no lista uno
+por uno: `urp_conectar`/`urp_listo` (UNO ↔ soffice), `api_hoja`/`api_respuesta` (cada llamada
+a la hoja), `tecla`/`tecla_respuesta` (si UNO consume la tecla) y `terminar_soffice` (App cierra
+soffice si UNO no arranca en 30 s). La lista completa de 68 pines está en ese archivo.
+
 ## 4. Decisiones pendientes
 
 - **D1. Enter y escáner — DECIDIDO (2026-09-29): dentro de LibreOffice, sin `keyboard`.**
@@ -208,17 +213,17 @@ Con los diálogos en App, casi todo son **avisos de un solo sentido**. App ya no
   seguro el lector usa distribución de teclado de EE. UU.: su `:` cae en la tecla de la `Ñ`
   española. Se corrige configurando el lector en español o traduciendo esos caracteres.
 
-- **D2. Dónde vive la lógica de negocio.** La propuesta pone controlador, carrito, servicios y
-  acciones en App, y deja a UNO solo pintando y preguntando. La alternativa es dejar más lógica
-  en UNO (`sqlite3` es stdlib): menos mensajes, pero la base con dos dueños y la regla "UNO sin
-  paquetes" más difícil de sostener.
-- **D3. Clics en botones.** Hoy: Basic → un `.evt` por clic → Python sondea cada 0.5 s. Opciones:
-  - (a) Conservarlo.
-  - (b) Registrar desde Python un `XActionListener` en cada botón. Así sobran el spool, el
-    sondeo y buena parte de Module1.
-- **D4. Prebake.** ¿Sigue teniendo sentido hornear `main.ods` con odfpy antes de abrir, o App le
-  pasa las filas a UNO y este pinta al arrancar? Depende de cuánto tarde pintar en vivo; el
-  prebake existe por eso.
+- **D2. Lógica de negocio — DECIDIDO (2026-10-02): toda en App.** Controlador, carrito,
+  servicios, acciones y ventanas. UNO solo pinta y captura.
+- **D3. Clics en botones — DECIDIDO (2026-10-02): opción (a), Basic + `.evt`.** El usuario ya
+  probó en la V2 crear botones y enlazar sus eventos desde Python con UNO, y fue inviable. Lo
+  documentado (`registerScriptEvent`) apunta a una macro dentro de LibreOffice, no a un proceso
+  externo. Un listener puesto desde fuera al control visible se pierde cuando LibreOffice
+  recrea los controles. El clic lo sigue recibiendo Basic, que escribe un `.evt`; los archivos
+  pasan a la carpeta de ejecución del usuario. Ver D13.
+- **D4. Prebake — DECIDIDO (2026-10-02): se queda.** Reduce el tiempo de carga del documento: no
+  hay que rehacer las tablas con UNO en cada apertura. Lo hace App, con odfpy, antes de abrir
+  soffice, sobre la copia de `main.ods` de cada usuario (D7) y con el modo en memoria.
 - **D5. Quién lanza a quién — DECIDIDO (2026-09-30): opción A, App es el proceso padre.**
   El lanzador de App abre soffice y el proceso UNO, y lanza los demás hijos. El estado de
   arranque (modo, relanzamientos) vive en la memoria de App, no en archivos
@@ -242,7 +247,7 @@ Con los diálogos en App, casi todo son **avisos de un solo sentido**. App ya no
   de cobro, que se usa en cada venta y se teclea de inmediato. Opciones si falla: token de
   activación (`xdg-activation`) pasado desde LibreOffice, sesión X11/XWayland para App, o dejar
   solo el cobro en UNO.
-- **D7. `main.ods` por usuario — a favor, con una condición del usuario.** Ningún usuario puede
+- **D7. `main.ods` por usuario — DECIDIDO, con una condición del usuario.** Ningún usuario puede
   quedarse con una copia desactualizada. Propuesta que lo garantiza: `main.ods` deja de ser un
   archivo que se conserva. Es una plantilla instalada con el programa, y App la copia de nuevo a
   la carpeta del usuario **en cada arranque** (pesa ~27 KB), así que no hay copia vieja que
@@ -253,35 +258,138 @@ Con los diálogos en App, casi todo son **avisos de un solo sentido**. App ya no
     puede haber dos procesos UNO.
   - **Por equipo: una sola caja activa** (regla de negocio: un cajón, una impresora, un escáner).
     Se conserva "el último que abre se queda con la caja", que resuelve la sesión que alguien
-    dejó abierta. Cambio respecto a la V2: el que llega le **pide** a la instancia anterior que
-    se cierre en orden (registra su sesión como cerrada y por quién), por un punto de encuentro
-    en la carpeta de datos compartida, sin root ni `kill`.
-  - **Si la App anterior no responde** (colgada): la espera tiene un tiempo máximo (~10 s) y
-    luego la nueva toma la caja de todos modos. Sin root no puede matar un proceso de otro
-    usuario, así que la protección es una **ficha de caja con número de turno** (fencing token)
-    en la carpeta compartida. Tomar la caja sube el número. Antes de cada acción con efecto (vender,
-    imprimir, abrir el cajón, escribir en la base), una App comprueba que su número sigue siendo
-    el vigente; si no, no hace nada, avisa y se cierra. Así, si la colgada revive, ya no puede
-    tocar nada.
-  - Pendiente de confirmar con el usuario: qué pasa con un carrito a medias en la sesión que se
-    cierra (la V2 lo pierde).
+    dejó abierta. Cambio respecto a la V2: el que llega toma el turno y le **avisa** a la
+    instancia anterior que se cierre en orden, sin root ni `kill` (detalle abajo).
+  - **Turno de caja como token en `ventas.db` (2026-10-02).** Una fila con el turno vigente
+    (número, usuario, sesión, desde). Tomar la caja = `UPDATE turno = turno + 1` en una
+    transacción (atómica en SQLite). El token del otro **no se expira: se invalida solo**,
+    porque deja de ser el vigente. **No hace falta esperar** a la App anterior. La nueva toma el
+    turno de inmediato, marca la sesión anterior como "desplazada por X" y le avisa. Antes de
+    cada acción con efecto (vender, imprimir, abrir el cajón, escribir en la base) y de forma
+    periódica, cada App comprueba que su número sigue vigente. Si no, no hace nada y se cierra.
+    Una acción que ya había empezado en ese instante (p. ej. imprimir el ticket de una venta ya
+    registrada) termina sin problema.
+  - **Carrito a medias de la sesión desplazada: se pierde**, como en la V2. Las ventas son rápidas
+    y el carrito no importa.
+
 - **D9. Sin rutas fijas.** Ni `/home/jesjack/...` ni `C:\Users\jesjack\...` en ningún archivo.
   - Las rutas del programa se derivan de dónde está instalado.
   - Las de datos, de las rutas estándar de cada sistema (`platformdirs`).
   - LibreOffice se busca en el PATH (Linux) o en el registro (Windows).
   - Así el prebake y soffice nunca pueden usar archivos distintos, como hoy en `open_system.sh`.
-- **D10. ¿Quién decide si fue escaneo?** La regla de D1 necesita las horas de llegada, que se
-  toman en UNO. Opciones:
-  - (a) UNO aplica la regla y manda el veredicto. Es lo que dibujó `diagrama_flujo_v3.md`.
-  - (b) UNO manda las horas crudas y App decide.
-
-  Recomendación: (b). UNO se queda sin reglas de negocio, como el resto de su papel (pintar y
-  capturar). Los umbrales viven y se ajustan en un solo lugar, junto a su registro en el log, y
-  se pueden probar sin LibreOffice. El costo es mandar unas pocas horas extra por cada Enter.
-- **D11. ¿camera_viewer se cierra con el POS?** En la V2 sobrevive al cierre (`atexit` solo
-  detiene al archivador). Pendiente del usuario, y de la otra instancia, que lleva las cámaras.
-- **D12. admin_botones: ¿hijo aparte o ventana de App?** Propuesta de `diagrama_flujo_v3.md`:
-  ventana de App. El proceso aparte existía porque `main.py` no tenía Qt y corría como root.
-  Como ventana, hay un solo dueño de `ventas.db` y desaparece el sondeo de `revisar_cambios`.
-  Costo: un fallo en esa ventana ya no queda aislado del POS.
+- **D10. ¿Quién decide si fue escaneo? — DECIDIDO (2026-10-02): App.** UNO toma las horas de
+  llegada y las manda; App aplica la regla. La precisión es la misma: las horas se toman en UNO
+  en ambos casos. Así el código prescindible de UNO queda centralizado en el venv.
+  - **Mejora futura: identificar el dispositivo que tecleó.**
+    - Windows: Raw Input, sin administrador.
+    - Linux/Wayland: una aplicación no puede saberlo por diseño. Hay que leer `/dev/input` con
+      una regla `udev`, que pondría el paso de administrador de D16. Con eso App podría
+      quedarse con el lector y los códigos ni llegarían a Calc.
+    - Son dos implementaciones y hay que reconocer qué dispositivo es el lector. Se pospone: la
+      regla por tiempos ya está medida.
+- **D11. Cámaras — DECIDIDO (2026-10-02): siguen siendo un proceso aparte**, que no se cierra con
+  el POS. **Objetivo nuevo de la V3: integrarlas con las ventas.**
+  - Marcas de cada venta en la línea de tiempo de camera_viewer.
+  - En el POS, abrir las cámaras en el momento exacto de una venta.
+  - Pines: App → camera_viewer "abrir en fecha y hora"; camera_viewer lee de `ventas.db`, solo
+    lectura, las horas de las ventas del día.
+  - El interior de camera_viewer lo implementa la instancia de cámaras.
+- **D12. admin_botones — DECIDIDO (2026-10-02): diálogo Qt dentro de App**, como el resto de las
+  ventanas de la V3. Hay un solo dueño de `ventas.db`, respeta el turno de caja (D8) y desaparece
+  el sondeo de `revisar_cambios`. Falta decidir la estructura del código de App (D18).
+- **D13. Macros Basic — DECIDIDO (2026-10-02): se quedan, como actor dentro de soffice.** Crean
+  los botones, reciben los clics (D3) y devuelven el foco a Calc. `Main` desaparece: la App lanza
+  todo (D5). Para que las macros corran sin avisos ni configuración a mano, la App arranca soffice
+  con un perfil propio de LibreOffice y marca la carpeta del `main.ods` del usuario como ubicación
+  de confianza (**hay que probarlo**).
+- **D14. Tab — DECIDIDO (2026-10-02): por defecto NO se consume.** El cursor siempre pasa a la
+  celda de la derecha, como en Excel; requisito de usabilidad del usuario. UNO confirma la edición
+  de B4, manda el texto a App y devuelve "no consumida". App busca: sin coincidencias, nada; con
+  coincidencias, muestra el selector Qt y, al elegir, pide a UNO escribir el producto en B4. El
+  cursor ya queda en PRECIO.
+  - **Interruptor de ajuste:** un parámetro de configuración (`consumir_tab`) que App le pasa a
+    UNO al conectarse decide si el Tab se consume. Sirve para los ajustes finales del prototipo.
+    Consumirlo devuelve el comportamiento de la V2 (cursor en B4).
+- **D15. Cobro rápido sin ticket — DECIDIDO (2026-10-02).** Tercera opción en el diálogo de
+  cobro, con atajo de teclado, para clientes que pagan y se van sin esperar ticket. Registra la
+  venta con recibido = total y cambio = 0, y abre el cajón (`open_cash_drawer()`) sin imprimir.
+  Se guarda toda la información posible: la marca "sin ticket", el usuario y la sesión.
+- **D16. Instalación — DECIDIDO (2026-10-02; el usuario delegó la elección).** Con `uv`.
+  - Paso 1: instalar `uv`. Es lo único que difiere: script oficial en Linux, `winget` en Windows.
+  - Paso 2, idéntico en los dos: `uv tool install` del proyecto. `uv` también pone el Python de
+    la App.
+  - Paso 3, idéntico, una sola vez con permisos de administrador: el comando de instalación del
+    sistema. Instala o verifica LibreOffice con el gestor de paquetes (`apt install
+    libreoffice-calc python3-uno` / `winget install TheDocumentFoundation.LibreOffice`), con una
+    versión mínima (producción usa 25.2). Crea la carpeta de datos compartida con su grupo o
+    permisos y pone el acceso directo.
+  - Actualizar: `uv tool upgrade`. Las migraciones de la base corren al arrancar.
+- **D19. Permisos de los datos compartidos — DECIDIDO (2026-10-03): un grupo del sistema**, que es
+  la convención para datos compartidos entre varios usuarios. El usuario pidió "lo más usual".
+  - Linux: la carpeta de datos (`ventas.db`, el log, el turno) pertenece a un grupo, con el bit
+    setgid y sin permisos para "otros". Se reutiliza el grupo `tpv_yaeli` que ya existe (hoy:
+    jesjack, nancy, miriamyaelicastanedaaparicio, emilymaya).
+  - Windows: un grupo local con permisos sobre la carpeta en `C:\ProgramData`.
+  - Lo crea y configura el paso de administrador de D16 (`sistema-ventas instalar`), que también
+    agrega usuarios nuevos al grupo; en Linux, la empleada agregada vuelve a iniciar sesión una vez.
+  - Desaparecen `fix_share_permissions`, `chmod o+rwX` y la ACL `other::rwX` de la V2.
+  - En la V2 el grupo dio problemas por `sudo` (`f7ffb55`: al bajar de root a usuario, Python no
+    restauraba los grupos). En la V3 no hay root: cada proceso nace del usuario y hereda sus
+    grupos.
+- **D20. Ajustes de la tercera ronda — DECIDIDO (2026-10-03).**
+  - **Turno:** cada App lo comprueba cada ~3 s. No hay pin de aviso a la App desplazada: se entera
+    en su siguiente comprobación.
+  - **Basic y los `.evt`:** UNO le pasa a la macro la ruta de la carpeta de ejecución del usuario
+    al invocarla (D9: sin rutas fijas).
+  - **Log de las cámaras:** al arrancar, App escribe `log_actual` (ruta del log de esta ejecución)
+    en su carpeta de ejecución. camera_viewer revisa antes de escribir si cambió; si cambió,
+    escribe en el log viejo "continúa en <nuevo>" y en el nuevo "viene de <viejo>", y sigue en el
+    nuevo. Sin App abierta, sigue en el último. Propuesta del usuario más el mecanismo; lo
+    implementa la instancia de cámaras.
+  - **Instalación para todo el equipo, como administrador:** `/opt/sistema-ventas` en Linux,
+    `Archivos de programa` en Windows (`UV_TOOL_DIR`, `UV_TOOL_BIN_DIR`, `UV_PYTHON_INSTALL_DIR`
+    apuntando a rutas del sistema). Instalar y actualizar se hace como administrador.
+  - **Origen:** el repositorio público `jesjack/sistema_ventas`, una etiqueta por versión, y un
+    solo comando: `uv tool install "git+https://github.com/jesjack/sistema_ventas@vX.Y.Z#subdirectory=v_3"`.
+  - **Versión mínima de LibreOffice:** se decide probando versiones viejas, descargadas del
+    archivo oficial y extraídas aparte con perfil propio (sin tocar producción). Pruebas: UNO, el
+    teclado de D1, pintar tablas y macros. **Tarea pendiente, con el prototipo.**
+  - **Código de apertura de caja:** sale del código fuente (en la V2 está en `nucleo/config.py`,
+    público en GitHub). Se guarda como hash (`hashlib`, stdlib) en la configuración de `ventas.db`,
+    nunca en texto plano ni en un `.env`. Se pide en `sistema-ventas instalar`; si falta, en la
+    primera ejecución; se cambia desde un menú solo para el administrador.
+- **Archivador de cámaras — fuera de la V3 (2026-10-02).** Por la salud del DVR. En la V2 ya está
+  desactivado con `share/runtime/archivador_desactivado`: el POS lo lanza, pero sale sin tocar
+  el DVR.
+- **D17. Teclas durante un diálogo — DECIDIDO (2026-10-02).** En la V2 no ha sido un problema: los
+  diálogos no avanzan sin el dato (monto, código). En la V3:
+  - Los Enter que llegan a App con un diálogo abierto se descartan y se anotan en el log como
+    "tecla inusual", igual que los dobles Enter en menos de ~150 ms.
+  - Regla de diseño de los diálogos Qt: Enter activa el botón por defecto, así que ningún
+    diálogo acepta con Enter si falta el dato. La opción "sin ticket" (D15), que abre el cajón y
+    no se puede deshacer, **nunca** es el botón por defecto: solo con su atajo o un clic.
+- **D18. Estructura del código de App — DECIDIDO (2026-10-02).**
+  - **Bucle:** App corre dentro del bucle de Qt, en el hilo principal (lo único soportado por Qt
+    para la parte gráfica). Las tareas bloqueantes (imprimir, abrir el cajón, esperas largas) van
+    en hilos aparte con tiempo máximo y se conectan con señales de Qt. Se probó que un error en
+    un slot no mata el bucle (PySide6 6.11.2: imprime el error y sigue). También se discutió
+    poner Qt en un hilo propio: no está soportado oficialmente. La variante soportada (Qt como
+    "servidor de ventanas" en el hilo principal y nuestro bucle en otro) quedó descartada por
+    el usuario a favor de esta, más simple.
+  - **Protecciones:**
+    - `dominio/` y `servicios/` no importan Qt: se prueban sin Qt y no dependen de él.
+    - Nada lento en el hilo de Qt.
+    - Un vigilante en otro hilo: si el bucle no responde en unos segundos, vuelca al log en qué
+      línea está cada hilo, como `nucleo/diagnostico.py` de la V2.
+    - `sys.excepthook`/`threading.excepthook` con tracebacks legibles para IA.
+  - **Paquete:** `src/sistema_ventas/` con `nucleo/`, `dominio/`, `servicios/`, `ventanas/`,
+    `hardware/`, `acciones/`, `puente/`, `proceso_uno/` (corre en el Python de LibreOffice; App lo
+    lanza, no lo importa) y `recursos/` (plantilla `main.ods` con su Module1). Comandos
+    `sistema-ventas` y `sistema-ventas instalar`.
+  - **Canal con UNO:** `multiprocessing.connection` (stdlib en los dos lados: socket de archivo en
+    Linux, pipe con nombre en Windows), con clave de acceso y mensajes JSON `{tipo, datos}`.
+  - **Acciones de los botones: híbrido modular.** Un archivo por acción en `acciones/`, que
+    declara `ACCION = Accion(nombre, etiqueta, ejecutar)`. Al arrancar se descubren y validan;
+    los errores van al log y admin_botones solo ofrece las válidas. Una prueba verifica que
+    cada botón de la base apunte a una acción existente.
 

@@ -1,684 +1,322 @@
-# Diagrama de flujo de la V3, por proceso
+# Diagrama de flujo de la V3: índice y documentación
 
-Cada proceso de la V3 se dibuja como un **chip** con pines de entrada y salida, al estilo de
-microcontroladores en una placa. Sirve para analizar el diseño: qué entra y qué sale de cada
-proceso, y con quién conecta. Fuentes: `mapa_v2.md` (D1–D9, al 2026-09-30), `arranque_v3.md`
-(opción D5-A, que ya quedó decidida) y `../README.md`.
+Todos los diagramas están en [`diagramas/`](diagramas/), uno por archivo `.mmd` (Mermaid puro),
+para revisarlos juntos en un visualizador. Los del flujo empiezan con `flujo_` y los de la
+instalación con `instalacion_` (índice aparte: [`diagrama_instalacion_v3.md`](diagrama_instalacion_v3.md)).
+Este archivo es el índice del flujo: cómo leerlo, qué hay en cada archivo, las tablas de pines,
+la verificación de pareja de pines y las discrepancias.
+
+Cada proceso de la V3 es un **chip** con pines de entrada y salida, como microcontroladores en
+una placa. Fuentes: `mapa_v2.md` (D1–D20, al 2026-10-03), `arranque_v3.md` y `../README.md`.
 
 ## Cómo leerlo
 
-- **Un color por proceso.** Cada nodo lleva el color del proceso donde corre. El gris no es un
-  proceso: son periféricos, archivos o el usuario. Aparecen solo como extremo de un cable,
-  nunca como paso de un flujo.
-- **Pines.** Cada pin tiene un nombre único, que se repite igual en los dos extremos del cable,
-  como una etiqueta de red en un esquemático. Por ejemplo, OUT `enter_pulsado` en UNO se conecta
-  con IN `enter_pulsado` en App.
-  - Entrada: paralelogramo inclinado a la derecha, con el texto `IN`.
-  - Salida: paralelogramo inclinado a la izquierda, con el texto `OUT`.
-  - Entrada y salida (**E/S**): hexágono. Solo para interfaces que por naturaleza van en los
-    dos sentidos: la base de datos, un candado del sistema operativo o una ventana que el
-    usuario ve y teclea.
-- **Supuestos.** Donde el proceso está decidido pero el mecanismo todavía no (D2, D3, D4), el
-  nodo dice «(supuesto: …)». Ningún nodo queda sin proceso.
-- Debajo de cada chip hay una tabla de pines. Al final están la placa completa y la
-  verificación de que cada OUT tiene su IN.
+Convenciones de ISO 5807 / ANSI X3.5, con las decisiones de forma del usuario:
 
-```mermaid
-flowchart LR
-    L1["App<br/>proceso padre, venv"]:::app
-    L2["soffice<br/>LibreOffice + main.ods"]:::sof
-    L3["UNO<br/>Python de LibreOffice"]:::uno
-    L4["admin_botones<br/>venv, Qt"]:::adm
-    L5["camera_viewer<br/>caja negra"]:::cam
-    L6["camera_viewer.archiver<br/>caja negra"]:::arc
-    L7["No es proceso:<br/>usuario, periférico o archivo"]:::ext
-    P1[/"IN pin de entrada"/]:::app
-    P2[\"OUT pin de salida"\]:::app
-    P3{{"E/S pin de ida y vuelta"}}:::app
+| Símbolo | Forma en Mermaid | Significado | Regla |
+|---|---|---|---|
+| Terminal | Estadio `(["…"])` | Inicio o fin de una página, o un evento que no viene de un pin (un temporizador o una señal entre hilos) | Si es inicio, una salida; si es fin, ninguna. |
+| Proceso | Rectángulo `["…"]` | Un paso | Exactamente **una** salida. |
+| Proceso predefinido | Rectángulo con barras `[["…"]]` | Un subflujo dibujado en otro archivo del mismo chip | Exactamente una salida. |
+| Datos | Paralelogramo `[/"…"/]` | Lectura de datos que no vienen de otro chip | Exactamente una salida. |
+| Almacenamiento | Cilindro `[("…")]` | Lectura o escritura de un archivo o base (`ventas.db`, `main.ods`, perfil, `.evt`, log, `log_actual`, candado) | Exactamente **una** entrada y **una** salida. |
+| Decisión | Rombo `{"…"}` | Pregunta | El único que se bifurca; cada salida va etiquetada. |
+| Conector de salida | Círculo `(("OUT …"))` | Pin hacia otro chip | Le llega **una** línea y el camino **termina** ahí. |
+| Conector de entrada | Círculo `(("IN …"))` | Pin desde otro chip | Sale **una** línea y el camino **empieza** ahí. |
+| Modo paralelo | Barra oscura «═══ en paralelo ═══» | Un paso dispara varias salidas o caminos a la vez | La única excepción a «una salida», siempre explícita. |
 
-    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
-    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
-    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
-    classDef adm fill:#ede9fe,stroke:#6d28d9,color:#2e1065,stroke-width:2px
-    classDef cam fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px
-    classDef arc fill:#ffe4e6,stroke:#be123c,color:#4c0519,stroke-width:2px
-    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3
-```
+- **Nunca hay una flecha entre dos conectores.** Cuando un proceso manda algo y espera la
+  respuesta, el camino termina en el OUT y el flujo sigue aparte, desde el IN de la respuesta.
+  Si hay varios IN con el mismo nombre en un archivo, el paréntesis dice a qué espera responde
+  cada uno (por ejemplo, «IN respuesta_usuario (cobro)»).
+- **Enviar y seguir.** Cuando un proceso manda algo sin esperar respuesta y además sigue, o
+  manda dos cosas a la vez, se usa la barra «en paralelo». También se usa para lanzar un hilo de
+  trabajo (D18): una rama va al hilo y la otra sigue en el hilo principal.
+- **Nacimiento y muerte de un hijo:** empieza en su IN `arrancar_*`, y su fin se ve en el OUT
+  `*_salio`, que es el código de salida que recibe App.
+- **Unión de líneas.** Varias líneas pueden llegar a un mismo proceso, rombo o terminal. A los
+  conectores y cilindros les llega siempre una sola.
+- **Colores** (ver `flujo_00_leyenda.mmd`):
+  - Cada nodo lleva el color del proceso donde corre.
+  - Las macros Basic son un actor dentro del chip de soffice y llevan su propio color.
+  - Cada **OUT** lleva el color del chip **destino** y cada **IN** el del chip de **origen**.
+    Son grises si el otro extremo no es un proceso (usuario, SO, impresoras, DVR).
+  - Cada **cilindro** lleva el color del proceso que consigue esos datos. Por ejemplo,
+    `ventas.db` va en el color de App (sqlite corre dentro de App); en camera_viewer va en el de
+    camera_viewer, que la lee por su cuenta; y el `.evt` que escribe Basic va en el de Basic.
 
-**Hijos de App:** soffice, UNO, camera_viewer.archiver, camera_viewer y admin_botones. App es
-el único que lanza procesos (D5-A). Hay una **propuesta** para que admin_botones deje de ser
-hijo (ver sección 6).
+## Archivos
 
-## 1. App (proceso padre)
+| Archivo | Chip | Qué muestra |
+|---|---|---|
+| `flujo_00_leyenda.mmd` | — | Colores de cada proceso. |
+| `flujo_01a_app_arranque.mmd` | App | `log_actual` (D20), candado del usuario, búsqueda de LibreOffice, migraciones, registro de usuario, toma del turno de caja (D8) y código de caja (D20). |
+| `flujo_01b_app_abrir_libreoffice.mmd` | App | Perfil propio (D13), copia de `main.ods` (D7), prebake (D4) y arranque de soffice. |
+| `flujo_01c_app_conectar_uno.mmd` | App | Canal con UNO (D18), configuración `consumir_tab` (D14), botones y modo; reintentos. |
+| `flujo_01d_app_eventos.mmd` | App | Lo que App atiende mientras está abierta: Enter, Tab (D14), botones, turno cada ~3 s (D20), cierres y señales de los hilos de trabajo. |
+| `flujo_01e_app_atender_enter.mmd` | App | ControladorVenta: descartes de D17, regla de escaneo (D10), código nuevo, agregar, cobrar o abrir la caja con el código (hash, D20). |
+| `flujo_01f_app_cobrar.mmd` | App | Cobro con ticket o sin ticket (D15). |
+| `flujo_01g_app_atender_boton.mmd` | App | Cada botón de la hoja. |
+| `flujo_01h_app_menu_administracion.mmd` | App | Menú de administración, solo para el administrador: botones (D12) y código de caja (D20). |
+| `flujo_01i_app_abrir_camaras.mmd` | App | Abrir camera_viewer, con o sin fecha y hora (D11). |
+| `flujo_01j_app_tras_salir_soffice.mmd` | App | Turno perdido, cambio de modo, cierre normal o caída. |
+| `flujo_01k_app_cierre.mmd` | App | Cierre de App. |
+| `flujo_01l_app_comprobar_turno.mmd` | App | Comprobación del turno de caja (D8). |
+| `flujo_01m_app_abrir_caja.mmd` | App | Abrir el cajón (botón y código autorizado). |
+| `flujo_01n_app_hilos_de_trabajo.mmd` | App | Hilos de trabajo con tiempo máximo (D18) y su señal en el hilo principal. |
+| `flujo_01o_app_log_y_vigilante.mmd` | App | Log único, vigilante del bucle de Qt y tracebacks para IA (D18). |
+| `flujo_01p_app_configurar_codigo_caja.mmd` | App | Configurar el código de apertura de caja, guardado como hash (D20). |
+| `flujo_02_soffice_y_basic.mmd` | soffice | LibreOffice con `main.ods` y su actor Basic (D3 = a, D13, D20). |
+| `flujo_03_uno.mmd` | UNO | Proceso UNO: pinta, captura teclas y sondea los `.evt`. |
+| `flujo_04_camera_viewer.mmd` | camera_viewer | Caja negra (otra instancia): pines de D11 y log que sigue a `log_actual` (D20). |
+| `flujo_99_placa.mmd` | — | Solo los bloques y los cables entre pines. |
 
-```mermaid
-flowchart LR
-    iInicio[/"IN inicio"/]:::app
-    iCajaLib[/"IN caja_liberada"/]:::app
-    iPedirCaja[/"IN pedir_caja"/]:::app
-    iUnoListo[/"IN uno_listo"/]:::app
-    iEnter[/"IN enter_pulsado"/]:::app
-    iTab[/"IN tab_pulsado"/]:::app
-    iBoton[/"IN boton_pulsado"/]:::app
-    iDocCerrado[/"IN documento_cerrado"/]:::app
-    iSofSalio[/"IN soffice_salio"/]:::app
-    iUnoSalio[/"IN uno_salio"/]:::app
-    iHijosSalio[/"IN archivador_salio,<br/>camaras_salio, admin_salio"/]:::app
-    iLogs[/"IN log_soffice, log_uno,<br/>log_archivador, log_camaras, log_admin"/]:::app
+**Hijos de App:**
+- soffice y UNO: App los lanza y los vigila.
+- camera_viewer: App lo lanza, pero no se cierra con el POS (D11).
 
-    ioCandUsr{{"E/S candado_usuario"}}:::app
-    ioCandCaja{{"E/S candado_caja"}}:::app
-    ioDb{{"E/S db"}}:::app
-    ioUi{{"E/S ui_app"}}:::app
+admin_botones ya no es un proceso (D12), y el archivador de cámaras queda fuera de la V3.
 
-    subgraph APP["App — lanzador, lógica y ventanas Qt"]
-        A1["Abre el log de esta ejecución"]:::app
-        A2{"¿Ya hay una App de este usuario?<br/>(D8)"}:::app
-        A2x(["Avisa y sale<br/>(supuesto: o trae la otra al frente)"]):::app
-        A3{"¿Encuentra LibreOffice?<br/>PATH o registro (D9)"}:::app
-        A3x(["Aviso Qt claro y sale"]):::app
-        A4{"¿Otra App tiene la caja<br/>del equipo? (D8)"}:::app
-        A4b["Le pide cierre ordenado y espera<br/>(tiempo máximo: pendiente)"]:::app
-        A5["Toma la caja; registra usuario<br/>y sesión en ventas.db"]:::app
-        A6["Lanza el archivador"]:::app
-        A7["modo = normal (en RAM)"]:::app
-        A8["Prepara main.ods del usuario:<br/>copia la plantilla (D7) y la hornea<br/>(supuesto: D4 = prebake con odfpy)"]:::app
-        A9["Lanza soffice con pipe<br/>por usuario y --norestore"]:::app
-        A10["Lanza el proceso UNO<br/>(pipe, dirección y token)"]:::app
-        A11["Espera uno_listo; publica botones<br/>y manda el modo y las filas"]:::app
-        V1["ControladorVenta: agregar, cobrar,<br/>registrar código, abrir caja<br/>(supuesto: D2 = lógica en App)"]:::app
-        V1q["Diálogos Qt: cobro, precio, código"]:::app
-        V2["Busca en el catálogo<br/>y muestra el selector Qt"]:::app
-        V3{"¿Qué botón?"}:::app
-        V4["Cambio de modo:<br/>ventas_dia o normal, relanzar = sí"]:::app
-        V5["Acciones de acciones/*.py<br/>(caja, carrito, códigos…)"]:::app
-        V6["Cada 0.5 s: ¿cambiaron los botones<br/>en ventas.db? (admin_botones)"]:::app
-        C1["Cierre pedido por otra App:<br/>registra la sesión como cerrada y por quién<br/>(carrito a medias: pendiente)"]:::app
-        F1{"¿Por qué terminó soffice?"}:::app
-        F2{"¿Menos de 2 relanzamientos<br/>en 600 s? (contador en RAM)"}:::app
-        U1{"¿soffice sigue vivo?"}:::app
-        F3["Cierra la sesión en ventas.db"]:::app
-        F4["Detiene el archivador,<br/>libera la caja y el candado, y sale"]:::app
-        LG["Escribe cada línea con<br/>proceso, pid y hora"]:::app
-    end
+## Supuestos que quedan
 
-    oLog[\"OUT log"\]:::app
-    oMainOds[\"OUT main_ods"\]:::app
-    oArrSof[\"OUT arrancar_soffice"\]:::app
-    oArrUno[\"OUT arrancar_uno"\]:::app
-    oPublicar[\"OUT publicar_botones"\]:::app
-    oPintar[\"OUT pintar"\]:::app
-    oEscribir[\"OUT escribir_producto"\]:::app
-    oEnfocar[\"OUT enfocar_calc"\]:::app
-    oCerrarLO[\"OUT cerrar_libreoffice"\]:::app
-    oArrArch[\"OUT arrancar_archivador"\]:::app
-    oTermArch[\"OUT terminar_archivador"\]:::app
-    oArrCam[\"OUT arrancar_camaras"\]:::app
-    oArrAdm[\"OUT arrancar_admin"\]:::app
-    oTicket[\"OUT imprimir_ticket"\]:::app
-    oCajon[\"OUT abrir_cajon"\]:::app
-    oEtiqueta[\"OUT imprimir_etiqueta"\]:::app
-    oPedirCaja[\"OUT pedir_caja"\]:::app
-    oCajaLib[\"OUT caja_liberada"\]:::app
+D2, D3, D4, D10, D18 y D20 ya están decididos y no se marcan como supuestos. Quedan:
 
-    %% Arranque
-    iInicio --> A1 --> A2
-    A1 --> oLog
-    A2 <--> ioCandUsr
-    A2 -- "sí" --> A2x
-    A2 -- "no" --> A3
-    A3 -- "no" --> A3x
-    A3 -- "sí" --> A4
-    A4 <--> ioCandCaja
-    A4 -- "sí" --> A4b --> oPedirCaja
-    iCajaLib --> A5
-    A4 -- "no" --> A5
-    A5 <--> ioDb
-    A5 --> A6 --> oArrArch
-    A6 --> A7 --> A8 --> oMainOds
-    A8 --> A9 --> oArrSof
-    A9 --> A10 --> oArrUno
-    iUnoListo --> A11
-    A11 --> oPublicar
-    A11 --> oPintar
+- **Enter se consume** en UNO (`flujo_03_uno.mmd`, A5b). D14 solo fija el Tab; si el Enter no
+  se consume, Calc mueve el cursor y App lo devuelve con `enfocar_calc`, como en la V2.
+- **De dónde sale la fecha y hora** para abrir las cámaras en una venta (`flujo_01i`). D11 pide
+  la función, pero no dice qué parte de la interfaz elige la venta.
+- **Quién es «el administrador».** En la V2 es la constante `ADMIN_RAIZ` (un nombre de usuario).
+  La V3 lo necesita para el menú de administración (`flujo_01g`, `flujo_01h`) y para el aviso de
+  código de caja al arrancar (`flujo_01a`). El mapa no dice cómo se define en la V3.
 
-    %% Atención de eventos
-    iEnter --> V1
-    V1 <--> V1q <--> ioUi
-    V1 <--> ioDb
-    V1 --> oTicket
-    V1 --> oCajon
-    V1 --> oPintar
-    V1 --> oEnfocar
-    iTab --> V2 <--> ioUi
-    V2 --> oEscribir
-    V2 --> oEnfocar
-    iBoton --> V3
-    V3 -- "VER CÁMARAS" --> oArrCam
-    V3 -- "ADMINISTRAR ADMINS" --> oArrAdm
-    V3 -- "ver_ventas / REGRESAR" --> V4 --> oCerrarLO
-    V3 -- "otros" --> V5
-    V5 <--> ioDb
-    V5 <--> ioUi
-    V5 --> oPintar
-    V5 --> oCajon
-    V5 --> oEtiqueta
-    V6 <--> ioDb
-    V6 --> oPublicar
+## Pines por chip
 
-    %% Cierre pedido por otra App (D8)
-    iPedirCaja --> C1 --> oCerrarLO
-    C1 <--> ioDb
-
-    %% Fin de soffice o de UNO
-    iDocCerrado --> F1
-    iSofSalio --> F1
-    iUnoSalio --> U1
-    U1 -- "sí: relanza solo UNO" --> A10
-    U1 -- "no" --> F1
-    F1 -- "cambio de modo" --> A8
-    F1 -- "caída" --> F2
-    F2 -- "sí" --> A8
-    F2 -- "no" --> F3
-    F1 -- "cierre normal o caja cedida" --> F3
-    F3 <--> ioDb
-    F3 --> F4
-    F4 --> oTermArch
-    F4 --> oCajaLib
-    F4 <--> ioCandCaja
-
-    %% Log único
-    iLogs --> LG --> oLog
-    iHijosSalio --> LG
-
-    style APP fill:#f0fdf4,stroke:#15803d,stroke-width:3px,color:#0b3d1c
-    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
-```
-
-Notas:
-
-- **Todos los nodos son App**, incluidas las ventanas Qt: son hilos o ventanas del mismo
-  proceso, no hijos.
-- **`caja_liberada` solo tiene sentido en la App que cedió la caja.** Si nadie pidió la caja,
-  F4 libera `candado_caja` y ahí se acaba. La App que llega se entera por el pin
-  `caja_liberada` o por el propio candado.
-- **Cambio de modo.** Con D4 = prebake hay que reabrir soffice (F1 → A8). Si D4 termina siendo
-  «pintar en vivo», V4 mandaría `pintar` con el modo nuevo y no haría falta cerrar LibreOffice.
+### App
 
 | Pin | Dir. | Datos | Conecta con | Mecanismo |
 |---|---|---|---|---|
-| `inicio` | IN | Argumentos del entry point | Usuario/SO `abrir_icono` | Creación de proceso (menú del sistema, menú Inicio) |
-| `candado_usuario` | E/S | Tomar o comprobar el candado | SO | Bloqueo de archivo en la carpeta de ejecución del usuario; se libera solo si el proceso muere |
-| `candado_caja` | E/S | Tomar o comprobar la caja del equipo | Carpeta de datos compartida | Bloqueo de archivo en la carpeta compartida (supuesto: el mismo candado sirve para saber si otra App la tiene) |
-| `pedir_caja` | OUT | Quién la pide y cuándo | `pedir_caja` IN de la App anterior | Archivo en la carpeta compartida (punto de encuentro de D8) |
-| `pedir_caja` | IN | Quién la pide | `pedir_caja` OUT de la App que llega | Ídem |
-| `caja_liberada` | OUT | Sesión cerrada, por quién | `caja_liberada` IN de la App que llega | Ídem, o el candado queda libre |
-| `caja_liberada` | IN | Ídem | `caja_liberada` OUT de la App anterior | Ídem |
-| `db` | E/S | Ventas, usuarios, sesión, catálogo, códigos, botones | `ventas.db` | `sqlite3` |
-| `ui_app` | E/S | Diálogos, selector, avisos | Usuario | Ventanas Qt |
-| `log` | OUT | Líneas con proceso, pid y hora | Archivo de log de la ejecución | Archivo |
-| `main_ods` | OUT | `main.ods` del usuario, horneado | soffice `main_ods` | Archivo en la carpeta del usuario |
-| `arrancar_soffice` | OUT | `--accept=pipe,name=…`, `--norestore`, ruta de `main.ods` | soffice `arrancar_soffice` | Creación de proceso (argumentos) |
-| `soffice_salio` | IN | Código de salida | soffice `soffice_salio` | Espera del proceso hijo |
-| `log_soffice` | IN | stdout/stderr | soffice `log_soffice` | Tubería del proceso hijo |
-| `arrancar_uno` | OUT | Nombre del pipe, dirección y token del socket | UNO `arrancar_uno` | Creación de proceso (argumentos) |
-| `uno_listo` | IN | Documento encontrado, handlers registrados | UNO `uno_listo` | Socket local |
-| `enter_pulsado` | IN | Fila de entrada, texto del tramo, ¿es escaneo? | UNO `enter_pulsado` | Socket local |
-| `tab_pulsado` | IN | Prefijo escrito | UNO `tab_pulsado` | Socket local |
-| `boton_pulsado` | IN | id del botón | UNO `boton_pulsado` | Socket local |
-| `documento_cerrado` | IN | Motivo: cierre normal o caída | UNO `documento_cerrado` | Socket local |
-| `uno_salio` | IN | Código de salida | UNO `uno_salio` | Espera del proceso hijo (y el socket se corta) |
-| `log_uno` | IN | stdout/stderr, tracebacks | UNO `log_uno` | Tubería del proceso hijo |
-| `pintar` | OUT | Modo; filas de entrada, carrito o ventas; fila de evento | UNO `pintar` | Socket local |
-| `escribir_producto` | OUT | Producto elegido para B4 | UNO `escribir_producto` | Socket local |
-| `publicar_botones` | OUT | Lista (id, etiqueta) | UNO `publicar_botones` | Socket local |
-| `enfocar_calc` | OUT | Devolver el foco a Calc y a B4 | UNO `enfocar_calc` | Socket local |
-| `cerrar_libreoffice` | OUT | Orden de cierre | UNO `cerrar_libreoffice` | Socket local |
-| `arrancar_archivador` | OUT | Módulo a correr, entorno | archivador `arrancar_archivador` | Creación de proceso |
-| `terminar_archivador` | OUT | Cierre ordenado (5 s, luego forzado) | archivador `terminar_archivador` | `terminate()` del proceso (SIGTERM en Linux) |
-| `archivador_salio` | IN | Código de salida | archivador | Espera del proceso hijo |
-| `log_archivador` | IN | stdout/stderr | archivador | Tubería del proceso hijo |
-| `arrancar_camaras` | OUT | Módulo a correr, entorno | camera_viewer `arrancar_camaras` | Creación de proceso |
+| `inicio` | IN | Argumentos del entry point | SO | Creación de proceso (menú del sistema o menú Inicio) |
+| `ventana_qt` | OUT | Diálogo, selector, aviso o ventana | Usuario | Qt |
+| `respuesta_usuario` | IN | Lo que eligió, escribió o canceló | Usuario | Qt |
+| `arrancar_soffice` | OUT | Perfil propio, `--accept=pipe,name=…`, `--norestore`, ruta | soffice | Creación de proceso |
+| `terminar_soffice` | OUT | Terminar el proceso | soffice | `terminate()` del hijo (solo si UNO no arranca) |
+| `soffice_salio` | IN | Código de salida | soffice | Espera del proceso hijo |
+| `log_soffice` | IN | stdout/stderr | soffice | Tubería |
+| `arrancar_uno` | OUT | Pipe de soffice, dirección y clave del canal | UNO | Creación de proceso |
+| `configurar` | OUT | `consumir_tab` (D14) | UNO | `multiprocessing.connection` (D18) |
+| `uno_listo` | IN | Conectado y handlers registrados | UNO | Ídem |
+| `enter_pulsado` | IN | Fila de entrada, texto del tramo y horas de llegada (D10) | UNO | Ídem |
+| `tab_pulsado` | IN | Texto de B4 | UNO | Ídem |
+| `boton_pulsado` | IN | id del botón | UNO | Ídem |
+| `documento_cerrado` | IN | Motivo: cierre normal o caída | UNO | Ídem |
+| `uno_salio` | IN | Código de salida | UNO | Espera del proceso hijo |
+| `log_uno` | IN | stdout/stderr | UNO | Tubería |
+| `pintar` | OUT | Modo (`normal` o `ventas_dia` con fecha); filas; fila de evento | UNO | `multiprocessing.connection` |
+| `escribir_producto` | OUT | Producto para B4 | UNO | Ídem |
+| `publicar_botones` | OUT | Lista (id, etiqueta) | UNO | Ídem |
+| `enfocar_calc` | OUT | Foco a Calc, en B4 o sin mover el cursor | UNO | Ídem |
+| `cerrar_libreoffice` | OUT | Orden de cierre | UNO | Ídem |
+| `arrancar_camaras` | OUT | Módulo y, opcionalmente, fecha y hora | camera_viewer | Creación de proceso |
+| `abrir_en_fecha_hora` | OUT | Fecha y hora | camera_viewer | Por definir con la instancia de cámaras (D11) |
 | `camaras_salio` | IN | Código de salida | camera_viewer | Espera del proceso hijo |
-| `log_camaras` | IN | stdout/stderr | camera_viewer | Tubería del proceso hijo |
-| `arrancar_admin` | OUT | Módulo a correr, entorno | admin_botones `arrancar_admin` | Creación de proceso |
-| `admin_salio` | IN | Código de salida | admin_botones | Espera del proceso hijo |
-| `log_admin` | IN | stdout/stderr | admin_botones | Tubería del proceso hijo |
-| `imprimir_ticket` | OUT | Líneas del ticket, QR | Impresora de tickets | Driver / puerto (como `hardware/ticket_printer.py`) |
-| `abrir_cajon` | OUT | Pulso de apertura | Cajón, a través de la impresora de tickets | Ídem |
-| `imprimir_etiqueta` | OUT | Imagen del código de barras | Impresora de etiquetas | Como `hardware/barcode_printer.py` |
+| `imprimir_ticket` | OUT | Ticket con apertura del cajón | Impresora de tickets | Driver, en un hilo de trabajo (D18) |
+| `ticket_resultado` | IN | ¿Se imprimió? | Impresora de tickets | Resultado de la llamada |
+| `abrir_cajon` | OUT | Pulso de apertura | Impresora de tickets (cajón) | Driver, en un hilo de trabajo |
+| `cajon_resultado` | IN | ¿Se abrió? | Impresora de tickets | Resultado de la llamada |
+| `imprimir_etiqueta` | OUT | Imagen del código | Impresora de etiquetas | Driver, en un hilo de trabajo |
+| `etiqueta_resultado` | IN | ¿Se imprimió? | Impresora de etiquetas | Resultado de la llamada |
 
-## 2. soffice (LibreOffice con `main.ods`)
+Almacenamiento de App (cilindros, no pines):
 
-Hijo de App. No se programa: es LibreOffice. Los nodos describen lo que hace, para que se vean
-sus pines.
+| Archivo | Uso | Dónde vive |
+|---|---|---|
+| `ventas.db` | Ventas, usuarios, sesiones, catálogo, códigos, botones, eventos, **turno de caja** (D8) y **hash del código de caja** (D20) | Carpeta de datos compartida (grupo, D19) |
+| `log_actual` | Ruta del log de esta ejecución, para camera_viewer (D20) | Carpeta de ejecución del usuario |
+| Candado del usuario | Instancia única por usuario (D8) | Carpeta de ejecución del usuario; lo suelta el SO |
+| Perfil de LibreOffice del usuario | Ubicación de confianza para las macros (D13) | Carpeta de datos del usuario |
+| `main.ods` del usuario | Copia de la plantilla, horneada (D4, D7) | Carpeta del usuario |
+| Archivo de log de la ejecución | Log único (D18) | Carpeta de logs |
 
-```mermaid
-flowchart LR
-    iArr[/"IN arrancar_soffice"/]:::sof
-    iOds[/"IN main_ods"/]:::sof
-    iApi[/"IN api_hoja"/]:::sof
-    iTecl[/"IN teclado_raton"/]:::sof
-
-    subgraph SOF["soffice — LibreOffice Calc"]
-        S1["Arranca<br/>(a medir: perfil propio con -env:UserInstallation)"]:::sof
-        S2["Abre el main.ods del usuario"]:::sof
-        S3["Acepta conexiones URP<br/>en el pipe del usuario"]:::sof
-        S4["Muestra la hoja y los botones"]:::sof
-        S5["Pasa cada tecla a los<br/>XKeyHandler registrados"]:::sof
-        S6["Avisa del clic a los<br/>XActionListener del botón<br/>(supuesto: D3 = b)"]:::sof
-        S7["Ejecuta las llamadas:<br/>celdas, protección, controles,<br/>setModified, terminate"]:::sof
-        S8["Se cierra la ventana, llega<br/>terminate o LibreOffice se cae"]:::sof
-        S9["Termina el proceso"]:::sof
-    end
-
-    oUrp[\"OUT urp_listo"\]:::sof
-    oTecla[\"OUT tecla"\]:::sof
-    oClic[\"OUT clic"\]:::sof
-    oMurio[\"OUT documento_murio"\]:::sof
-    oPant[\"OUT pantalla_hoja"\]:::sof
-    oSalio[\"OUT soffice_salio"\]:::sof
-    oLog[\"OUT log_soffice"\]:::sof
-
-    iArr --> S1 --> S2
-    iOds --> S2
-    S2 --> S3 --> oUrp
-    S2 --> S4 --> oPant
-    iTecl --> S5 --> oTecla
-    iTecl --> S6 --> oClic
-    iApi --> S7 --> S4
-    S7 --> S8
-    iTecl --> S8
-    S8 --> oMurio
-    S8 --> S9 --> oSalio
-    S1 --> oLog
-
-    style SOF fill:#eff6ff,stroke:#1d4ed8,stroke-width:3px,color:#0b1f4d
-    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
-```
+### soffice (con Basic)
 
 | Pin | Dir. | Datos | Conecta con | Mecanismo |
 |---|---|---|---|---|
-| `arrancar_soffice` | IN | Argumentos | App `arrancar_soffice` | Creación de proceso |
-| `main_ods` | IN | Documento del usuario | App `main_ods` | Archivo |
-| `api_hoja` | IN | Llamadas a la API | UNO `api_hoja` | URP por el pipe con nombre |
-| `teclado_raton` | IN | Teclas (también las del escáner) y clics | Usuario `teclado_escaner_raton` | Eventos del sistema de ventanas |
-| `urp_listo` | OUT | El pipe acepta conexiones | UNO `urp_listo` | URP (la conexión se logra o falla; UNO reintenta) |
-| `tecla` | OUT | `KeyEvent` | UNO `tecla` | Callback URP `XKeyHandler.keyPressed` |
-| `clic` | OUT | Control pulsado | UNO `clic` | Callback URP `XActionListener.actionPerformed` (supuesto: D3 = b) |
-| `documento_murio` | OUT | El documento o el puente dejan de responder | UNO `documento_murio` | Excepción en la siguiente llamada (supuesto: sondeo como en la V2) |
+| `arrancar_soffice` | IN | Argumentos | App | Creación de proceso |
+| `terminar_soffice` | IN | Orden de terminar | App | `terminate()` del SO |
+| `teclado_raton` | IN | Teclas (también las del escáner) y clics | Usuario | Sistema de ventanas |
+| `urp_conectar` | IN | Pedido de conexión | UNO | URP por el pipe con nombre |
+| `api_hoja` | IN | Llamada a la API | UNO | URP |
+| `tecla_respuesta` | IN | ¿Consumida? | UNO | Retorno de `XKeyHandler.keyPressed` |
+| `invocar_macro` | IN | Macro Basic y argumentos: preparar (con la **ruta de la carpeta de ejecución del usuario**, D20), limpiar, crear botón | UNO | Script provider por URP (como `SheetButtonBridge`) |
+| `log_soffice` | OUT | stdout/stderr | App | Tubería |
 | `pantalla_hoja` | OUT | La hoja | Usuario | Ventana de LibreOffice |
-| `soffice_salio` | OUT | Código de salida | App `soffice_salio` | Fin del proceso hijo |
-| `log_soffice` | OUT | stdout/stderr | App `log_soffice` | Tubería |
+| `urp_listo` | OUT | Conexión aceptada | UNO | URP |
+| `api_respuesta` | OUT | Resultado de la llamada o de la macro | UNO | URP |
+| `tecla` | OUT | `KeyEvent` | UNO | Callback `XKeyHandler.keyPressed` |
+| `documento_murio` | OUT | El documento dejó de existir | UNO | Excepción en la siguiente llamada |
+| `soffice_salio` | OUT | Código de salida | App | Fin del proceso hijo |
 
-**Con D3 = (a), el `.evt` y el sondeo:** el pin `clic` sigue yendo de soffice a UNO, pero el
-mecanismo cambia. Una macro Basic del documento escribe un `.evt` en la carpeta de ejecución
-del usuario y UNO lo sondea cada 0.5 s. En ese caso `main.ods` tiene que llevar `Module1` y las
-macros deben estar habilitadas.
+Almacenamiento: soffice lee el `main.ods` del usuario; Basic escribe un `.evt` por clic en la
+carpeta que le pasó UNO (D3, D20).
 
-## 3. UNO (Python de LibreOffice)
-
-Hijo de App. Solo `uno` y la biblioteca estándar. Pinta la hoja y captura teclas y clics.
-
-```mermaid
-flowchart LR
-    iArr[/"IN arrancar_uno"/]:::uno
-    iUrp[/"IN urp_listo"/]:::uno
-    iTecla[/"IN tecla"/]:::uno
-    iClic[/"IN clic"/]:::uno
-    iMurio[/"IN documento_murio"/]:::uno
-    iPintar[/"IN pintar"/]:::uno
-    iEscribir[/"IN escribir_producto"/]:::uno
-    iPublicar[/"IN publicar_botones"/]:::uno
-    iEnfocar[/"IN enfocar_calc"/]:::uno
-    iCerrar[/"IN cerrar_libreoffice"/]:::uno
-
-    subgraph UNOP["UNO — puente con Calc"]
-        U1["Lee los argumentos:<br/>pipe, dirección y token"]:::uno
-        U2["Se conecta a soffice por el pipe<br/>(con reintentos mientras abre)"]:::uno
-        U3["Busca main.ods y se conecta<br/>al socket de App con el token"]:::uno
-        U4["Registra el XKeyHandler<br/>(Enter, Tab, escáner)"]:::uno
-        K1["Anota la hora de llegada de la tecla<br/>y la suma al tramo<br/>(un hueco mayor de 100 ms lo reinicia)"]:::uno
-        K2{"¿Qué tecla?"}:::uno
-        K3["Regla D1: al menos 3 caracteres<br/>y promedio ≤ 40 ms → escaneo<br/>(supuesto: la regla corre en UNO)"]:::uno
-        K4["Lee la fila de entrada<br/>y devuelve el cursor a B4"]:::uno
-        K5["Deja pasar la tecla a Calc"]:::uno
-        P1["Desprotege, escribe y protege<br/>(SheetAdmin + Table)"]:::uno
-        B1["Crea los botones y un<br/>XActionListener por botón<br/>(supuesto: D3 = b)"]:::uno
-        B2["Traduce el control a su id"]:::uno
-        W1["Cada 1 s: lee Title<br/>y hace setModified(False)<br/>(supuesto: como en la V2)"]:::uno
-        W2["Clasifica: cierre normal<br/>o caída"]:::uno
-        T1["desktop.terminate()"]:::uno
-        X1["Sale"]:::uno
-    end
-
-    oListo[\"OUT uno_listo"\]:::uno
-    oEnter[\"OUT enter_pulsado"\]:::uno
-    oTab[\"OUT tab_pulsado"\]:::uno
-    oBoton[\"OUT boton_pulsado"\]:::uno
-    oDoc[\"OUT documento_cerrado"\]:::uno
-    oApi[\"OUT api_hoja"\]:::uno
-    oSalio[\"OUT uno_salio"\]:::uno
-    oLog[\"OUT log_uno"\]:::uno
-
-    iArr --> U1 --> U2
-    iUrp --> U2
-    U2 --> U3 --> U4 --> oApi
-    U4 --> oListo
-    iTecla --> K1 --> K2
-    K2 -- "Tab" --> oTab
-    K2 -- "Enter" --> K3 --> K4 --> oEnter
-    K4 --> oApi
-    K2 -- "otra" --> K5
-    iPintar --> P1
-    iEscribir --> P1
-    iEnfocar --> P1
-    P1 --> oApi
-    iPublicar --> B1 --> oApi
-    iClic --> B2 --> oBoton
-    U4 --> W1 --> oApi
-    iMurio --> W2 --> oDoc
-    W2 --> X1 --> oSalio
-    iCerrar --> T1 --> oApi
-    U1 --> oLog
-
-    style UNOP fill:#f0fdfa,stroke:#0f766e,stroke-width:3px,color:#042f2e
-    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
-```
+### UNO
 
 | Pin | Dir. | Datos | Conecta con | Mecanismo |
 |---|---|---|---|---|
-| `arrancar_uno` | IN | Pipe, dirección y token | App `arrancar_uno` | Argumentos del proceso |
-| `urp_listo` | IN | Conexión lograda | soffice `urp_listo` | URP |
-| `tecla` | IN | `KeyEvent` | soffice `tecla` | Callback `XKeyHandler` |
-| `clic` | IN | Control | soffice `clic` | Callback `XActionListener` (supuesto: D3 = b) |
-| `documento_murio` | IN | Excepción | soffice `documento_murio` | API UNO |
-| `pintar` | IN | Modo, filas, fila de evento | App `pintar` | Socket local |
-| `escribir_producto` | IN | Producto | App `escribir_producto` | Socket local |
-| `publicar_botones` | IN | Lista (id, etiqueta) | App `publicar_botones` | Socket local |
-| `enfocar_calc` | IN | Orden | App `enfocar_calc` | Socket local |
-| `cerrar_libreoffice` | IN | Orden | App `cerrar_libreoffice` | Socket local |
-| `uno_listo` | OUT | Documento encontrado y handlers registrados | App `uno_listo` | Socket local |
-| `enter_pulsado` | OUT | Fila de entrada, texto del tramo, ¿es escaneo? | App `enter_pulsado` | Socket local |
-| `tab_pulsado` | OUT | Prefijo | App `tab_pulsado` | Socket local |
-| `boton_pulsado` | OUT | id | App `boton_pulsado` | Socket local |
-| `documento_cerrado` | OUT | Motivo | App `documento_cerrado` | Socket local |
-| `api_hoja` | OUT | Llamadas a la API | soffice `api_hoja` | URP por el pipe |
-| `uno_salio` | OUT | Código de salida | App `uno_salio` | Fin del proceso hijo |
-| `log_uno` | OUT | stdout/stderr, tracebacks en texto plano | App `log_uno` | Tubería |
+| `arrancar_uno` | IN | Pipe de soffice, dirección y clave | App | Argumentos del proceso |
+| `configurar` | IN | `consumir_tab` | App | `multiprocessing.connection` |
+| `pintar` | IN | Modo y filas | App | Ídem |
+| `escribir_producto` | IN | Producto | App | Ídem |
+| `enfocar_calc` | IN | Foco | App | Ídem |
+| `publicar_botones` | IN | Lista (id, etiqueta) | App | Ídem |
+| `cerrar_libreoffice` | IN | Orden | App | Ídem |
+| `urp_listo` | IN | Conexión aceptada | soffice | URP |
+| `api_respuesta` | IN | Resultado de la llamada | soffice | URP |
+| `tecla` | IN | `KeyEvent` | soffice | Callback `XKeyHandler` |
+| `documento_murio` | IN | El documento dejó de existir | soffice | Excepción en la llamada |
+| `urp_conectar` | OUT | Pedido de conexión | soffice | URP |
+| `api_hoja` | OUT | Llamada a la API | soffice | URP |
+| `tecla_respuesta` | OUT | ¿Consumida? | soffice | Retorno de `keyPressed` |
+| `invocar_macro` | OUT | Macro Basic y argumentos, incluida la ruta de la carpeta de ejecución (D20) | soffice (Basic) | Script provider |
+| `uno_listo` | OUT | Conectado y handlers registrados | App | `multiprocessing.connection` |
+| `enter_pulsado` | OUT | Fila, texto y horas de llegada | App | Ídem |
+| `tab_pulsado` | OUT | Texto de B4 | App | Ídem |
+| `boton_pulsado` | OUT | id | App | Ídem |
+| `documento_cerrado` | OUT | Motivo | App | Ídem |
+| `uno_salio` | OUT | Código de salida | App | Fin del proceso hijo |
+| `log_uno` | OUT | stdout/stderr, tracebacks en texto plano | App | Tubería |
 
-## 4. camera_viewer.archiver (caja negra)
+Almacenamiento: UNO lee y borra los `.evt` de la carpeta de ejecución del usuario cada 0.5 s
+(D3).
 
-Hijo de App desde el arranque hasta el cierre. Es de la otra instancia: aquí solo se ven sus
-pines.
+### camera_viewer (caja negra)
 
-```mermaid
-flowchart LR
-    iArr[/"IN arrancar_archivador"/]:::arc
-    iTerm[/"IN terminar_archivador"/]:::arc
-    subgraph ARC["camera_viewer.archiver"]
-        R1["Caja negra<br/>(otra instancia; tiene su propio candado de instancia única)"]:::arc
-    end
-    ioDvr{{"E/S dvr_archivador"}}:::arc
-    oSalio[\"OUT archivador_salio"\]:::arc
-    oLog[\"OUT log_archivador"\]:::arc
-    iArr --> R1
-    iTerm --> R1
-    R1 <--> ioDvr
-    R1 --> oSalio
-    R1 --> oLog
-    style ARC fill:#fff1f2,stroke:#be123c,stroke-width:3px,color:#4c0519
-    classDef arc fill:#ffe4e6,stroke:#be123c,color:#4c0519,stroke-width:2px
-```
-
-| Pin | Dir. | Conecta con | Mecanismo |
-|---|---|---|---|
-| `arrancar_archivador` | IN | App | Creación de proceso |
-| `terminar_archivador` | IN | App | `terminate()` (SIGTERM en Linux) |
-| `dvr_archivador` | E/S | DVR y disco | Propio de la caja negra |
-| `archivador_salio` | OUT | App | Fin del proceso |
-| `log_archivador` | OUT | App | Tubería |
-
-## 5. camera_viewer (caja negra)
-
-Hijo de App, lanzado con el botón VER CÁMARAS.
-
-```mermaid
-flowchart LR
-    iArr[/"IN arrancar_camaras"/]:::cam
-    subgraph CAM["camera_viewer"]
-        M1["Caja negra (otra instancia)"]:::cam
-    end
-    ioUi{{"E/S ui_camaras"}}:::cam
-    ioDvr{{"E/S dvr_camaras"}}:::cam
-    oSalio[\"OUT camaras_salio"\]:::cam
-    oLog[\"OUT log_camaras"\]:::cam
-    iArr --> M1
-    M1 <--> ioUi
-    M1 <--> ioDvr
-    M1 --> oSalio
-    M1 --> oLog
-    style CAM fill:#fffbeb,stroke:#b45309,stroke-width:3px,color:#451a03
-    classDef cam fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px
-```
-
-| Pin | Dir. | Conecta con | Mecanismo |
-|---|---|---|---|
-| `arrancar_camaras` | IN | App | Creación de proceso |
-| `ui_camaras` | E/S | Usuario | Ventana Qt |
-| `dvr_camaras` | E/S | DVR | Propio de la caja negra |
-| `camaras_salio` | OUT | App | Fin del proceso |
-| `log_camaras` | OUT | App | Tubería |
-
-No hay pin `terminar_camaras`. En la V2, la ventana de cámaras sigue abierta aunque se cierre el
-POS; aquí se deja igual (ver «Discrepancias encontradas», punto 4).
-
-## 6. admin_botones
-
-Hijo de App, lanzado con el botón ADMINISTRAR ADMINS (solo lo ve `ADMIN_RAIZ`).
-
-```mermaid
-flowchart LR
-    iArr[/"IN arrancar_admin"/]:::adm
-    subgraph ADM["admin_botones"]
-        D1["Ventana Qt: botones<br/>y visibilidad por usuario"]:::adm
-        D2["Guarda los cambios"]:::adm
-    end
-    ioUi{{"E/S ui_admin"}}:::adm
-    ioDb{{"E/S db_botones"}}:::adm
-    oSalio[\"OUT admin_salio"\]:::adm
-    oLog[\"OUT log_admin"\]:::adm
-    iArr --> D1 --> D2 --> ioDb
-    D1 <--> ioUi
-    D1 <--> ioDb
-    D2 --> oLog
-    D1 --> oSalio
-    style ADM fill:#f5f3ff,stroke:#6d28d9,stroke-width:3px,color:#2e1065
-    classDef adm fill:#ede9fe,stroke:#6d28d9,color:#2e1065,stroke-width:2px
-```
-
-| Pin | Dir. | Conecta con | Mecanismo |
-|---|---|---|---|
-| `arrancar_admin` | IN | App | Creación de proceso |
-| `ui_admin` | E/S | Usuario | Ventana Qt |
-| `db_botones` | E/S | `ventas.db` | `sqlite3` |
-| `admin_salio` | OUT | App | Fin del proceso |
-| `log_admin` | OUT | App | Tubería |
-
-**Propuesta: que admin_botones sea una ventana dentro de App, no un hijo.** Motivos:
-
-- **Ya no hay razón para un proceso aparte.** En la V2 existe porque `main.py` corría en el
-  Python de LibreOffice, sin Qt, y como root (su lanzador baja privilegios). En la V3, App ya es
-  el venv con Qt y no corre como root.
-- **Un solo dueño de `ventas.db`**, que es lo que busca D2. Hoy admin_botones escribe en la base
-  por su cuenta, y App solo se entera sondeando cada 0.5 s (V6, `revisar_cambios`). Como ventana
-  de App, al guardar se llamaría directo a `publicar_botones`, sin sondeo.
-- **Menos pines y menos piezas.** Desaparecen `arrancar_admin`, `admin_salio`, `log_admin` y
-  `db_botones`, junto con su lanzador y la búsqueda de «ya hay una ventana abierta».
-
-El costo: un fallo en esa ventana ya no queda aislado del POS. Con la red de seguridad de
-excepciones que ya usan los hilos de la V2, el riesgo es bajo. Si se acepta, el bloque 6 se
-convierte en nodos de App y la placa pierde un chip.
-
-## 7. Placa completa
-
-Solo los bloques y los cables. Los mensajes del socket entre App y UNO se agrupan en dos buses
-(uno por sentido); cada mensaje tiene su fila en las tablas de arriba.
-
-```mermaid
-flowchart LR
-    USR["Usuario, teclado, escáner y ratón"]:::ext
-    SO["Sistema operativo<br/>(menú, candados)"]:::ext
-    APP2["App de otro usuario<br/>(misma App, otra instancia)"]:::app
-    APP["App"]:::app
-    SOF["soffice"]:::sof
-    UNOB["UNO"]:::uno
-    ARC["camera_viewer.archiver"]:::arc
-    CAM["camera_viewer"]:::cam
-    ADM["admin_botones"]:::adm
-    DB[("ventas.db")]:::ext
-    COMP["Carpeta de datos compartida"]:::ext
-    LOG["Archivo de log de la ejecución"]:::ext
-    IMP["Impresora de tickets y cajón"]:::ext
-    ETQ["Impresora de etiquetas"]:::ext
-    DVR["DVR y disco"]:::ext
-
-    SO -- "inicio" --> APP
-    APP <-- "candado_usuario" --> SO
-    APP <-- "candado_caja" --> COMP
-    APP -- "pedir_caja" --> APP2
-    APP2 -- "caja_liberada" --> APP
-    APP <-- "ui_app" --> USR
-    APP <-- "db" --> DB
-    APP -- "log" --> LOG
-    APP -- "imprimir_ticket, abrir_cajon" --> IMP
-    APP -- "imprimir_etiqueta" --> ETQ
-
-    APP -- "arrancar_soffice, main_ods" --> SOF
-    SOF -- "soffice_salio, log_soffice" --> APP
-    APP -- "arrancar_uno" --> UNOB
-    APP -- "bus: pintar, escribir_producto,<br/>publicar_botones, enfocar_calc,<br/>cerrar_libreoffice" --> UNOB
-    UNOB -- "bus: uno_listo, enter_pulsado,<br/>tab_pulsado, boton_pulsado,<br/>documento_cerrado" --> APP
-    UNOB -- "uno_salio, log_uno" --> APP
-    UNOB -- "api_hoja" --> SOF
-    SOF -- "urp_listo, tecla, clic,<br/>documento_murio" --> UNOB
-    USR -- "teclado_escaner_raton" --> SOF
-    SOF -- "pantalla_hoja" --> USR
-
-    APP -- "arrancar_archivador,<br/>terminar_archivador" --> ARC
-    ARC -- "archivador_salio, log_archivador" --> APP
-    ARC <-- "dvr_archivador" --> DVR
-    APP -- "arrancar_camaras" --> CAM
-    CAM -- "camaras_salio, log_camaras" --> APP
-    CAM <-- "ui_camaras" --> USR
-    CAM <-- "dvr_camaras" --> DVR
-    APP -- "arrancar_admin" --> ADM
-    ADM -- "admin_salio, log_admin" --> APP
-    ADM <-- "ui_admin" --> USR
-    ADM <-- "db_botones" --> DB
-
-    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
-    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
-    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
-    classDef adm fill:#ede9fe,stroke:#6d28d9,color:#2e1065,stroke-width:2px
-    classDef cam fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px
-    classDef arc fill:#ffe4e6,stroke:#be123c,color:#4c0519,stroke-width:2px
-    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3
-```
-
-`pedir_caja` y `caja_liberada` son pines de la misma App: la que llega usa OUT `pedir_caja` e
-IN `caja_liberada`; la que cede usa IN `pedir_caja` y OUT `caja_liberada`. En la placa se
-dibujan entre dos instancias.
-
-## 8. Verificación de pines
-
-Cada cable, con su OUT y su IN. Los extremos grises (usuario, SO, archivos, periféricos) no son
-procesos, pero se cuentan para que ningún pin quede suelto.
-
-| # | OUT (bloque) | IN (bloque) | Mecanismo | ¿Pareja? |
+| Pin | Dir. | Datos | Conecta con | Mecanismo |
 |---|---|---|---|---|
-| 1 | `abrir_icono` (SO) | `inicio` (App) | Creación de proceso | Sí |
-| 2 | `arrancar_soffice` (App) | `arrancar_soffice` (soffice) | Creación de proceso | Sí |
-| 3 | `main_ods` (App) | `main_ods` (soffice) | Archivo | Sí |
-| 4 | `soffice_salio` (soffice) | `soffice_salio` (App) | Fin de proceso | Sí |
-| 5 | `log_soffice` (soffice) | `log_soffice` (App) | Tubería | Sí |
-| 6 | `arrancar_uno` (App) | `arrancar_uno` (UNO) | Creación de proceso | Sí |
-| 7 | `pintar` (App) | `pintar` (UNO) | Socket | Sí |
-| 8 | `escribir_producto` (App) | `escribir_producto` (UNO) | Socket | Sí |
-| 9 | `publicar_botones` (App) | `publicar_botones` (UNO) | Socket | Sí |
-| 10 | `enfocar_calc` (App) | `enfocar_calc` (UNO) | Socket | Sí |
-| 11 | `cerrar_libreoffice` (App) | `cerrar_libreoffice` (UNO) | Socket | Sí |
-| 12 | `uno_listo` (UNO) | `uno_listo` (App) | Socket | Sí |
-| 13 | `enter_pulsado` (UNO) | `enter_pulsado` (App) | Socket | Sí |
-| 14 | `tab_pulsado` (UNO) | `tab_pulsado` (App) | Socket | Sí |
-| 15 | `boton_pulsado` (UNO) | `boton_pulsado` (App) | Socket | Sí |
-| 16 | `documento_cerrado` (UNO) | `documento_cerrado` (App) | Socket | Sí |
-| 17 | `uno_salio` (UNO) | `uno_salio` (App) | Fin de proceso | Sí |
-| 18 | `log_uno` (UNO) | `log_uno` (App) | Tubería | Sí |
-| 19 | `api_hoja` (UNO) | `api_hoja` (soffice) | URP | Sí |
-| 20 | `urp_listo` (soffice) | `urp_listo` (UNO) | URP | Sí |
-| 21 | `tecla` (soffice) | `tecla` (UNO) | Callback URP | Sí |
-| 22 | `clic` (soffice) | `clic` (UNO) | Callback URP (supuesto: D3 = b) | Sí |
-| 23 | `documento_murio` (soffice) | `documento_murio` (UNO) | API UNO | Sí |
-| 24 | `teclado_escaner_raton` (usuario) | `teclado_raton` (soffice) | Sistema de ventanas | Sí (nombres distintos a propósito: el mismo cable también lleva el escáner) |
-| 25 | `pantalla_hoja` (soffice) | usuario | Pantalla | Sí |
-| 26 | `arrancar_archivador` (App) | `arrancar_archivador` (archivador) | Creación de proceso | Sí |
-| 27 | `terminar_archivador` (App) | `terminar_archivador` (archivador) | `terminate()` | Sí |
-| 28 | `archivador_salio` (archivador) | `archivador_salio` (App) | Fin de proceso | Sí |
-| 29 | `log_archivador` (archivador) | `log_archivador` (App) | Tubería | Sí |
-| 30 | `arrancar_camaras` (App) | `arrancar_camaras` (camera_viewer) | Creación de proceso | Sí |
-| 31 | `camaras_salio` (camera_viewer) | `camaras_salio` (App) | Fin de proceso | Sí |
-| 32 | `log_camaras` (camera_viewer) | `log_camaras` (App) | Tubería | Sí |
-| 33 | `arrancar_admin` (App) | `arrancar_admin` (admin_botones) | Creación de proceso | Sí |
-| 34 | `admin_salio` (admin_botones) | `admin_salio` (App) | Fin de proceso | Sí |
-| 35 | `log_admin` (admin_botones) | `log_admin` (App) | Tubería | Sí |
-| 36 | `pedir_caja` (App que llega) | `pedir_caja` (App anterior) | Carpeta compartida | Sí |
-| 37 | `caja_liberada` (App anterior) | `caja_liberada` (App que llega) | Carpeta compartida | Sí |
-| 38 | `imprimir_ticket` (App) | Impresora de tickets | Driver | Sí |
-| 39 | `abrir_cajon` (App) | Cajón | Driver | Sí |
-| 40 | `imprimir_etiqueta` (App) | Impresora de etiquetas | Driver | Sí |
-| 41 | `log` (App) | Archivo de log | Archivo | Sí |
+| `arrancar_camaras` | IN | Módulo y, opcionalmente, fecha y hora | App | Creación de proceso |
+| `abrir_en_fecha_hora` | IN | Fecha y hora | App | Por definir (D11) |
+| `respuesta_camaras` | IN | Interacción del usuario | Usuario | Qt |
+| `dvr_camaras_datos` | IN | Video | DVR | Propio de la caja negra |
+| `ventana_camaras` | OUT | Ventana | Usuario | Qt |
+| `dvr_camaras_pedir` | OUT | Pedidos al DVR | DVR | Propio de la caja negra |
+| `camaras_salio` | OUT | Código de salida | App | Fin del proceso |
 
-Pines E/S (sin dirección única): `candado_usuario` (App ↔ SO), `candado_caja` (App ↔ carpeta
-compartida), `db` (App ↔ `ventas.db`), `db_botones` (admin_botones ↔ `ventas.db`), `ui_app`,
-`ui_camaras`, `ui_admin` (↔ usuario), `dvr_archivador` y `dvr_camaras` (↔ DVR). Todos tienen
-su otro extremo.
+Almacenamiento (todo en el color de camera_viewer):
+- Lee `ventas.db`, solo lectura, para marcar las ventas en su línea de tiempo (D11).
+- Lee `log_actual` antes de escribir cada línea y escribe en el log vigente. Si la ruta cambió,
+  deja «continúa en …» en el viejo y «viene de …» en el nuevo (D20). Por eso ya no hay pin
+  `log_camaras`: su log no pasa por App.
 
-**Resultado: todos los OUT tienen su IN y al revés.** Los únicos puntos sueltos son deliberados
-o están por decidir:
+## Verificación de pines
 
-- **El código de salida de App no tiene IN**: nadie lo lee, porque App es el primer proceso y
-  lo lanza el menú del sistema.
-- **camera_viewer no tiene pin de cierre**: se deja igual que en la V2 (punto 4 de abajo).
-- **Cambios de admin_botones.** No hay cable directo de admin_botones a App: App se entera
-  leyendo `ventas.db` (V6). Es una dependencia indirecta por la base, no un pin. La propuesta de
-  la sección 6 la elimina.
+Cada cable, con su OUT y su IN. Los extremos grises no son procesos, pero se cuentan para que
+ningún pin quede suelto.
+
+| # | Pin | De (OUT) | A (IN) | Mecanismo |
+|---|---|---|---|---|
+| 1 | `inicio` | SO | App | Creación de proceso |
+| 2 | `ventana_qt` | App | Usuario | Qt |
+| 3 | `respuesta_usuario` | Usuario | App | Qt |
+| 4 | `imprimir_ticket` | App | Impresora de tickets | Driver |
+| 5 | `ticket_resultado` | Impresora de tickets | App | Resultado de la llamada |
+| 6 | `abrir_cajon` | App | Impresora de tickets | Driver |
+| 7 | `cajon_resultado` | Impresora de tickets | App | Resultado de la llamada |
+| 8 | `imprimir_etiqueta` | App | Impresora de etiquetas | Driver |
+| 9 | `etiqueta_resultado` | Impresora de etiquetas | App | Resultado de la llamada |
+| 10 | `arrancar_soffice` | App | soffice | Creación de proceso |
+| 11 | `terminar_soffice` | App | soffice | `terminate()` |
+| 12 | `soffice_salio` | soffice | App | Fin de proceso |
+| 13 | `log_soffice` | soffice | App | Tubería |
+| 14 | `arrancar_uno` | App | UNO | Creación de proceso |
+| 15 | `configurar` | App | UNO | Canal |
+| 16 | `pintar` | App | UNO | Canal |
+| 17 | `escribir_producto` | App | UNO | Canal |
+| 18 | `publicar_botones` | App | UNO | Canal |
+| 19 | `enfocar_calc` | App | UNO | Canal |
+| 20 | `cerrar_libreoffice` | App | UNO | Canal |
+| 21 | `uno_listo` | UNO | App | Canal |
+| 22 | `enter_pulsado` | UNO | App | Canal |
+| 23 | `tab_pulsado` | UNO | App | Canal |
+| 24 | `boton_pulsado` | UNO | App | Canal |
+| 25 | `documento_cerrado` | UNO | App | Canal |
+| 26 | `uno_salio` | UNO | App | Fin de proceso |
+| 27 | `log_uno` | UNO | App | Tubería |
+| 28 | `urp_conectar` | UNO | soffice | URP |
+| 29 | `urp_listo` | soffice | UNO | URP |
+| 30 | `api_hoja` | UNO | soffice | URP |
+| 31 | `api_respuesta` | soffice | UNO | URP |
+| 32 | `tecla` | soffice | UNO | Callback URP |
+| 33 | `tecla_respuesta` | UNO | soffice | Retorno del callback |
+| 34 | `invocar_macro` | UNO | soffice (Basic) | Script provider |
+| 35 | `documento_murio` | soffice | UNO | Excepción en la llamada |
+| 36 | `teclado_raton` | Usuario | soffice | Sistema de ventanas |
+| 37 | `pantalla_hoja` | soffice | Usuario | Pantalla |
+| 38 | `arrancar_camaras` | App | camera_viewer | Creación de proceso |
+| 39 | `abrir_en_fecha_hora` | App | camera_viewer | Por definir (D11) |
+| 40 | `camaras_salio` | camera_viewer | App | Fin de proceso |
+| 41 | `ventana_camaras` | camera_viewer | Usuario | Qt |
+| 42 | `respuesta_camaras` | Usuario | camera_viewer | Qt |
+| 43 | `dvr_camaras_pedir` | camera_viewer | DVR | Caja negra |
+| 44 | `dvr_camaras_datos` | DVR | camera_viewer | Caja negra |
+
+**Resultado:** los 44 cables tienen su OUT y su IN. Puntos sueltos deliberados:
+
+- **El código de salida de App no tiene pin**: nadie lo lee.
+- **No hay pin para cerrar camera_viewer**: no se cierra con el POS (D11).
+- **No hay pin para matar a UNO.** Si no arranca, App termina soffice y UNO sale al recibir
+  `documento_murio` (`flujo_01c`).
+- **No hay pin entre dos instancias de App** (D20). La App desplazada se entera en su siguiente
+  comprobación del turno, cada ~3 s (`flujo_01d`), o antes de su siguiente acción con efecto.
+- **Algunos datos se pasan por archivo, no por pin:**
+  - Los clics de Basic llegan a UNO por `.evt` (cilindros en `flujo_02` y `flujo_03`).
+  - camera_viewer sabe a qué log escribir por `log_actual` (cilindros en `flujo_01a` y
+    `flujo_04`).
 
 ## Discrepancias encontradas
 
-1. **`arranque_v3.md` quedó atrás de D8.** Su nota 4 y la fila «`asegurar_instancia_unica`» de
-   la tabla V2 → V3 plantean «un usuario a la vez» como pregunta abierta. D8 ya lo decidió: una
-   sola caja por equipo, «el último gana» y cierre ordenado pedido. Aquí se usó D8.
-2. **Dónde se aplica la regla del escáner.** La sección 3 del mapa dice que UNO manda a App
-   «el contenido de la fila de entrada y el ritmo de las teclas», lo que sugiere que App decide
-   si fue escaneo. Aquí se dibujó con la regla en UNO (supuesto), porque la hora de cada tecla
-   solo existe ahí y así no hay que mandar un mensaje por tecla. Las dos cosas son posibles; hay
-   que elegir una.
-3. **D8 no dice qué pasa si la App anterior no responde** a `pedir_caja`: por ejemplo, si está
-   colgada o si su sesión gráfica está bloqueada. Si el proceso murió, el candado del SO ya
-   quedó libre y no hay problema. Pero si sigue vivo y no contesta, «sin `kill`» deja a la App
-   nueva esperando para siempre. Falta un tiempo máximo y qué hacer al vencer. Es aparte de lo
-   que D8 ya marca como pendiente (el carrito a medias).
-4. **camera_viewer sobrevive al POS.** En la V2, `atexit` solo detiene al archivador; la ventana
-   de cámaras queda abierta. El mapa no dice si en la V3 se quiere igual. Aquí se dejó como en
-   la V2, sin pin `terminar_camaras`.
-5. **A la sección 3 del mapa le faltan mensajes.** No incluye `uno_listo` (el saludo inicial,
-   necesario para saber cuándo mandar botones y filas) ni el modo dentro de `pintar`. Con D4 =
-   prebake, UNO necesita saber el modo para engancharse a las tablas correctas.
+Las discrepancias 1 a 3 de la ronda anterior quedaron resueltas por D20:
+- El aviso a la App desplazada es la comprobación cada ~3 s.
+- UNO le pasa a Basic la ruta de la carpeta de ejecución.
+- El log de camera_viewer sigue a `log_actual`.
 
-## Validación de la sintaxis Mermaid
+Quedan:
 
-No se validó con una herramienta: en este equipo no hay `node` ni `npx`, y la regla es no
-instalar nada global. Todas las etiquetas van entre comillas. Las formas de los pines
-(`[/"…"/]`, `[\"…"\]`, `{{"…"}}`) y el uso de `style` sobre subgrafos son sintaxis estándar de
-flowchart. Aun así, conviene abrirlo en GitHub, VS Code o mermaid.live antes de darlo por bueno.
+1. **camera_viewer ya abierto (resto de la anterior 3).** Si camera_viewer quedó abierto de una
+   ejecución anterior, la App actual no es su padre: no recibe su `camaras_salio` ni tiene vía
+   para mandarle `abrir_en_fecha_hora` o saber si está abierto (`flujo_01i`). Pendiente con la
+   instancia de cámaras, como pide D20.
+2. **Doble comprobación de «venta en curso».** `flujo_01e` conserva el rombo «¿Hay una venta en
+   curso?» además de los dos descartes de D17. Así se cubre el momento entre que se cierra el
+   diálogo de cobro y `selling = no`. Si sobra, se quita.
+3. **El ticket también abre el cajón.** En la V2, `print_sale` agrega la orden de abrir el cajón
+   al imprimir. Aquí se conservó (`flujo_01f`, `flujo_01n`). Por eso «sin ticket» (D15) abre el
+   cajón con una tarea propia, sin registrar el evento APERTURA DE CAJA: la venta ya queda
+   registrada.
+4. **Caja con código bloqueada sin administrador.** Si al arrancar no hay código de caja y el
+   usuario no es el administrador, `flujo_01a` solo avisa: la apertura con código queda
+   bloqueada (`flujo_01e`) hasta que el administrador lo configure. D20 dice «si falta, en la
+   primera ejecución», sin precisar qué pasa si esa primera ejecución es de una empleada. Como
+   `sistema-ventas instalar` ya pide el código, este caso solo debería pasar si se borró la
+   configuración.
+
+## Cómo se verificó
+
+Con `verificar_iso.py` (Python, solo biblioteca estándar), sobre los archivos `flujo_*.mmd` de
+`diagramas/` y este índice:
+
+- Cada `.mmd` es Mermaid puro, sin marcas de bloque, y empieza con `%% chip: X`, `%% placa` o
+  `%% leyenda` seguida de un comentario.
+- Cada archivo del conjunto aparece en este índice, y cada archivo que nombra el índice existe.
+- En cada chip:
+  - Rectángulos, predefinidos y paralelogramos tienen exactamente una salida, sin etiqueta.
+  - Cada conector tiene una sola línea: un OUT recibe una y no sale ninguna, y un IN no recibe
+    ninguna y sale una. Ninguna arista va de un conector a otro.
+  - Cada cilindro tiene exactamente una entrada y una salida.
+  - Los rombos tienen dos o más salidas, todas etiquetadas. Solo las barras «en paralelo» se
+    bifurcan sin rombo.
+  - Los terminales son de inicio o de fin.
+  - Cada OUT lleva el color del destino y cada IN el del origen, gris si no es un proceso. Los
+    demás nodos llevan el color de su chip; en soffice, también el de Basic.
+- En todo el código: ninguna flecha doble ni hexágono.
+- Cada OUT tiene su IN con el mismo nombre en otro chip o en un extremo gris de la placa, y al
+  revés. Todos los pines aparecen en la placa y en la tabla de verificación.

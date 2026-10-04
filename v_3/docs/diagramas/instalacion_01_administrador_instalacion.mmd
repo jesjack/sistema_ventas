@@ -1,0 +1,60 @@
+%% chip: Administrador
+%% 1. Instalación en un equipo nuevo, vista del administrador: tres pasos, todo como administrador y para todo el equipo (D16, D20).
+flowchart TD
+    T0(["Instalar en un equipo nuevo"])
+    D0{"¿Linux o Windows?"}
+    P1["Paso 1, Linux: arma el comando<br/>del script oficial de uv"]
+    oUv1(("OUT instalar_uv<br/>→ gestor de paquetes")):::ges
+    P2["Paso 1, Windows: arma el comando<br/>winget install astral-sh.uv"]
+    oUv2(("OUT instalar_uv<br/>→ gestor de paquetes")):::ges
+    iUvOk(("IN uv_instalado<br/>← gestor de paquetes")):::ges
+    D1{"¿Se instaló uv?"}
+    Dv{"¿Linux o Windows?"}
+    P4a["Arma las variables de uv en rutas del sistema:<br/>/opt/sistema-ventas (D20)"]
+    P4b["Arma las variables de uv en rutas del sistema:<br/>Archivos de programa (D20)"]
+    P4["Paso 2, idéntico, como administrador: uv tool install<br/>git+https://github.com/jesjack/sistema_ventas@vX.Y.Z#35;subdirectory=v_3<br/>(UV_TOOL_DIR, UV_TOOL_BIN_DIR y UV_PYTHON_INSTALL_DIR)"]
+    oTool(("OUT uv_tool_install<br/>→ uv")):::uv
+    iUvT(("IN uv_termino<br/>← uv<br/>(instalación)")):::uv
+    D2{"¿Se instaló el proyecto?"}
+    P5["Paso 3, idéntico: en una terminal de administrador,<br/>arma el comando sistema-ventas instalar"]
+    oInst(("OUT instalar_sistema<br/>→ App")):::app
+    iInstT(("IN instalar_termino<br/>← App")):::app
+    iPreg(("IN pregunta_admin<br/>← App")):::app
+    P6["Responde: usuarios a agregar al grupo<br/>o código de apertura de caja"]
+    oResp(("OUT respuesta_admin<br/>→ App")):::app
+    D3{"¿Terminó bien?"}
+    P3["Revisa el mensaje de error"]
+    T9(["Fin con error: corregir y repetir el paso"])
+    T1(["Equipo listo: cada usuario abre<br/>el sistema desde el menú"])
+
+    T0 --> D0
+    D0 -- "Linux" --> P1
+    P1 --> oUv1
+    D0 -- "Windows" --> P2
+    P2 --> oUv2
+    iUvOk --> D1
+    D1 -- "No" --> P3
+    D1 -- "Sí" --> Dv
+    Dv -- "Linux" --> P4a
+    P4a --> P4
+    Dv -- "Windows" --> P4b
+    P4b --> P4
+    P4 --> oTool
+    iUvT --> D2
+    D2 -- "No" --> P3
+    D2 -- "Sí" --> P5
+    P5 --> oInst
+    iPreg --> P6
+    P6 --> oResp
+    iInstT --> D3
+    D3 -- "No" --> P3
+    D3 -- "Sí" --> T1
+    P3 --> T9
+
+    classDef default fill:#e0f2fe,stroke:#0369a1,color:#082f49,stroke-width:2px
+    classDef par fill:#0369a1,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef per fill:#e0f2fe,stroke:#0369a1,color:#082f49,stroke-width:2px
+    classDef ges fill:#e7e5e4,stroke:#57534e,color:#1c1917,stroke-width:2px
+    classDef uv fill:#fce7f3,stroke:#be185d,color:#500724,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

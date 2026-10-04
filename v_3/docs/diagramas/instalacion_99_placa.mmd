@@ -1,0 +1,30 @@
+%% placa
+%% Placa de la instalación: actores y cables entre pines (no es un flujo).
+flowchart LR
+    ADM["Administrador"]:::per
+    GES["SO y gestor de paquetes"]:::ges
+    UV["uv"]:::uv
+    APP["App: sistema-ventas instalar<br/>y primer arranque"]:::app
+    NET["Internet: repositorios del sistema,<br/>GitHub e índice de paquetes"]:::ext
+    USR["Usuario (menú)"]:::ext
+
+    ADM -- "instalar_uv" --> GES
+    GES -- "uv_instalado" --> ADM
+    ADM -- "uv_tool_install, uv_tool_upgrade" --> UV
+    UV -- "uv_termino" --> ADM
+    ADM -- "instalar_sistema" --> APP
+    APP -- "instalar_termino, pregunta_admin" --> ADM
+    ADM -- "respuesta_admin" --> APP
+    APP -- "instalar_paquete" --> GES
+    GES -- "paquete_instalado" --> APP
+    GES -- "pedir_repositorio" --> NET
+    NET -- "repositorio_datos" --> GES
+    UV -- "pedir_indice" --> NET
+    NET -- "indice_datos" --> UV
+    USR -- "inicio" --> APP
+
+    classDef per fill:#e0f2fe,stroke:#0369a1,color:#082f49,stroke-width:2px
+    classDef ges fill:#e7e5e4,stroke:#57534e,color:#1c1917,stroke-width:2px
+    classDef uv fill:#fce7f3,stroke:#be185d,color:#500724,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

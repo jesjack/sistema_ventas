@@ -1,0 +1,36 @@
+%% chip: uv
+%% 3. uv: instala o actualiza el proyecto como herramienta para todo el equipo, con su propio Python (D16, D20).
+flowchart TD
+    iTool(("IN uv_tool_install<br/>← Administrador")):::per
+    V1["Pide la etiqueta vX.Y.Z del repositorio<br/>(subcarpeta v_3) y sus dependencias"]
+    oIdx1(("OUT pedir_indice<br/>→ Internet")):::ext
+    iUp(("IN uv_tool_upgrade<br/>← Administrador")):::per
+    V2["Pide la etiqueta nueva del repositorio<br/>y sus dependencias"]
+    oIdx2(("OUT pedir_indice<br/>→ Internet")):::ext
+    iIdx(("IN indice_datos<br/>← Internet")):::ext
+    V3{"¿Hay un Python compatible?"}
+    V4["Descarga un Python administrado por uv<br/>en UV_PYTHON_INSTALL_DIR"]
+    V5["Crea o actualiza el entorno aislado<br/>de la herramienta"]
+    UVc[("UV_TOOL_DIR (ruta del sistema):<br/>instala el proyecto")]
+    V6["Expone los comandos sistema-ventas y<br/>sistema-ventas instalar en UV_TOOL_BIN_DIR"]
+    oTerm(("OUT uv_termino<br/>→ Administrador")):::per
+
+    iTool --> V1
+    V1 --> oIdx1
+    iUp --> V2
+    V2 --> oIdx2
+    iIdx --> V3
+    V3 -- "No" --> V4
+    V4 --> V5
+    V3 -- "Sí" --> V5
+    V5 --> UVc
+    UVc --> V6
+    V6 --> oTerm
+
+    classDef default fill:#fce7f3,stroke:#be185d,color:#500724,stroke-width:2px
+    classDef par fill:#be185d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef per fill:#e0f2fe,stroke:#0369a1,color:#082f49,stroke-width:2px
+    classDef ges fill:#e7e5e4,stroke:#57534e,color:#1c1917,stroke-width:2px
+    classDef uv fill:#fce7f3,stroke:#be185d,color:#500724,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

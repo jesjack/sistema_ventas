@@ -1,0 +1,28 @@
+%% chip: App
+%% 1m. Abrir caja (botón ABRIR CAJA y código autorizado): el cajón se abre en un hilo de trabajo (D18).
+flowchart TD
+    T0(["Abrir caja"])
+    S1[["Comprobar turno (1l)"]]
+    J0["Arma la apertura del cajón"]
+    PAR1["═══ en paralelo ═══"]:::par
+    S2[["Hilo de trabajo: cajón con evento (1n)"]]
+    Tfin(["El resultado llega por señal (1d)"])
+    J1["Vuelve a Calc"]
+    oEnf(("OUT enfocar_calc<br/>→ UNO")):::uno
+
+    T0 --> S1
+    S1 --> J0
+    J0 --> PAR1
+    PAR1 --> S2
+    S2 --> Tfin
+    PAR1 --> J1
+    J1 --> oEnf
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

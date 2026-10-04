@@ -1,0 +1,41 @@
+%% chip: App
+%% 1j. Tras salir soffice: turno perdido, cambio de modo, cierre normal o caída.
+flowchart TD
+    T0(["Tras salir soffice"])
+    D0{"¿Perdió el turno de caja?<br/>(desplazada por otra App, D8)"}
+    S9[["Cierre de App (1k)"]]
+    T9(["Fin de App"])
+    D1{"¿relanzar = sí?<br/>(cambio de modo)"}
+    G1["relanzar = no"]
+    S1[["Abrir LibreOffice (1b)"]]
+    T2(["Regresa: sigue atendiendo eventos"])
+    D2{"¿El motivo anotado<br/>fue cierre normal?"}
+    G2["contador de caídas = 0"]
+    D3{"¿Menos de 2 relanzamientos<br/>en 600 s?"}
+    G3["Suma un relanzamiento (RAM)"]
+    G4["Registra: no se relanza"]
+
+    T0 --> D0
+    D0 -- "Sí" --> S9
+    S9 --> T9
+    D0 -- "No" --> D1
+    D1 -- "Sí" --> G1
+    G1 --> S1
+    S1 --> T2
+    D1 -- "No" --> D2
+    D2 -- "Sí" --> G2
+    G2 --> S9
+    D2 -- "No o sin motivo" --> D3
+    D3 -- "Sí" --> G3
+    G3 --> S1
+    D3 -- "No" --> G4
+    G4 --> S9
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

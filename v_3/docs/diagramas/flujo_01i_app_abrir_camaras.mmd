@@ -1,0 +1,30 @@
+%% chip: App
+%% 1i. Abrir cámaras (D11): camera_viewer es un proceso aparte que no se cierra con el POS.
+flowchart TD
+    T0(["Abrir cámaras"])
+    D0{"¿Se pide una fecha y hora concreta?<br/>(de dónde sale: pendiente, D11)"}
+    C1["Arma el lanzamiento sin fecha"]
+    oCam1(("OUT arrancar_camaras<br/>→ camera_viewer")):::cam
+    D1{"¿camera_viewer ya está abierto?<br/>(cómo se sabe: lo define la instancia de cámaras)"}
+    C2["Arma la fecha y hora"]
+    oFecha(("OUT abrir_en_fecha_hora<br/>→ camera_viewer")):::cam
+    C3["Arma el lanzamiento con la fecha y hora"]
+    oCam2(("OUT arrancar_camaras<br/>→ camera_viewer")):::cam
+
+    T0 --> D0
+    D0 -- "No" --> C1
+    C1 --> oCam1
+    D0 -- "Sí" --> D1
+    D1 -- "Sí" --> C2
+    C2 --> oFecha
+    D1 -- "No" --> C3
+    C3 --> oCam2
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

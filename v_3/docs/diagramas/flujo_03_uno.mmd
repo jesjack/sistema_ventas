@@ -1,0 +1,163 @@
+%% chip: UNO
+%% 3. UNO (Python de LibreOffice, solo uno + stdlib): pinta, captura teclas y sondea los .evt de Basic. No decide nada de negocio.
+flowchart TD
+    iArr(("IN arrancar_uno<br/>← App")):::app
+    U1[/"Lee los argumentos: pipe de soffice,<br/>dirección y clave del canal de App"/]
+    U2["intentos = 0"]
+    U3["Arma el pedido de conexión"]
+    oCon(("OUT urp_conectar<br/>→ soffice")):::sof
+    Tno(["Pasan 0.5 s sin conexión"])
+    D2{"¿Ya van 60 intentos (30 s)?"}
+    U4["Suma un intento"]
+    U9["Arma el mensaje: no se pudo conectar"]
+    PAR0["═══ en paralelo ═══"]:::par
+    oLog(("OUT log_uno<br/>→ App")):::app
+    oSal1(("OUT uno_salio<br/>→ App")):::app
+    iUrp(("IN urp_listo<br/>← soffice")):::sof
+    U5["Arma la búsqueda de main.ods<br/>y el registro del XKeyHandler"]
+    oApi1(("OUT api_hoja<br/>→ soffice")):::sof
+    iResp1(("IN api_respuesta<br/>← soffice<br/>(registro)")):::sof
+    U6["Se conecta al canal de App con la clave<br/>(multiprocessing.connection, D18)"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oListo(("OUT uno_listo<br/>→ App")):::app
+    C0["Espera 1 s"]
+    C1["Arma la lectura de Title y setModified(False)"]
+    oApiC(("OUT api_hoja<br/>→ soffice")):::sof
+    iRespC(("IN api_respuesta<br/>← soffice<br/>(vigilancia)")):::sof
+    iMurio(("IN documento_murio<br/>← soffice")):::sof
+    C2["Clasifica: cierre normal o caída"]
+    PAR2["═══ en paralelo ═══"]:::par
+    oDoc(("OUT documento_cerrado<br/>→ App")):::app
+    oSal2(("OUT uno_salio<br/>→ App")):::app
+
+    Tev(["Cada 0.5 s"])
+    EV1[(".evt de la carpeta de ejecución:<br/>lee y borra los que haya (D3)")]
+    EVd{"¿Había clics?"}
+    EV2["Traduce cada .evt a su id"]
+    oBoton(("OUT boton_pulsado<br/>→ App")):::app
+    TEv(["Espera la siguiente revisión"])
+
+    iConf(("IN configurar<br/>← App")):::app
+    CF1["Guarda consumir_tab (D14)"]
+    TB(["Espera el siguiente mensaje de App"])
+
+    iTec(("IN tecla<br/>← soffice")):::sof
+    A1["Anota la hora de llegada y suma la tecla<br/>al tramo (un hueco > 100 ms lo reinicia)"]
+    D4{"¿Qué tecla?"}
+    A2["Arma la confirmación de la edición de B4<br/>y la lectura de su texto (D14)"]
+    oApi2(("OUT api_hoja<br/>→ soffice")):::sof
+    iResp2(("IN api_respuesta<br/>← soffice<br/>(texto de B4)")):::sof
+    A2b["Arma el mensaje con el texto"]
+    PAR3["═══ en paralelo ═══"]:::par
+    oTab(("OUT tab_pulsado<br/>→ App")):::app
+    DT{"¿consumir_tab?"}
+    A5["Respuesta: consumida (como en la V2)"]
+    oTecR1(("OUT tecla_respuesta<br/>→ soffice")):::sof
+    A6b["Respuesta: no consumida<br/>(Calc pasa a PRECIO, como en Excel)"]
+    oTecR3(("OUT tecla_respuesta<br/>→ soffice")):::sof
+    A3["Arma la lectura de la fila de entrada"]
+    oApi3(("OUT api_hoja<br/>→ soffice")):::sof
+    iResp3(("IN api_respuesta<br/>← soffice<br/>(fila de entrada)")):::sof
+    A3b["Arma el mensaje con la fila, el texto<br/>y las horas de llegada (D10)"]
+    PAR4["═══ en paralelo ═══"]:::par
+    oEnter(("OUT enter_pulsado<br/>→ App")):::app
+    A4["Vacía el tramo"]
+    A5b["Respuesta: consumida<br/>(supuesto)"]
+    oTecR4(("OUT tecla_respuesta<br/>→ soffice")):::sof
+    A6["Respuesta: no consumida"]
+    oTecR2(("OUT tecla_respuesta<br/>→ soffice")):::sof
+
+    iPin(("IN pintar<br/>← App")):::app
+    B1["Arma las celdas: desprotege,<br/>escribe y protege"]
+    oApiB1(("OUT api_hoja<br/>→ soffice")):::sof
+    iEsc(("IN escribir_producto<br/>← App")):::app
+    B2["Arma la escritura del producto en B4"]
+    oApiB2(("OUT api_hoja<br/>→ soffice")):::sof
+    iEnf(("IN enfocar_calc<br/>← App")):::app
+    B3["Arma el foco en Calc<br/>(en B4 o sin mover el cursor)"]
+    oApiB3(("OUT api_hoja<br/>→ soffice")):::sof
+    iPub(("IN publicar_botones<br/>← App")):::app
+    B4["Arma la invocación de las macros Basic: preparar con la ruta<br/>de la carpeta de ejecución, limpiar y crear cada botón (D3, D20)"]
+    oMacro(("OUT invocar_macro<br/>→ Basic (soffice)")):::bas
+    iCer(("IN cerrar_libreoffice<br/>← App")):::app
+    B5["Arma desktop.terminate()"]
+    oApiB5(("OUT api_hoja<br/>→ soffice")):::sof
+    iRespB(("IN api_respuesta<br/>← soffice<br/>(órdenes de App y macros)")):::sof
+
+    iArr --> U1
+    U1 --> U2
+    U2 --> U3
+    U3 --> oCon
+    Tno --> D2
+    D2 -- "No" --> U4
+    U4 --> U3
+    D2 -- "Sí" --> U9
+    U9 --> PAR0
+    PAR0 --> oLog
+    PAR0 --> oSal1
+    iUrp --> U5
+    U5 --> oApi1
+    iResp1 --> U6
+    U6 --> PAR1
+    PAR1 --> oListo
+    PAR1 --> C0
+    C0 --> C1
+    C1 --> oApiC
+    iRespC --> C0
+    iMurio --> C2
+    C2 --> PAR2
+    PAR2 --> oDoc
+    PAR2 --> oSal2
+
+    Tev --> EV1
+    EV1 --> EVd
+    EVd -- "Sí" --> EV2
+    EV2 --> oBoton
+    EVd -- "No" --> TEv
+
+    iConf --> CF1
+    CF1 --> TB
+
+    iTec --> A1
+    A1 --> D4
+    D4 -- "Tab" --> A2
+    A2 --> oApi2
+    iResp2 --> A2b
+    A2b --> PAR3
+    PAR3 --> oTab
+    PAR3 --> DT
+    DT -- "Sí" --> A5
+    A5 --> oTecR1
+    DT -- "No (por defecto)" --> A6b
+    A6b --> oTecR3
+    D4 -- "Enter" --> A3
+    A3 --> oApi3
+    iResp3 --> A3b
+    A3b --> PAR4
+    PAR4 --> oEnter
+    PAR4 --> A4
+    A4 --> A5b
+    A5b --> oTecR4
+    D4 -- "otra" --> A6
+    A6 --> oTecR2
+
+    iPin --> B1
+    B1 --> oApiB1
+    iEsc --> B2
+    B2 --> oApiB2
+    iEnf --> B3
+    B3 --> oApiB3
+    iPub --> B4
+    B4 --> oMacro
+    iCer --> B5
+    B5 --> oApiB5
+    iRespB --> TB
+
+    classDef default fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef par fill:#0f766e,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

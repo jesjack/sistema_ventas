@@ -1,0 +1,51 @@
+%% chip: camera_viewer
+%% 4. camera_viewer (caja negra, otra instancia; D11). No se cierra con el POS. El orden interno es ilustrativo.
+flowchart TD
+    iArr(("IN arrancar_camaras<br/>← App")):::app
+    DBc[("ventas.db: lee las horas de las ventas<br/>del día, solo lectura (D11)")]
+    M1[["Visor<br/>(caja negra, otra instancia)"]]
+    PAR1["═══ en paralelo ═══"]:::par
+    LC1[("log_actual: lee la ruta del log<br/>vigente antes de escribir (D20)")]
+    LCd{"¿Cambió desde la última vez?"}
+    LC2[("Log viejo: escribe<br/>«continúa en (ruta nueva)»")]
+    LC3[("Log nuevo: escribe<br/>«viene de (ruta vieja)»")]
+    LC5["Usa el log vigente<br/>(sin App abierta, sigue en el último)"]
+    LC4[("Log vigente:<br/>escribe la línea")]
+    TL(["Espera la siguiente línea"])
+    oVen(("OUT ventana_camaras<br/>→ Usuario")):::ext
+    oDvrP(("OUT dvr_camaras_pedir<br/>→ DVR")):::ext
+    iDvrD(("IN dvr_camaras_datos<br/>← DVR")):::ext
+    iFecha(("IN abrir_en_fecha_hora<br/>← App")):::app
+    M2["Salta a esa fecha y hora<br/>(caja negra)"]
+    iResp(("IN respuesta_camaras<br/>← Usuario")):::ext
+    D1{"¿Cerró la ventana?"}
+    oSal(("OUT camaras_salio<br/>→ App")):::app
+
+    iArr --> DBc
+    DBc --> M1
+    M1 --> PAR1
+    PAR1 --> LC1
+    LC1 --> LCd
+    LCd -- "Sí" --> LC2
+    LC2 --> LC3
+    LC3 --> LC5
+    LCd -- "No" --> LC5
+    LC5 --> LC4
+    LC4 --> TL
+    PAR1 --> oVen
+    PAR1 --> oDvrP
+    iDvrD --> M1
+    iFecha --> M2
+    M2 --> M1
+    iResp --> D1
+    D1 -- "No" --> M1
+    D1 -- "Sí" --> oSal
+
+    classDef default fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef par fill:#c2410c,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

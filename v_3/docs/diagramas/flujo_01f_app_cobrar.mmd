@@ -1,0 +1,66 @@
+%% chip: App
+%% 1f. Cobrar: con ticket o sin ticket (D15); la impresión y el cajón van en un hilo de trabajo (D18).
+flowchart TD
+    T0(["Cobrar"])
+    N12["selling = sí; calcula el total"]
+    N13["Arma el diálogo de cobro: cobrar, sin ticket<br/>(solo con su atajo o un clic, nunca por defecto, D17)<br/>o cancelar"]
+    oQt(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR(("IN respuesta_usuario<br/>← Usuario<br/>(cobro)")):::ext
+    D8{"¿Qué eligió?"}
+    N19["selling = no"]
+    oEnfF(("OUT enfocar_calc<br/>→ UNO")):::uno
+    S2[["Comprobar turno (1l)"]]
+    DB3[("ventas.db: registra la venta<br/>con recibido y cambio")]
+    N15["Vacía el carrito; arma las<br/>filas de carrito y ventas"]
+    PAR2["═══ en paralelo ═══"]:::par
+    oPin2(("OUT pintar<br/>→ UNO")):::uno
+    N16["Arma el ticket, que también<br/>abre el cajón (como en la V2)"]
+    PAR3["═══ en paralelo ═══"]:::par
+    S7[["Hilo de trabajo: ticket (1n)"]]
+    Tfin(["El resultado llega por señal (1d)"])
+    N20["selling = no"]
+    oEnfG(("OUT enfocar_calc<br/>→ UNO")):::uno
+    S3[["Comprobar turno (1l)"]]
+    DB4[("ventas.db: registra la venta con recibido = total,<br/>cambio = 0, «sin ticket», usuario y sesión (D15)")]
+    N17["Vacía el carrito; arma las<br/>filas de carrito y ventas"]
+    PAR4["═══ en paralelo ═══"]:::par
+    oPin3(("OUT pintar<br/>→ UNO")):::uno
+    S8[["Hilo de trabajo: cajón sin evento (1n)"]]
+    N21["selling = no"]
+    oEnfI(("OUT enfocar_calc<br/>→ UNO")):::uno
+
+    T0 --> N12
+    N12 --> N13
+    N13 --> oQt
+    iR --> D8
+    D8 -- "cancelar" --> N19
+    N19 --> oEnfF
+    D8 -- "cobrar" --> S2
+    S2 --> DB3
+    DB3 --> N15
+    N15 --> PAR2
+    PAR2 --> oPin2
+    PAR2 --> N16
+    N16 --> PAR3
+    PAR3 --> S7
+    S7 --> Tfin
+    PAR3 --> N20
+    N20 --> oEnfG
+    D8 -- "sin ticket" --> S3
+    S3 --> DB4
+    DB4 --> N17
+    N17 --> PAR4
+    PAR4 --> oPin3
+    PAR4 --> S8
+    S8 --> Tfin
+    PAR4 --> N21
+    N21 --> oEnfI
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

@@ -1,0 +1,120 @@
+%% chip: App
+%% 1e. Atender Enter (ControladorVenta): descartes de D17, regla de escaneo (D10), agregar, cobrar o abrir la caja.
+flowchart TD
+    T0(["Atender Enter"])
+    D0{"¿Hay un diálogo abierto?"}
+    Dd{"¿Llegó a menos de ~150 ms<br/>del Enter anterior?"}
+    Dv{"¿Hay una venta en curso?"}
+    N0["Anota «tecla inusual» en el log (D17)"]
+    T1(["Regresa: el Enter se descarta"])
+    N1["Aplica la regla de escaneo a las horas de llegada:<br/>promedio ≤ 40 ms, ≥ 3 caracteres antes del Enter,<br/>ningún hueco > 100 ms (D1, D10)"]
+    D1{"¿Es escaneo?"}
+    D2{"¿El código está vacío?"}
+    N2a["Vuelve a Calc"]
+    oEnfA(("OUT enfocar_calc<br/>→ UNO")):::uno
+    DB1[("ventas.db:<br/>busca el código")]
+    D3{"¿El código está registrado?"}
+    N3["Pone en la entrada:<br/>producto, precio, 1"]
+    N4["Arma el selector Qt de productos"]
+    oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR1(("IN respuesta_usuario<br/>← Usuario<br/>(selector de producto)")):::ext
+    D4{"¿Eligió un producto?"}
+    N4b["Vuelve a Calc"]
+    oEnfB(("OUT enfocar_calc<br/>→ UNO")):::uno
+    N5["Arma el diálogo de precio"]
+    oQt2(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR2(("IN respuesta_usuario<br/>← Usuario<br/>(precio)")):::ext
+    D5{"¿Dio un precio?"}
+    N5b["Vuelve a Calc"]
+    oEnfC(("OUT enfocar_calc<br/>→ UNO")):::uno
+    S1[["Comprobar turno (1l)"]]
+    DB2[("ventas.db: registra el código nuevo<br/>(no se agrega al carrito, como en la V2)")]
+    N6["Vuelve a Calc"]
+    oEnfD(("OUT enfocar_calc<br/>→ UNO")):::uno
+    D6{"¿La fila de entrada<br/>está completa?"}
+    N10["Suma al carrito o agrega la fila;<br/>limpia la entrada"]
+    N11["Arma las filas de entrada y carrito"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oPin1(("OUT pintar<br/>→ UNO")):::uno
+    oEnfE(("OUT enfocar_calc<br/>→ UNO")):::uno
+    D7{"¿El carrito está vacío?"}
+    S2[["Cobrar (1f)"]]
+    DBk[("ventas.db: lee el hash del código<br/>de apertura de caja (D20)")]
+    Dk{"¿Hay código configurado?"}
+    N23["Arma el aviso: falta que el administrador<br/>configure el código de caja"]
+    oQt5(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR5(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: sin código de caja)")):::ext
+    N24["Vuelve a Calc"]
+    oEnfJ(("OUT enfocar_calc<br/>→ UNO")):::uno
+    N18["Arma el diálogo del<br/>código de apertura"]
+    oQt4(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR4(("IN respuesta_usuario<br/>← Usuario<br/>(código de apertura)")):::ext
+    N22["Calcula el hash del código escrito<br/>(hashlib) y lo compara con el guardado"]
+    D10{"¿Coinciden?"}
+    N21["Vuelve a Calc"]
+    oEnfH(("OUT enfocar_calc<br/>→ UNO")):::uno
+    S3[["Abrir caja y registrar (1m)"]]
+    T2(["Regresa"])
+
+    T0 --> D0
+    D0 -- "Sí" --> N0
+    D0 -- "No" --> Dd
+    Dd -- "Sí" --> N0
+    Dd -- "No" --> Dv
+    Dv -- "Sí" --> N0
+    N0 --> T1
+    Dv -- "No" --> N1
+    N1 --> D1
+    D1 -- "Sí" --> D2
+    D2 -- "Sí" --> N2a
+    N2a --> oEnfA
+    D2 -- "No" --> DB1
+    DB1 --> D3
+    D3 -- "Sí" --> N3
+    N3 --> N10
+    D3 -- "No" --> N4
+    N4 --> oQt1
+    iR1 --> D4
+    D4 -- "No" --> N4b
+    N4b --> oEnfB
+    D4 -- "Sí" --> N5
+    N5 --> oQt2
+    iR2 --> D5
+    D5 -- "No" --> N5b
+    N5b --> oEnfC
+    D5 -- "Sí" --> S1
+    S1 --> DB2
+    DB2 --> N6
+    N6 --> oEnfD
+    D1 -- "No" --> D6
+    D6 -- "Sí" --> N10
+    N10 --> N11
+    N11 --> PAR1
+    PAR1 --> oPin1
+    PAR1 --> oEnfE
+    D6 -- "No" --> D7
+    D7 -- "No" --> S2
+    S2 --> T2
+    D7 -- "Sí" --> DBk
+    DBk --> Dk
+    Dk -- "No" --> N23
+    N23 --> oQt5
+    iR5 --> N24
+    N24 --> oEnfJ
+    Dk -- "Sí" --> N18
+    N18 --> oQt4
+    iR4 --> N22
+    N22 --> D10
+    D10 -- "No" --> N21
+    N21 --> oEnfH
+    D10 -- "Sí" --> S3
+    S3 --> T2
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

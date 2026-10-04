@@ -1,0 +1,103 @@
+%% chip: soffice
+%% 2. soffice (LibreOffice con main.ods) y su actor Basic (D3 = a, D13): crea los botones, recibe los clics y escribe .evt.
+flowchart TD
+    iArr(("IN arrancar_soffice<br/>← App")):::app
+    S1["Arranca con el perfil propio<br/>del usuario (D13)"]
+    PAR0["═══ en paralelo ═══"]:::par
+    oLog(("OUT log_soffice<br/>→ App")):::app
+    M1[("main.ods del usuario:<br/>lo lee")]
+    S2["Muestra la hoja"]
+    oPant1(("OUT pantalla_hoja<br/>→ Usuario")):::ext
+    iTec(("IN teclado_raton<br/>← Usuario")):::ext
+    D1{"¿Qué hizo el usuario?"}
+    S3["Pasa la tecla al XKeyHandler"]
+    oTecla(("OUT tecla<br/>→ UNO")):::uno
+    BA1["Basic: TPV_ButtonAction<br/>saca el id del control"]:::bas
+    BA2[(".evt en la carpeta que le pasó UNO (D20):<br/>lo escribe como .part y lo renombra")]:::bas
+    BA3["Basic: devuelve el foco a Calc"]:::bas
+    T3(["Espera el siguiente clic"])
+    iTecR(("IN tecla_respuesta<br/>← UNO")):::uno
+    D2{"¿UNO la consumió?"}
+    T2(["Espera la siguiente tecla"])
+    S5["Calc procesa la tecla o el clic"]
+    oPant2(("OUT pantalla_hoja<br/>→ Usuario")):::ext
+    iCon(("IN urp_conectar<br/>← UNO")):::uno
+    S6["Acepta la conexión URP<br/>en el pipe del usuario"]
+    oUrp(("OUT urp_listo<br/>→ UNO")):::uno
+    iApi(("IN api_hoja<br/>← UNO")):::uno
+    D4{"¿Es terminate?"}
+    S7["Ejecuta la llamada: celdas, protección,<br/>foco o setModified"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oResp1(("OUT api_respuesta<br/>→ UNO")):::uno
+    oPant3(("OUT pantalla_hoja<br/>→ Usuario")):::ext
+    PAR2["═══ en paralelo ═══"]:::par
+    oResp2(("OUT api_respuesta<br/>→ UNO")):::uno
+    iMacro(("IN invocar_macro<br/>← UNO")):::uno
+    BB1{"Basic: ¿qué macro?"}:::bas
+    BB0["Basic: guarda la ruta de la carpeta<br/>de ejecución del usuario (D20)"]:::bas
+    BB2["Basic: borra los botones de la hoja"]:::bas
+    BB3["Basic: crea el botón con su id y etiqueta"]:::bas
+    BB4["Basic: termina la macro"]:::bas
+    PAR3["═══ en paralelo ═══"]:::par
+    oResp3(("OUT api_respuesta<br/>→ UNO")):::uno
+    oPant4(("OUT pantalla_hoja<br/>→ Usuario")):::ext
+    iTerm(("IN terminar_soffice<br/>← App")):::app
+    S9["Cierra el documento"]
+    PAR4["═══ en paralelo ═══"]:::par
+    oMurio(("OUT documento_murio<br/>→ UNO")):::uno
+    S10["Termina el proceso"]
+    oSalio(("OUT soffice_salio<br/>→ App")):::app
+
+    iArr --> S1
+    S1 --> PAR0
+    PAR0 --> oLog
+    PAR0 --> M1
+    M1 --> S2
+    S2 --> oPant1
+    iTec --> D1
+    D1 -- "tecla" --> S3
+    S3 --> oTecla
+    D1 -- "clic en un botón" --> BA1
+    BA1 --> BA2
+    BA2 --> BA3
+    BA3 --> T3
+    D1 -- "otro clic en la hoja" --> S5
+    D1 -- "cerró la ventana" --> S9
+    iTecR --> D2
+    D2 -- "Sí" --> T2
+    D2 -- "No" --> S5
+    S5 --> oPant2
+    iCon --> S6
+    S6 --> oUrp
+    iApi --> D4
+    D4 -- "No" --> S7
+    S7 --> PAR1
+    PAR1 --> oResp1
+    PAR1 --> oPant3
+    D4 -- "Sí" --> PAR2
+    PAR2 --> oResp2
+    PAR2 --> S9
+    iMacro --> BB1
+    BB1 -- "preparar (con la ruta)" --> BB0
+    BB0 --> BB4
+    BB1 -- "limpiar botones" --> BB2
+    BB1 -- "crear botón" --> BB3
+    BB2 --> BB4
+    BB3 --> BB4
+    BB4 --> PAR3
+    PAR3 --> oResp3
+    PAR3 --> oPant4
+    iTerm --> S10
+    S9 --> PAR4
+    PAR4 --> oMurio
+    PAR4 --> S10
+    S10 --> oSalio
+
+    classDef default fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef par fill:#1d4ed8,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

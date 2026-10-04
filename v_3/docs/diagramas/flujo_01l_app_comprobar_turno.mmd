@@ -1,0 +1,30 @@
+%% chip: App
+%% 1l. Comprobar turno de caja (D8): antes de cada acción con efecto y de forma periódica.
+flowchart TD
+    T0(["Comprobar turno"])
+    DB1[("ventas.db: lee el<br/>turno vigente")]
+    D0{"¿Su número de turno<br/>sigue siendo el vigente?"}
+    T1(["Regresa"])
+    I1["desplazada = sí; arma el aviso y la orden de cierre<br/>(el carrito a medias se pierde, D8)"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oQt(("OUT ventana_qt<br/>→ Usuario")):::ext
+    oCerrar(("OUT cerrar_libreoffice<br/>→ UNO")):::uno
+    T2(["No regresa: la acción se cancela"])
+
+    T0 --> DB1
+    DB1 --> D0
+    D0 -- "Sí" --> T1
+    D0 -- "No" --> I1
+    I1 --> PAR1
+    PAR1 --> oQt
+    PAR1 --> oCerrar
+    PAR1 --> T2
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3
