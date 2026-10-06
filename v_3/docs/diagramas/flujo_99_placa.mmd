@@ -3,6 +3,7 @@
 flowchart LR
     USR["Usuario: pantalla, teclado,<br/>escáner y ratón"]:::ext
     SO["Sistema operativo (menú)"]:::ext
+    APP2["App nueva del mismo usuario<br/>(acceso directo con App ya abierta)"]:::app
     APP["App"]:::app
     SOF["soffice + Basic"]:::sof
     UNOB["UNO"]:::uno
@@ -12,6 +13,7 @@ flowchart LR
     DVR["DVR"]:::ext
 
     SO -- "inicio" --> APP
+    APP2 -- "reabrir_libreoffice" --> APP
     APP -- "ventana_qt" --> USR
     USR -- "respuesta_usuario" --> APP
     APP -- "imprimir_ticket, abrir_cajon" --> IMP
@@ -28,8 +30,8 @@ flowchart LR
     SOF -- "urp_listo, api_respuesta,<br/>tecla, documento_murio" --> UNOB
     USR -- "teclado_raton" --> SOF
     SOF -- "pantalla_hoja" --> USR
-    APP -- "arrancar_camaras, abrir_en_fecha_hora" --> CAM
-    CAM -- "camaras_salio" --> APP
+    APP -- "arrancar_camaras, abrir_en_fecha_hora,<br/>mostrar_camaras, ventas_del_dia" --> CAM
+    CAM -- "camaras_lista, camaras_salio, log_camaras" --> APP
     CAM -- "ventana_camaras" --> USR
     USR -- "respuesta_camaras" --> CAM
     CAM -- "dvr_camaras_pedir" --> DVR

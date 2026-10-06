@@ -1,5 +1,5 @@
 %% chip: App
-%% 1d. Eventos mientras App está abierta: cada camino empieza en un IN o en un temporizador.
+%% 1d. Eventos mientras App está viva (D22): cada camino empieza en un IN o en un temporizador.
 flowchart TD
     TW(["Espera el siguiente evento"])
     iEnter(("IN enter_pulsado<br/>← UNO")):::uno
@@ -21,6 +21,7 @@ flowchart TD
     iBoton(("IN boton_pulsado<br/>← UNO")):::uno
     S2[["Atender botón (1g)"]]
     Tturno(["Cada ~3 s (D8, D20)"])
+    Dpos{"¿El POS está abierto?"}
     S5[["Comprobar turno (1l)"]]
     iDoc(("IN documento_cerrado<br/>← UNO")):::uno
     E6["Anota el motivo:<br/>cierre normal o caída"]
@@ -29,10 +30,26 @@ flowchart TD
     S3[["Conectar UNO (1c)"]]
     iSofSalio(("IN soffice_salio<br/>← soffice")):::sof
     S4[["Tras salir soffice (1j)"]]
+    iReabrir(("IN reabrir_libreoffice<br/>← App nueva del mismo usuario")):::app
+    Dr{"¿soffice está abierto?"}
+    E10["Arma el foco: trae Calc al frente"]
+    oEnf3(("OUT enfocar_calc<br/>→ UNO")):::uno
+    E11["Arma la toma del turno de caja (D8)"]
+    DB4[("ventas.db: en una transacción, turno + 1<br/>y la sesión anterior queda «desplazada»")]
+    E12["Guarda su número de turno (RAM)"]
+    S6[["Abrir LibreOffice (1b)"]]
+    iCamL(("IN camaras_lista<br/>← camera_viewer")):::cam
+    E13["camaras_abierto = sí (RAM)"]
+    DB5[("ventas.db: lee las<br/>ventas del día")]
+    E14["Arma las ventas del día"]
+    oVentas(("OUT ventas_del_dia<br/>→ camera_viewer")):::cam
     iCamS(("IN camaras_salio<br/>← camera_viewer")):::cam
-    E9["Registra la salida de camera_viewer"]
+    E9["camaras_abierto = no;<br/>registra la salida"]
+    D5{"¿soffice sigue abierto?"}
+    S7[["Cierre de App (1k)"]]
+    TF(["Fin de App: no queda nada abierto (D22)"])
     Tsen(["Llega la señal de un hilo de trabajo (D18)"])
-    S6[["Resultado de un hilo de trabajo (1n)"]]
+    S8[["Resultado de un hilo de trabajo (1n)"]]
 
     iEnter --> S1
     S1 --> TW
@@ -52,7 +69,9 @@ flowchart TD
     E4 --> oEnf2
     iBoton --> S2
     S2 --> TW
-    Tturno --> S5
+    Tturno --> Dpos
+    Dpos -- "Sí" --> S5
+    Dpos -- "No" --> TW
     S5 --> TW
     iDoc --> E6
     E6 --> TW
@@ -62,10 +81,25 @@ flowchart TD
     D4 -- "No" --> TW
     iSofSalio --> S4
     S4 --> TW
-    iCamS --> E9
-    E9 --> TW
-    Tsen --> S6
+    iReabrir --> Dr
+    Dr -- "Sí" --> E10
+    E10 --> oEnf3
+    Dr -- "No" --> E11
+    E11 --> DB4
+    DB4 --> E12
+    E12 --> S6
     S6 --> TW
+    iCamL --> E13
+    E13 --> DB5
+    DB5 --> E14
+    E14 --> oVentas
+    iCamS --> E9
+    E9 --> D5
+    D5 -- "Sí" --> TW
+    D5 -- "No" --> S7
+    S7 --> TF
+    Tsen --> S8
+    S8 --> TW
 
     classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
     classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px

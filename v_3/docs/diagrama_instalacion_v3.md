@@ -5,13 +5,14 @@ Los diagramas están en [`diagramas/`](diagramas/), en los archivos que empiezan
 flujo de la V3 (ISO 5807, colores y conectores): ver «Cómo leerlo» en
 [`diagrama_flujo_v3.md`](diagrama_flujo_v3.md).
 
-Fuente: D16, D19 y D20 de `mapa_v2.md` (2026-10-03), más D7, D8, D9 y D13 para el primer
+Fuente: D16, D19, D20 y D21 de `mapa_v2.md` (2026-10-06), más D7, D8, D9 y D13 para el primer
 arranque. **Todo se hace como administrador y para todo el equipo** (D20).
 
 **Actores** (ver `instalacion_00_leyenda.mmd`):
 
 - **Administrador.** Es una persona, no un proceso, pero aquí es un actor con su propio flujo:
-  es quien teclea los tres pasos y responde lo que pregunta el paso 3.
+  es quien teclea los tres pasos y responde lo que pregunta el paso 3. Es el **desarrollador**
+  de D21: `sistema-ventas instalar` lo registra con ese papel.
 - **SO y gestor de paquetes:** apt o winget, y el script oficial de uv.
 - **uv.**
 - **App:** el comando `sistema-ventas instalar` y el primer arranque de cada usuario.
@@ -25,7 +26,7 @@ arranque. **Todo se hace como administrador y para todo el equipo** (D20).
 | `instalacion_01_administrador_instalacion.mmd` | Administrador | Los tres pasos. El 1 difiere por sistema; el 2 lleva las variables de uv en rutas del sistema (`/opt/sistema-ventas` o Archivos de programa) y la etiqueta del repositorio (D20). |
 | `instalacion_02_gestor_de_paquetes.mmd` | gestor | Instala uv (paso 1) y LibreOffice (cuando lo pide el paso 3), en la versión que ofrezca el sistema. |
 | `instalacion_03_uv.mmd` | uv | `uv tool install` y `uv tool upgrade` desde el repositorio público, con su Python, en rutas del sistema. |
-| `instalacion_04_app_instalar.mmd` | App | `sistema-ventas instalar`: LibreOffice, grupo `tpv_yaeli` y carpeta compartida (D19), usuarios del grupo, código de caja (D20) y acceso directo. |
+| `instalacion_04_app_instalar.mmd` | App | `sistema-ventas instalar`: LibreOffice, grupo `tpv_yaeli` y carpeta compartida (D19), usuarios del grupo, registro de quien instala como desarrollador (D21) y acceso directo. |
 | `instalacion_05_administrador_actualizacion.mmd` | Administrador | Actualizar: pedir que se cierre el sistema y repetir la instalación con la etiqueta nueva (o `uv tool upgrade`). |
 | `instalacion_06_app_primer_arranque.mmd` | App | Primer arranque de cada usuario: candado, perfil propio de LibreOffice con ubicación de confianza y copia de `main.ods`. |
 | `instalacion_99_placa.mmd` | — | Actores y cables entre pines. |
@@ -52,7 +53,7 @@ apuntando a rutas del sistema. Actualizar es el mismo comando con otra etiqueta,
 | `uv_tool_upgrade` | OUT | Comando de actualización | uv | Terminal de administrador |
 | `uv_termino` | IN | ¿Se instaló o actualizó? | uv | Salida del comando |
 | `instalar_sistema` | OUT | `sistema-ventas instalar` | App | Terminal de administrador |
-| `pregunta_admin` | IN | Qué usuarios agregar al grupo, o el código de apertura de caja | App | Terminal |
+| `pregunta_admin` | IN | Qué usuarios agregar al grupo | App | Terminal |
 | `respuesta_admin` | OUT | La respuesta | App | Terminal |
 | `instalar_termino` | IN | Resumen o error | App | Salida del comando |
 
@@ -86,14 +87,15 @@ Almacenamiento: `UV_TOOL_DIR`, en una ruta del sistema, con el entorno del proye
 | `instalar_sistema` | IN | Comando | Administrador | Terminal de administrador |
 | `instalar_paquete` | OUT | Paquetes que faltan | SO y gestor de paquetes | Subproceso |
 | `paquete_instalado` | IN | Resultado | SO y gestor de paquetes | Código de salida |
-| `pregunta_admin` | OUT | Usuarios del grupo o código de caja | Administrador | Terminal |
+| `pregunta_admin` | OUT | Usuarios del grupo | Administrador | Terminal |
 | `respuesta_admin` | IN | La respuesta | Administrador | Terminal |
 | `instalar_termino` | OUT | Resumen o error | Administrador | Salida del comando |
 | `inicio` | IN | Argumentos del entry point | Usuario (menú) | Creación de proceso |
 
 Almacenamiento:
 - `sistema-ventas instalar` crea la carpeta de datos compartida con su grupo (D19), crea
-  `ventas.db` si no existe, guarda el hash del código de caja (D20) y escribe el acceso directo.
+  `ventas.db` si no existe, registra a quien instala como desarrollador en la tabla de usuarios
+  (D21) y escribe el acceso directo.
 - El primer arranque crea el candado, el perfil de LibreOffice y el `main.ods` del usuario.
 
 ## Verificación de pines
@@ -130,13 +132,18 @@ D19 y D20 resolvieron las discrepancias de la ronda anterior:
 
 Quedan como notas:
 
-1. **Volver a iniciar sesión (D19).** En Linux, cada usuario agregado al grupo vuelve a iniciar
+1. **La instalación ya no pide el código de caja (D21).** Lo configura después un usuario con
+   «abrir caja sin límite», desde su propio menú (`flujo_01p`). Los permisos («abrir caja sin
+   límite», «empleada») tampoco se piden aquí: los asigna el desarrollador desde su menú
+   (`flujo_01h`). Queda pendiente, según la sección 5 del mapa, cómo se transfiere el papel de
+   desarrollador o se agrega otro.
+2. **Volver a iniciar sesión (D19).** En Linux, cada usuario agregado al grupo vuelve a iniciar
    sesión una vez. Está como nota en `instalacion_04_app_instalar.mmd`.
-2. **El paso 1 en Linux.** D20 pide todo como administrador y para todo el equipo, pero el
+3. **El paso 1 en Linux.** D20 pide todo como administrador y para todo el equipo, pero el
    script oficial de uv instala uv en la carpeta personal de quien lo corre. Eso basta para el
    administrador, que es quien usa uv; los usuarios solo usan `sistema-ventas`, que el paso 2 ya
    pone en `UV_TOOL_BIN_DIR`. Conviene confirmarlo al probar la instalación.
-3. **Versión mínima de LibreOffice.** Mientras no se defina, `instalacion_04` solo comprueba
+4. **Versión mínima de LibreOffice.** Mientras no se defina, `instalacion_04` solo comprueba
    que LibreOffice esté instalado y, en Linux, que `python3` importe `uno`. No compara la
    versión.
 

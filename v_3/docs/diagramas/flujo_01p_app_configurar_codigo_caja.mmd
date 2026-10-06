@@ -1,24 +1,27 @@
 %% chip: App
-%% 1p. Configurar el código de apertura de caja (D20): solo el administrador; se guarda como hash en ventas.db.
+%% 1p. Configurar el código de autorización de caja (D20, D21): lo hace un usuario con «abrir caja sin límite», nunca el desarrollador.
 flowchart TD
     T0(["Configurar código de caja"])
-    C1["Arma el diálogo: código nuevo<br/>y su confirmación"]
+    DB0[("ventas.db: lee el uso anterior del código:<br/>quién, cuándo y que fue con código")]
+    C1["Arma el diálogo: uso anterior (si lo hay),<br/>código nuevo y su confirmación"]
     oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
     iR1(("IN respuesta_usuario<br/>← Usuario<br/>(código nuevo)")):::ext
     D1{"¿Canceló?"}
+    T2(["Regresa: el código sigue usado<br/>o sin configurar"])
     D2{"¿No está vacío y los<br/>dos campos coinciden?"}
     C2["Arma el aviso: los códigos<br/>no coinciden o están vacíos"]
     oQt2(("OUT ventana_qt<br/>→ Usuario")):::ext
     iR2(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: código inválido)")):::ext
     S1[["Comprobar turno (1l)"]]
     C3["Calcula el hash del código<br/>(hashlib, nunca en texto plano)"]
-    DB1[("ventas.db: guarda el hash<br/>en la configuración")]
+    DB1[("ventas.db: guarda el hash<br/>y marca el código como vigente")]
     T1(["Regresa"])
 
-    T0 --> C1
+    T0 --> DB0
+    DB0 --> C1
     C1 --> oQt1
     iR1 --> D1
-    D1 -- "Sí" --> T1
+    D1 -- "Sí" --> T2
     D1 -- "No" --> D2
     D2 -- "No" --> C2
     C2 --> oQt2

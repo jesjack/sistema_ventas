@@ -1,7 +1,10 @@
 %% chip: App
-%% 1b. Abrir LibreOffice: perfil propio (D13), copia de main.ods (D7), prebake (D4) y arranque de soffice.
+%% 1b. Abrir LibreOffice: marca en el log al reabrir (D22), perfil propio (D13), copia de main.ods (D7), prebake (D4) y arranque de soffice.
 flowchart TD
     T0(["Abrir LibreOffice"])
+    Dn{"¿Es la primera apertura<br/>de esta ejecución de App?"}
+    Bm["sesión de LibreOffice + 1 (RAM)"]
+    Lm[("Log de la ejecución: escribe «=== LibreOffice<br/>abierto de nuevo (sesión N) ===» (D22)")]
     P0{"¿Existe el perfil propio de<br/>LibreOffice del usuario?"}
     P1["Arma el perfil: la carpeta de main.ods como<br/>ubicación de confianza (D13, hay que probarlo)"]
     PF[("Perfil de LibreOffice<br/>del usuario: lo crea")]
@@ -16,7 +19,11 @@ flowchart TD
     S1[["Conectar UNO (1c)"]]
     T1(["Regresa"])
 
-    T0 --> P0
+    T0 --> Dn
+    Dn -- "Sí" --> P0
+    Dn -- "No" --> Bm
+    Bm --> Lm
+    Lm --> P0
     P0 -- "No" --> P1
     P1 --> PF
     PF --> B1

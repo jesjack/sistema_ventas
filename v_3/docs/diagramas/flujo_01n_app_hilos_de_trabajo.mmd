@@ -33,7 +33,7 @@ flowchart TD
     X7["Evento: APERTURA DE CAJA"]
     X8["Evento: FALLO AL ABRIR CAJA"]
     X9["Arma el registro del evento"]
-    DB1[("ventas.db:<br/>registra el evento")]
+    DB1[("ventas.db: registra la apertura con usuario, sesión,<br/>hora y cómo se autorizó; nunca el código (D21)")]
     X10["Arma la fila del evento"]
     oPin(("OUT pintar<br/>→ UNO")):::uno
     X11{"¿Se abrió?"}

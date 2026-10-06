@@ -1,35 +1,46 @@
 %% chip: App
-%% 1o. Log único de la ejecución, vigilante del bucle de Qt y tracebacks legibles para IA (D18).
+%% 1o. Log de la ejecución (la vida de App, D22): un archivo por día con «continúa en / viene de»; vigilante y tracebacks (D18).
 flowchart TD
     iLs(("IN log_soffice<br/>← soffice")):::sof
     iLu(("IN log_uno<br/>← UNO")):::uno
+    iLc(("IN log_camaras<br/>← camera_viewer")):::cam
     TApp(["Línea de la propia App"])
     K2["Antepone proceso, pid y hora"]
-    L1[("Archivo de log de la ejecución:<br/>agrega la línea")]
+    Dd{"¿Cambió el día desde la última línea?"}
+    L2[("Log de ayer: escribe<br/>«continúa en (archivo nuevo)»")]
+    L3[("Log de hoy: escribe<br/>«viene de (archivo de ayer)»")]
+    K3["Usa el log del día"]
+    L1[("Log del día:<br/>agrega la línea")]
     T1(["Espera la siguiente línea"])
     V0(["Cada pocos segundos<br/>(hilo vigilante)"])
     V1{"¿El bucle de Qt respondió a tiempo?"}
     V2["Arma el volcado: en qué línea está cada hilo<br/>(como nucleo/diagnostico.py de la V2)"]
-    L2[("Archivo de log de la ejecución:<br/>agrega el volcado")]
+    L4[("Log del día:<br/>agrega el volcado")]
     VT(["Espera la siguiente revisión"])
     E0(["Excepción no atrapada en cualquier hilo"])
     E1["Arma el traceback para IA: texto plano,<br/>variables locales, proceso, pid, hilo y hora"]
-    L3[("Archivo de log de la ejecución:<br/>agrega el traceback")]
+    L5[("Log del día:<br/>agrega el traceback")]
     E2(["Sigue: el bucle de Qt no se detiene"])
 
     iLs --> K2
     iLu --> K2
+    iLc --> K2
     TApp --> K2
-    K2 --> L1
+    K2 --> Dd
+    Dd -- "Sí" --> L2
+    L2 --> L3
+    L3 --> K3
+    Dd -- "No" --> K3
+    K3 --> L1
     L1 --> T1
     V0 --> V1
     V1 -- "Sí" --> VT
     V1 -- "No" --> V2
-    V2 --> L2
-    L2 --> VT
+    V2 --> L4
+    L4 --> VT
     E0 --> E1
-    E1 --> L3
-    L3 --> E2
+    E1 --> L5
+    L5 --> E2
 
     classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
     classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px

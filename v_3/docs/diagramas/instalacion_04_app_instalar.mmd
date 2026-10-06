@@ -1,5 +1,5 @@
 %% chip: App
-%% 4. sistema-ventas instalar (como administrador): LibreOffice, grupo y carpeta compartida (D19), código de caja y acceso directo (D16, D20).
+%% 4. sistema-ventas instalar (como administrador): LibreOffice, grupo y carpeta compartida (D19), desarrollador (D21) y acceso directo (D16, D20).
 flowchart TD
     iInst(("IN instalar_sistema<br/>← Administrador")):::per
     I1{"¿Tiene permisos de administrador?"}
@@ -31,14 +31,9 @@ flowchart TD
     I13{"¿Ya existe ventas.db?"}
     DB1[("ventas.db: crea el esquema")]
     I14["Las migraciones quedan para<br/>el arranque de App (D16)"]
-    DBh[("ventas.db: lee si hay código de<br/>apertura de caja configurado")]
-    Dh{"¿Hay código configurado?"}
-    I26["Arma la pregunta del código<br/>de apertura de caja (D20)"]
-    oPreg2(("OUT pregunta_admin<br/>→ Administrador")):::per
-    iResp2(("IN respuesta_admin<br/>← Administrador<br/>(código de caja)")):::per
-    I27["Calcula el hash del código (hashlib)"]
-    DBg[("ventas.db: guarda el hash<br/>en la configuración")]
-    I28["Sigue con el acceso directo"]
+    I29[/"Lee quién ejecuta la instalación<br/>(el usuario detrás de la terminal de administrador)"/]
+    DBd[("ventas.db: lo registra como desarrollador<br/>en la tabla de usuarios (D21)")]
+    I28["Sigue con el acceso directo (los permisos de caja<br/>los asigna después el desarrollador, D21)"]
     I15{"¿Linux o Windows?"}
     I16["Arma la entrada del menú<br/>del sistema (.desktop)"]
     I17["Arma el acceso directo del menú<br/>Inicio de todos los usuarios"]
@@ -78,14 +73,9 @@ flowchart TD
     I13 -- "No" --> DB1
     DB1 --> I14
     I13 -- "Sí" --> I14
-    I14 --> DBh
-    DBh --> Dh
-    Dh -- "Sí" --> I28
-    Dh -- "No" --> I26
-    I26 --> oPreg2
-    iResp2 --> I27
-    I27 --> DBg
-    DBg --> I28
+    I14 --> I29
+    I29 --> DBd
+    DBd --> I28
     I28 --> I15
     I15 -- "Linux" --> I16
     I16 --> I18

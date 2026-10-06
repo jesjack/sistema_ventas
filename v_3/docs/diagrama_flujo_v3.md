@@ -7,7 +7,8 @@ Este archivo es el índice del flujo: cómo leerlo, qué hay en cada archivo, la
 la verificación de pareja de pines y las discrepancias.
 
 Cada proceso de la V3 es un **chip** con pines de entrada y salida, como microcontroladores en
-una placa. Fuentes: `mapa_v2.md` (D1–D20, al 2026-10-03), `arranque_v3.md` y `../README.md`.
+una placa. Fuentes: `mapa_v2.md` (D1–D22 y su sección 5, al 2026-10-06), `arranque_v3.md` y
+`../README.md`.
 
 ## Cómo leerlo
 
@@ -19,7 +20,7 @@ Convenciones de ISO 5807 / ANSI X3.5, con las decisiones de forma del usuario:
 | Proceso | Rectángulo `["…"]` | Un paso | Exactamente **una** salida. |
 | Proceso predefinido | Rectángulo con barras `[["…"]]` | Un subflujo dibujado en otro archivo del mismo chip | Exactamente una salida. |
 | Datos | Paralelogramo `[/"…"/]` | Lectura de datos que no vienen de otro chip | Exactamente una salida. |
-| Almacenamiento | Cilindro `[("…")]` | Lectura o escritura de un archivo o base (`ventas.db`, `main.ods`, perfil, `.evt`, log, `log_actual`, candado) | Exactamente **una** entrada y **una** salida. |
+| Almacenamiento | Cilindro `[("…")]` | Lectura o escritura de un archivo o base (`ventas.db`, `main.ods`, perfil, `.evt`, log, candado) | Exactamente **una** entrada y **una** salida. |
 | Decisión | Rombo `{"…"}` | Pregunta | El único que se bifurca; cada salida va etiquetada. |
 | Conector de salida | Círculo `(("OUT …"))` | Pin hacia otro chip | Le llega **una** línea y el camino **termina** ahí. |
 | Conector de entrada | Círculo `(("IN …"))` | Pin desde otro chip | Sale **una** línea y el camino **empieza** ahí. |
@@ -42,52 +43,52 @@ Convenciones de ISO 5807 / ANSI X3.5, con las decisiones de forma del usuario:
   - Cada **OUT** lleva el color del chip **destino** y cada **IN** el del chip de **origen**.
     Son grises si el otro extremo no es un proceso (usuario, SO, impresoras, DVR).
   - Cada **cilindro** lleva el color del proceso que consigue esos datos. Por ejemplo,
-    `ventas.db` va en el color de App (sqlite corre dentro de App); en camera_viewer va en el de
-    camera_viewer, que la lee por su cuenta; y el `.evt` que escribe Basic va en el de Basic.
+    `ventas.db` va en el color de App (sqlite corre dentro de App), y el `.evt` que escribe
+    Basic va en el de Basic.
 
 ## Archivos
 
 | Archivo | Chip | Qué muestra |
 |---|---|---|
 | `flujo_00_leyenda.mmd` | — | Colores de cada proceso. |
-| `flujo_01a_app_arranque.mmd` | App | `log_actual` (D20), candado del usuario, búsqueda de LibreOffice, migraciones, registro de usuario, toma del turno de caja (D8) y código de caja (D20). |
-| `flujo_01b_app_abrir_libreoffice.mmd` | App | Perfil propio (D13), copia de `main.ods` (D7), prebake (D4) y arranque de soffice. |
+| `flujo_01a_app_arranque.mmd` | App | Instancia única con aviso a la App ya abierta (D22), log de la ejecución, LibreOffice, migraciones, usuario y permisos, turno de caja (D8) y código de caja pendiente para quien tiene «abrir caja sin límite» (D21). |
+| `flujo_01b_app_abrir_libreoffice.mmd` | App | Marca en el log al reabrir (D22), perfil propio (D13), copia de `main.ods` (D7), prebake (D4) y arranque de soffice. |
 | `flujo_01c_app_conectar_uno.mmd` | App | Canal con UNO (D18), configuración `consumir_tab` (D14), botones y modo; reintentos. |
-| `flujo_01d_app_eventos.mmd` | App | Lo que App atiende mientras está abierta: Enter, Tab (D14), botones, turno cada ~3 s (D20), cierres y señales de los hilos de trabajo. |
-| `flujo_01e_app_atender_enter.mmd` | App | ControladorVenta: descartes de D17, regla de escaneo (D10), código nuevo, agregar, cobrar o abrir la caja con el código (hash, D20). |
+| `flujo_01d_app_eventos.mmd` | App | Lo que App atiende mientras vive: Enter, Tab (D14), botones, turno cada ~3 s, cierres, reabrir LibreOffice y camera_viewer como hijo (D22), y señales de los hilos de trabajo. |
+| `flujo_01e_app_atender_enter.mmd` | App | ControladorVenta: descartes de D17, regla de escaneo (D10), código nuevo, agregar, cobrar o abrir la caja. |
 | `flujo_01f_app_cobrar.mmd` | App | Cobro con ticket o sin ticket (D15). |
-| `flujo_01g_app_atender_boton.mmd` | App | Cada botón de la hoja. |
-| `flujo_01h_app_menu_administracion.mmd` | App | Menú de administración, solo para el administrador: botones (D12) y código de caja (D20). |
-| `flujo_01i_app_abrir_camaras.mmd` | App | Abrir camera_viewer, con o sin fecha y hora (D11). |
-| `flujo_01j_app_tras_salir_soffice.mmd` | App | Turno perdido, cambio de modo, cierre normal o caída. |
-| `flujo_01k_app_cierre.mmd` | App | Cierre de App. |
+| `flujo_01g_app_atender_boton.mmd` | App | Cada botón de la hoja, incluidos el menú del desarrollador y el código de caja (D21). |
+| `flujo_01h_app_menu_desarrollador.mmd` | App | Menú del desarrollador (D21): botones (D12), permisos por usuario y configuración. |
+| `flujo_01i_app_abrir_camaras.mmd` | App | Abrir camera_viewer, o pedirle una fecha y hora o ponerse al frente si ya está abierto (D11, D22). |
+| `flujo_01j_app_tras_salir_soffice.mmd` | App | Turno perdido, cambio de modo, cierre normal o caída; App sigue viva si camera_viewer está abierto (D22). |
+| `flujo_01k_app_cierre.mmd` | App | Cierre de App, cuando ya no queda nada abierto (D22). |
 | `flujo_01l_app_comprobar_turno.mmd` | App | Comprobación del turno de caja (D8). |
-| `flujo_01m_app_abrir_caja.mmd` | App | Abrir el cajón (botón y código autorizado). |
-| `flujo_01n_app_hilos_de_trabajo.mmd` | App | Hilos de trabajo con tiempo máximo (D18) y su señal en el hilo principal. |
-| `flujo_01o_app_log_y_vigilante.mmd` | App | Log único, vigilante del bucle de Qt y tracebacks para IA (D18). |
-| `flujo_01p_app_configurar_codigo_caja.mmd` | App | Configurar el código de apertura de caja, guardado como hash (D20). |
+| `flujo_01m_app_abrir_caja.mmd` | App | Abrir la caja: permiso, ventana diaria de la empleada o código de un solo uso (D21). |
+| `flujo_01n_app_hilos_de_trabajo.mmd` | App | Hilos de trabajo con tiempo máximo (D18), su señal en el hilo principal y el registro de cada apertura (D21). |
+| `flujo_01o_app_log_y_vigilante.mmd` | App | Log de la ejecución, un archivo por día (D22), vigilante del bucle de Qt y tracebacks para IA (D18). |
+| `flujo_01p_app_configurar_codigo_caja.mmd` | App | Configurar el código de autorización: lo hace un usuario con «abrir caja sin límite», viendo el uso anterior (D21). |
 | `flujo_02_soffice_y_basic.mmd` | soffice | LibreOffice con `main.ods` y su actor Basic (D3 = a, D13, D20). |
 | `flujo_03_uno.mmd` | UNO | Proceso UNO: pinta, captura teclas y sondea los `.evt`. |
-| `flujo_04_camera_viewer.mmd` | camera_viewer | Caja negra (otra instancia): pines de D11 y log que sigue a `log_actual` (D20). |
+| `flujo_04_camera_viewer.mmd` | camera_viewer | Hijo de App con su canal (D22); caja negra por dentro. |
 | `flujo_99_placa.mmd` | — | Solo los bloques y los cables entre pines. |
 
-**Hijos de App:**
-- soffice y UNO: App los lanza y los vigila.
-- camera_viewer: App lo lanza, pero no se cierra con el POS (D11).
-
+**App es el proceso de larga vida y dueña de todo (D22).** Sus hijos son soffice, UNO y
+camera_viewer; App no termina mientras alguno siga abierto. Si el acceso directo se usa con App
+ya abierta, la App nueva le pide a la abierta que vuelva a abrir LibreOffice y termina.
 admin_botones ya no es un proceso (D12), y el archivador de cámaras queda fuera de la V3.
 
 ## Supuestos que quedan
 
-D2, D3, D4, D10, D18 y D20 ya están decididos y no se marcan como supuestos. Quedan:
+D2, D3, D4, D10, D18, D20, D21 y D22 ya están decididos y no se marcan como supuestos. Quedan:
 
-- **Enter se consume** en UNO (`flujo_03_uno.mmd`, A5b). D14 solo fija el Tab; si el Enter no
-  se consume, Calc mueve el cursor y App lo devuelve con `enfocar_calc`, como en la V2.
-- **De dónde sale la fecha y hora** para abrir las cámaras en una venta (`flujo_01i`). D11 pide
-  la función, pero no dice qué parte de la interfaz elige la venta.
-- **Quién es «el administrador».** En la V2 es la constante `ADMIN_RAIZ` (un nombre de usuario).
-  La V3 lo necesita para el menú de administración (`flujo_01g`, `flujo_01h`) y para el aviso de
-  código de caja al arrancar (`flujo_01a`). El mapa no dice cómo se define en la V3.
+- **Enter se consume** en UNO (`flujo_03_uno.mmd`, A5b). D14 solo fija el Tab.
+- **De dónde sale la fecha y hora** para abrir las cámaras en una venta (`flujo_01i`).
+- **Cómo llega a «su propio menú»** un usuario con «abrir caja sin límite» para cambiar el código
+  (D21). Se dibujó como un botón CÓDIGO DE CAJA, visible solo para ellos (`flujo_01g`).
+- **Cuándo recibe camera_viewer las ventas.** Se dibujó al conectarse (`ventas_del_dia`, en
+  `flujo_01d`). Que reciba también cada venta nueva está por definir con la instancia de cámaras.
+- **Mecanismo de `reabrir_libreoffice`:** un canal de instancia única en la carpeta de ejecución
+  del usuario, del mismo tipo que el de UNO.
 
 ## Pines por chip
 
@@ -96,6 +97,8 @@ D2, D3, D4, D10, D18 y D20 ya están decididos y no se marcan como supuestos. Qu
 | Pin | Dir. | Datos | Conecta con | Mecanismo |
 |---|---|---|---|---|
 | `inicio` | IN | Argumentos del entry point | SO | Creación de proceso (menú del sistema o menú Inicio) |
+| `reabrir_libreoffice` | OUT | Pedido de volver a abrir LibreOffice | La App ya abierta del mismo usuario | Canal de instancia única (supuesto: `multiprocessing.connection` en la carpeta de ejecución) |
+| `reabrir_libreoffice` | IN | Ídem | Una App nueva del mismo usuario | Ídem |
 | `ventana_qt` | OUT | Diálogo, selector, aviso o ventana | Usuario | Qt |
 | `respuesta_usuario` | IN | Lo que eligió, escribió o canceló | Usuario | Qt |
 | `arrancar_soffice` | OUT | Perfil propio, `--accept=pipe,name=…`, `--norestore`, ruta | soffice | Creación de proceso |
@@ -116,8 +119,12 @@ D2, D3, D4, D10, D18 y D20 ya están decididos y no se marcan como supuestos. Qu
 | `publicar_botones` | OUT | Lista (id, etiqueta) | UNO | Ídem |
 | `enfocar_calc` | OUT | Foco a Calc, en B4 o sin mover el cursor | UNO | Ídem |
 | `cerrar_libreoffice` | OUT | Orden de cierre | UNO | Ídem |
-| `arrancar_camaras` | OUT | Módulo y, opcionalmente, fecha y hora | camera_viewer | Creación de proceso |
-| `abrir_en_fecha_hora` | OUT | Fecha y hora | camera_viewer | Por definir con la instancia de cámaras (D11) |
+| `arrancar_camaras` | OUT | Dirección y clave del canal y, opcionalmente, fecha y hora | camera_viewer | Creación de proceso (D22) |
+| `camaras_lista` | IN | Conectado al canal | camera_viewer | `multiprocessing.connection` (D22) |
+| `ventas_del_dia` | OUT | Horas de las ventas del día | camera_viewer | Ídem |
+| `abrir_en_fecha_hora` | OUT | Fecha y hora | camera_viewer | Ídem |
+| `mostrar_camaras` | OUT | Ponerse al frente | camera_viewer | Ídem |
+| `log_camaras` | IN | Líneas de log | camera_viewer | Ídem (D22) |
 | `camaras_salio` | IN | Código de salida | camera_viewer | Espera del proceso hijo |
 | `imprimir_ticket` | OUT | Ticket con apertura del cajón | Impresora de tickets | Driver, en un hilo de trabajo (D18) |
 | `ticket_resultado` | IN | ¿Se imprimió? | Impresora de tickets | Resultado de la llamada |
@@ -130,12 +137,11 @@ Almacenamiento de App (cilindros, no pines):
 
 | Archivo | Uso | Dónde vive |
 |---|---|---|
-| `ventas.db` | Ventas, usuarios, sesiones, catálogo, códigos, botones, eventos, **turno de caja** (D8) y **hash del código de caja** (D20) | Carpeta de datos compartida (grupo, D19) |
-| `log_actual` | Ruta del log de esta ejecución, para camera_viewer (D20) | Carpeta de ejecución del usuario |
+| `ventas.db` | Ventas, usuarios y **permisos** (D21), sesiones, catálogo, códigos, botones, eventos, **turno de caja** (D8), **hash y estado del código de autorización** (D20, D21) y cada **apertura de caja** con quién y cómo se autorizó (D21) | Carpeta de datos compartida (grupo, D19) |
 | Candado del usuario | Instancia única por usuario (D8) | Carpeta de ejecución del usuario; lo suelta el SO |
 | Perfil de LibreOffice del usuario | Ubicación de confianza para las macros (D13) | Carpeta de datos del usuario |
 | `main.ods` del usuario | Copia de la plantilla, horneada (D4, D7) | Carpeta del usuario |
-| Archivo de log de la ejecución | Log único (D18) | Carpeta de logs |
+| Log de la ejecución | Un archivo por día, con marcas al reabrir LibreOffice y «continúa en / viene de» (D22) | Carpeta de logs |
 
 ### soffice (con Basic)
 
@@ -189,23 +195,24 @@ carpeta que le pasó UNO (D3, D20).
 Almacenamiento: UNO lee y borra los `.evt` de la carpeta de ejecución del usuario cada 0.5 s
 (D3).
 
-### camera_viewer (caja negra)
+### camera_viewer (hijo de App, caja negra por dentro)
 
 | Pin | Dir. | Datos | Conecta con | Mecanismo |
 |---|---|---|---|---|
-| `arrancar_camaras` | IN | Módulo y, opcionalmente, fecha y hora | App | Creación de proceso |
-| `abrir_en_fecha_hora` | IN | Fecha y hora | App | Por definir (D11) |
+| `arrancar_camaras` | IN | Dirección y clave del canal; fecha y hora opcional | App | Creación de proceso |
+| `ventas_del_dia` | IN | Horas de las ventas del día | App | `multiprocessing.connection` (D22) |
+| `abrir_en_fecha_hora` | IN | Fecha y hora | App | Ídem |
+| `mostrar_camaras` | IN | Ponerse al frente | App | Ídem |
 | `respuesta_camaras` | IN | Interacción del usuario | Usuario | Qt |
 | `dvr_camaras_datos` | IN | Video | DVR | Propio de la caja negra |
+| `camaras_lista` | OUT | Conectado al canal | App | `multiprocessing.connection` |
+| `log_camaras` | OUT | Líneas de log | App | Ídem (D22) |
 | `ventana_camaras` | OUT | Ventana | Usuario | Qt |
 | `dvr_camaras_pedir` | OUT | Pedidos al DVR | DVR | Propio de la caja negra |
-| `camaras_salio` | OUT | Código de salida | App | Fin del proceso |
+| `camaras_salio` | OUT | Código de salida | App | Fin del proceso hijo |
 
-Almacenamiento (todo en el color de camera_viewer):
-- Lee `ventas.db`, solo lectura, para marcar las ventas en su línea de tiempo (D11).
-- Lee `log_actual` antes de escribir cada línea y escribe en el log vigente. Si la ruta cambió,
-  deja «continúa en …» en el viejo y «viene de …» en el nuevo (D20). Por eso ya no hay pin
-  `log_camaras`: su log no pasa por App.
+Almacenamiento: ya no lee `ventas.db` ni `log_actual`. App le pasa las ventas y su log va por el
+canal (D22).
 
 ## Verificación de pines
 
@@ -215,89 +222,93 @@ ningún pin quede suelto.
 | # | Pin | De (OUT) | A (IN) | Mecanismo |
 |---|---|---|---|---|
 | 1 | `inicio` | SO | App | Creación de proceso |
-| 2 | `ventana_qt` | App | Usuario | Qt |
-| 3 | `respuesta_usuario` | Usuario | App | Qt |
-| 4 | `imprimir_ticket` | App | Impresora de tickets | Driver |
-| 5 | `ticket_resultado` | Impresora de tickets | App | Resultado de la llamada |
-| 6 | `abrir_cajon` | App | Impresora de tickets | Driver |
-| 7 | `cajon_resultado` | Impresora de tickets | App | Resultado de la llamada |
-| 8 | `imprimir_etiqueta` | App | Impresora de etiquetas | Driver |
-| 9 | `etiqueta_resultado` | Impresora de etiquetas | App | Resultado de la llamada |
-| 10 | `arrancar_soffice` | App | soffice | Creación de proceso |
-| 11 | `terminar_soffice` | App | soffice | `terminate()` |
-| 12 | `soffice_salio` | soffice | App | Fin de proceso |
-| 13 | `log_soffice` | soffice | App | Tubería |
-| 14 | `arrancar_uno` | App | UNO | Creación de proceso |
-| 15 | `configurar` | App | UNO | Canal |
-| 16 | `pintar` | App | UNO | Canal |
-| 17 | `escribir_producto` | App | UNO | Canal |
-| 18 | `publicar_botones` | App | UNO | Canal |
-| 19 | `enfocar_calc` | App | UNO | Canal |
-| 20 | `cerrar_libreoffice` | App | UNO | Canal |
-| 21 | `uno_listo` | UNO | App | Canal |
-| 22 | `enter_pulsado` | UNO | App | Canal |
-| 23 | `tab_pulsado` | UNO | App | Canal |
-| 24 | `boton_pulsado` | UNO | App | Canal |
-| 25 | `documento_cerrado` | UNO | App | Canal |
-| 26 | `uno_salio` | UNO | App | Fin de proceso |
-| 27 | `log_uno` | UNO | App | Tubería |
-| 28 | `urp_conectar` | UNO | soffice | URP |
-| 29 | `urp_listo` | soffice | UNO | URP |
-| 30 | `api_hoja` | UNO | soffice | URP |
-| 31 | `api_respuesta` | soffice | UNO | URP |
-| 32 | `tecla` | soffice | UNO | Callback URP |
-| 33 | `tecla_respuesta` | UNO | soffice | Retorno del callback |
-| 34 | `invocar_macro` | UNO | soffice (Basic) | Script provider |
-| 35 | `documento_murio` | soffice | UNO | Excepción en la llamada |
-| 36 | `teclado_raton` | Usuario | soffice | Sistema de ventanas |
-| 37 | `pantalla_hoja` | soffice | Usuario | Pantalla |
-| 38 | `arrancar_camaras` | App | camera_viewer | Creación de proceso |
-| 39 | `abrir_en_fecha_hora` | App | camera_viewer | Por definir (D11) |
-| 40 | `camaras_salio` | camera_viewer | App | Fin de proceso |
-| 41 | `ventana_camaras` | camera_viewer | Usuario | Qt |
-| 42 | `respuesta_camaras` | Usuario | camera_viewer | Qt |
-| 43 | `dvr_camaras_pedir` | camera_viewer | DVR | Caja negra |
-| 44 | `dvr_camaras_datos` | DVR | camera_viewer | Caja negra |
+| 2 | `reabrir_libreoffice` | App nueva del mismo usuario | App ya abierta | Canal de instancia única |
+| 3 | `ventana_qt` | App | Usuario | Qt |
+| 4 | `respuesta_usuario` | Usuario | App | Qt |
+| 5 | `imprimir_ticket` | App | Impresora de tickets | Driver |
+| 6 | `ticket_resultado` | Impresora de tickets | App | Resultado de la llamada |
+| 7 | `abrir_cajon` | App | Impresora de tickets | Driver |
+| 8 | `cajon_resultado` | Impresora de tickets | App | Resultado de la llamada |
+| 9 | `imprimir_etiqueta` | App | Impresora de etiquetas | Driver |
+| 10 | `etiqueta_resultado` | Impresora de etiquetas | App | Resultado de la llamada |
+| 11 | `arrancar_soffice` | App | soffice | Creación de proceso |
+| 12 | `terminar_soffice` | App | soffice | `terminate()` |
+| 13 | `soffice_salio` | soffice | App | Fin de proceso |
+| 14 | `log_soffice` | soffice | App | Tubería |
+| 15 | `arrancar_uno` | App | UNO | Creación de proceso |
+| 16 | `configurar` | App | UNO | Canal |
+| 17 | `pintar` | App | UNO | Canal |
+| 18 | `escribir_producto` | App | UNO | Canal |
+| 19 | `publicar_botones` | App | UNO | Canal |
+| 20 | `enfocar_calc` | App | UNO | Canal |
+| 21 | `cerrar_libreoffice` | App | UNO | Canal |
+| 22 | `uno_listo` | UNO | App | Canal |
+| 23 | `enter_pulsado` | UNO | App | Canal |
+| 24 | `tab_pulsado` | UNO | App | Canal |
+| 25 | `boton_pulsado` | UNO | App | Canal |
+| 26 | `documento_cerrado` | UNO | App | Canal |
+| 27 | `uno_salio` | UNO | App | Fin de proceso |
+| 28 | `log_uno` | UNO | App | Tubería |
+| 29 | `urp_conectar` | UNO | soffice | URP |
+| 30 | `urp_listo` | soffice | UNO | URP |
+| 31 | `api_hoja` | UNO | soffice | URP |
+| 32 | `api_respuesta` | soffice | UNO | URP |
+| 33 | `tecla` | soffice | UNO | Callback URP |
+| 34 | `tecla_respuesta` | UNO | soffice | Retorno del callback |
+| 35 | `invocar_macro` | UNO | soffice (Basic) | Script provider |
+| 36 | `documento_murio` | soffice | UNO | Excepción en la llamada |
+| 37 | `teclado_raton` | Usuario | soffice | Sistema de ventanas |
+| 38 | `pantalla_hoja` | soffice | Usuario | Pantalla |
+| 39 | `arrancar_camaras` | App | camera_viewer | Creación de proceso |
+| 40 | `camaras_lista` | camera_viewer | App | Canal |
+| 41 | `ventas_del_dia` | App | camera_viewer | Canal |
+| 42 | `abrir_en_fecha_hora` | App | camera_viewer | Canal |
+| 43 | `mostrar_camaras` | App | camera_viewer | Canal |
+| 44 | `log_camaras` | camera_viewer | App | Canal |
+| 45 | `camaras_salio` | camera_viewer | App | Fin de proceso |
+| 46 | `ventana_camaras` | camera_viewer | Usuario | Qt |
+| 47 | `respuesta_camaras` | Usuario | camera_viewer | Qt |
+| 48 | `dvr_camaras_pedir` | camera_viewer | DVR | Caja negra |
+| 49 | `dvr_camaras_datos` | DVR | camera_viewer | Caja negra |
 
-**Resultado:** los 44 cables tienen su OUT y su IN. Puntos sueltos deliberados:
+**Resultado:** los 49 cables tienen su OUT y su IN. Puntos sueltos deliberados:
 
 - **El código de salida de App no tiene pin**: nadie lo lee.
-- **No hay pin para cerrar camera_viewer**: no se cierra con el POS (D11).
 - **No hay pin para matar a UNO.** Si no arranca, App termina soffice y UNO sale al recibir
   `documento_murio` (`flujo_01c`).
-- **No hay pin entre dos instancias de App** (D20). La App desplazada se entera en su siguiente
-  comprobación del turno, cada ~3 s (`flujo_01d`), o antes de su siguiente acción con efecto.
-- **Algunos datos se pasan por archivo, no por pin:**
-  - Los clics de Basic llegan a UNO por `.evt` (cilindros en `flujo_02` y `flujo_03`).
-  - camera_viewer sabe a qué log escribir por `log_actual` (cilindros en `flujo_01a` y
-    `flujo_04`).
+- **No hay pin hacia la App desplazada por otro usuario** (D20). Se entera en su siguiente
+  comprobación del turno, cada ~3 s (`flujo_01d`). El único pin entre instancias es
+  `reabrir_libreoffice`, entre dos Apps del **mismo** usuario (D22).
+- **Los clics de Basic llegan a UNO por archivo** (`.evt`, cilindros en `flujo_02` y
+  `flujo_03`), no por pin.
 
 ## Discrepancias encontradas
 
-Las discrepancias 1 a 3 de la ronda anterior quedaron resueltas por D20:
-- El aviso a la App desplazada es la comprobación cada ~3 s.
-- UNO le pasa a Basic la ruta de la carpeta de ejecución.
-- El log de camera_viewer sigue a `log_actual`.
+D21 y D22 resolvieron las tres primeras de la ronda anterior:
+- Quién es el administrador: el desarrollador.
+- camera_viewer ya abierto: ahora es hijo de App.
+- Caja con código sin administrador: el código lo configura quien tiene «abrir caja sin límite».
 
 Quedan:
 
-1. **camera_viewer ya abierto (resto de la anterior 3).** Si camera_viewer quedó abierto de una
-   ejecución anterior, la App actual no es su padre: no recibe su `camaras_salio` ni tiene vía
-   para mandarle `abrir_en_fecha_hora` o saber si está abierto (`flujo_01i`). Pendiente con la
-   instancia de cámaras, como pide D20.
-2. **Doble comprobación de «venta en curso».** `flujo_01e` conserva el rombo «¿Hay una venta en
-   curso?» además de los dos descartes de D17. Así se cubre el momento entre que se cierra el
-   diálogo de cobro y `selling = no`. Si sobra, se quita.
-3. **El ticket también abre el cajón.** En la V2, `print_sale` agrega la orden de abrir el cajón
-   al imprimir. Aquí se conservó (`flujo_01f`, `flujo_01n`). Por eso «sin ticket» (D15) abre el
-   cajón con una tarea propia, sin registrar el evento APERTURA DE CAJA: la venta ya queda
-   registrada.
-4. **Caja con código bloqueada sin administrador.** Si al arrancar no hay código de caja y el
-   usuario no es el administrador, `flujo_01a` solo avisa: la apertura con código queda
-   bloqueada (`flujo_01e`) hasta que el administrador lo configure. D20 dice «si falta, en la
-   primera ejecución», sin precisar qué pasa si esa primera ejecución es de una empleada. Como
-   `sistema-ventas instalar` ya pide el código, este caso solo debería pasar si se borró la
-   configuración.
+1. **Doble comprobación de «venta en curso».** `flujo_01e` conserva el rombo «¿Hay una venta en
+   curso?» además de los dos descartes de D17 (sección 5 del mapa, punto 10).
+2. **El ticket también abre el cajón** (sección 5, punto 11). Por eso el cobro sin ticket abre el
+   cajón con una tarea propia, sin evento APERTURA DE CAJA (`flujo_01f`, `flujo_01n`). D21 pide
+   registrar «cada apertura» con cómo se autorizó. Las aperturas por venta, con o sin ticket,
+   quedan registradas como venta, no como apertura. Si se quieren también en el registro de
+   aperturas, habría que agregarlas (autorizada por: venta).
+3. **Enter con el carrito vacío.** En la V2 pedía el código y abría la caja. Aquí lleva a la misma
+   página que el botón ABRIR CAJA (`flujo_01m`), así que también aplican el permiso y la
+   ventana diaria de D21. El mapa no lo dice expresamente.
+4. **Usuario sin ningún permiso de caja.** D21 define «abrir caja sin límite» y «empleada».
+   Un usuario sin ninguno de los dos va directo al código de autorización (`flujo_01m`, rombo
+   «¿Tiene el permiso «empleada»?»). Falta confirmar que ese es el comportamiento querido.
+5. **Reabrir LibreOffice con el turno perdido.** Si a una App la desplazó otro usuario, pero
+   camera_viewer sigue abierto, App sigue viva (D22). Si el mismo usuario vuelve a usar el
+   acceso directo, `flujo_01d` vuelve a tomar el turno antes de abrir LibreOffice, como un
+   arranque nuevo (D8: el último que abre se queda con la caja). El mapa no trata este caso
+   combinado.
 
 ## Cómo se verificó
 
@@ -306,9 +317,11 @@ Con `verificar_iso.py` (Python, solo biblioteca estándar), sobre los archivos `
 
 - Cada `.mmd` es Mermaid puro, sin marcas de bloque, y empieza con `%% chip: X`, `%% placa` o
   `%% leyenda` seguida de un comentario.
-- Cada archivo del conjunto aparece en este índice, y cada archivo que nombra el índice existe.
+- Cada archivo del conjunto aparece en este índice, cada archivo que nombra el índice existe, y
+  cada referencia a una página (`[["… (1x)"]]`) apunta a una página que existe.
 - En cada chip:
-  - Rectángulos, predefinidos y paralelogramos tienen exactamente una salida, sin etiqueta.
+  - Rectángulos, predefinidos y paralelogramos tienen exactamente una salida, sin etiqueta, y al
+    menos una entrada.
   - Cada conector tiene una sola línea: un OUT recibe una y no sale ninguna, y un IN no recibe
     ninguna y sale una. Ninguna arista va de un conector a otro.
   - Cada cilindro tiene exactamente una entrada y una salida.
@@ -319,4 +332,5 @@ Con `verificar_iso.py` (Python, solo biblioteca estándar), sobre los archivos `
     demás nodos llevan el color de su chip; en soffice, también el de Basic.
 - En todo el código: ninguna flecha doble ni hexágono.
 - Cada OUT tiene su IN con el mismo nombre en otro chip o en un extremo gris de la placa, y al
-  revés. Todos los pines aparecen en la placa y en la tabla de verificación.
+  revés. La excepción es `reabrir_libreoffice`, que une dos instancias de App. Todos los pines
+  aparecen en la placa y en la tabla de verificación.

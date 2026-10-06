@@ -1,20 +1,84 @@
 %% chip: App
-%% 1m. Abrir caja (botón ABRIR CAJA y código autorizado): el cajón se abre en un hilo de trabajo (D18).
+%% 1m. Abrir caja (botón ABRIR CAJA y Enter con el carrito vacío): permiso, ventana diaria o código de un solo uso (D21).
 flowchart TD
     T0(["Abrir caja"])
+    DB0[("ventas.db: lee los<br/>permisos del usuario")]
+    D1{"¿Tiene «abrir caja sin límite»?"}
+    A1["Autorizada por: permiso"]
     S1[["Comprobar turno (1l)"]]
-    J0["Arma la apertura del cajón"]
+    D2{"¿Tiene el permiso «empleada»?"}
+    DB1[("ventas.db: lee las aperturas y las<br/>ventas de hoy en esta caja")]
+    D3{"¿Ya se abrió hoy?"}
+    D4{"¿Ya hubo una venta hoy?"}
+    A2["Autorizada por: ventana diaria<br/>(una vez al día, antes de la primera venta)"]
+    S2[["Comprobar turno (1l)"]]
+    A0["Fuera de la ventana: hace falta<br/>el código de autorización (D21)"]
+    DB2[("ventas.db: lee el estado del<br/>código de autorización")]
+    D5{"¿Hay un código vigente?"}
+    A3["Arma el aviso: «Código usado; pide a quien tenga<br/>el permiso que abra la caja» (o sin configurar)"]
+    oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR1(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: código usado)")):::ext
+    A4["Vuelve a Calc"]
+    oEnfA(("OUT enfocar_calc<br/>→ UNO")):::uno
+    A5["Arma el diálogo del código de autorización"]
+    oQt2(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR2(("IN respuesta_usuario<br/>← Usuario<br/>(código de autorización)")):::ext
+    D6{"¿Canceló?"}
+    A6["Calcula el hash del código escrito<br/>(hashlib) y lo compara con el guardado"]
+    D7{"¿Coinciden?"}
+    A7["Arma el aviso: código incorrecto"]
+    oQt3(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR3(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: código incorrecto)")):::ext
+    A8["Vuelve a Calc"]
+    oEnfB(("OUT enfocar_calc<br/>→ UNO")):::uno
+    S3[["Comprobar turno (1l)"]]
+    DB3[("ventas.db: bloquea el código: usado por<br/>este usuario, a esta hora (un solo uso, D21)")]
+    A9["Autorizada por: código"]
+    J0["Arma la apertura del cajón con quién<br/>y cómo se autorizó"]
     PAR1["═══ en paralelo ═══"]:::par
-    S2[["Hilo de trabajo: cajón con evento (1n)"]]
+    S4[["Hilo de trabajo: cajón con evento (1n)"]]
     Tfin(["El resultado llega por señal (1d)"])
     J1["Vuelve a Calc"]
     oEnf(("OUT enfocar_calc<br/>→ UNO")):::uno
 
-    T0 --> S1
+    T0 --> DB0
+    DB0 --> D1
+    D1 -- "Sí" --> A1
+    A1 --> S1
     S1 --> J0
+    D1 -- "No" --> D2
+    D2 -- "Sí" --> DB1
+    DB1 --> D3
+    D3 -- "No" --> D4
+    D4 -- "No" --> A2
+    A2 --> S2
+    S2 --> J0
+    D4 -- "Sí" --> A0
+    D3 -- "Sí" --> A0
+    D2 -- "No" --> A0
+    A0 --> DB2
+    DB2 --> D5
+    D5 -- "No: usado o sin configurar" --> A3
+    A3 --> oQt1
+    iR1 --> A4
+    A4 --> oEnfA
+    D5 -- "Sí" --> A5
+    A5 --> oQt2
+    iR2 --> D6
+    D6 -- "Sí" --> A8
+    D6 -- "No" --> A6
+    A6 --> D7
+    D7 -- "No" --> A7
+    A7 --> oQt3
+    iR3 --> A8
+    A8 --> oEnfB
+    D7 -- "Sí" --> S3
+    S3 --> DB3
+    DB3 --> A9
+    A9 --> J0
     J0 --> PAR1
-    PAR1 --> S2
-    S2 --> Tfin
+    PAR1 --> S4
+    S4 --> Tfin
     PAR1 --> J1
     J1 --> oEnf
 

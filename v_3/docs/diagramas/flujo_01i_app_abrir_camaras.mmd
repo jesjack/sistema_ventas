@@ -1,24 +1,24 @@
 %% chip: App
-%% 1i. Abrir cámaras (D11): camera_viewer es un proceso aparte que no se cierra con el POS.
+%% 1i. Abrir cámaras (D11, D22): camera_viewer es hijo de App; App sabe si está abierto.
 flowchart TD
     T0(["Abrir cámaras"])
+    D1{"¿camera_viewer está abierto?<br/>(camaras_abierto, en RAM)"}
+    C3["Arma el lanzamiento: dirección y clave del canal<br/>y, si se pide, la fecha y hora (D22)"]
+    oCam(("OUT arrancar_camaras<br/>→ camera_viewer")):::cam
     D0{"¿Se pide una fecha y hora concreta?<br/>(de dónde sale: pendiente, D11)"}
-    C1["Arma el lanzamiento sin fecha"]
-    oCam1(("OUT arrancar_camaras<br/>→ camera_viewer")):::cam
-    D1{"¿camera_viewer ya está abierto?<br/>(cómo se sabe: lo define la instancia de cámaras)"}
     C2["Arma la fecha y hora"]
     oFecha(("OUT abrir_en_fecha_hora<br/>→ camera_viewer")):::cam
-    C3["Arma el lanzamiento con la fecha y hora"]
-    oCam2(("OUT arrancar_camaras<br/>→ camera_viewer")):::cam
+    C4["Arma la orden de ponerse al frente"]
+    oMostrar(("OUT mostrar_camaras<br/>→ camera_viewer")):::cam
 
-    T0 --> D0
-    D0 -- "No" --> C1
-    C1 --> oCam1
-    D0 -- "Sí" --> D1
-    D1 -- "Sí" --> C2
-    C2 --> oFecha
+    T0 --> D1
     D1 -- "No" --> C3
-    C3 --> oCam2
+    C3 --> oCam
+    D1 -- "Sí" --> D0
+    D0 -- "Sí" --> C2
+    C2 --> oFecha
+    D0 -- "No" --> C4
+    C4 --> oMostrar
 
     classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
     classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px

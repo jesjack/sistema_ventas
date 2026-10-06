@@ -1,0 +1,79 @@
+%% chip: App
+%% 1h. Menú del desarrollador (D21): botones (D12), permisos por usuario y configuración. El código de caja NO está aquí.
+flowchart TD
+    T0(["Menú del desarrollador"])
+    H0["Arma el menú: botones, permisos<br/>por usuario, configuración o cerrar"]
+    oQt0(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR0(("IN respuesta_usuario<br/>← Usuario<br/>(menú del desarrollador)")):::ext
+    Dm{"¿Qué eligió?"}
+    DB1[("ventas.db: lee botones,<br/>usuarios y visibilidad")]
+    H1["Arma el diálogo con las acciones válidas<br/>descubiertas al arrancar (D18)"]
+    oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR1(("IN respuesta_usuario<br/>← Usuario<br/>(botones)")):::ext
+    D1{"¿Guardó cambios?"}
+    S1[["Comprobar turno (1l)"]]
+    DB2[("ventas.db: guarda<br/>los botones")]
+    H2["Arma la lista nueva de botones<br/>(sin sondeo: App ya sabe que cambió)"]
+    PAR1["═══ en paralelo ═══"]:::par
+    oPub(("OUT publicar_botones<br/>→ UNO")):::uno
+    H3["Vuelve a Calc"]
+    oEnf1(("OUT enfocar_calc<br/>→ UNO")):::uno
+    DB3[("ventas.db: lee usuarios<br/>y sus permisos (D21)")]
+    H4["Arma el diálogo de permisos: «abrir caja<br/>sin límite» o «empleada» por usuario"]
+    oQt2(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR2(("IN respuesta_usuario<br/>← Usuario<br/>(permisos)")):::ext
+    D2{"¿Guardó cambios?"}
+    S2[["Comprobar turno (1l)"]]
+    DB4[("ventas.db: guarda<br/>los permisos")]
+    DB5[("ventas.db: lee<br/>la configuración")]
+    H5["Arma el diálogo de configuración"]
+    oQt3(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR3(("IN respuesta_usuario<br/>← Usuario<br/>(configuración)")):::ext
+    D3{"¿Guardó cambios?"}
+    S3[["Comprobar turno (1l)"]]
+    DB6[("ventas.db: guarda<br/>la configuración")]
+    H6["Vuelve a Calc"]
+    oEnf2(("OUT enfocar_calc<br/>→ UNO")):::uno
+
+    T0 --> H0
+    H0 --> oQt0
+    iR0 --> Dm
+    Dm -- "botones" --> DB1
+    DB1 --> H1
+    H1 --> oQt1
+    iR1 --> D1
+    D1 -- "Sí" --> S1
+    S1 --> DB2
+    DB2 --> H2
+    H2 --> PAR1
+    PAR1 --> oPub
+    PAR1 --> H3
+    H3 --> oEnf1
+    D1 -- "No" --> H6
+    Dm -- "permisos por usuario" --> DB3
+    DB3 --> H4
+    H4 --> oQt2
+    iR2 --> D2
+    D2 -- "Sí" --> S2
+    S2 --> DB4
+    DB4 --> H6
+    D2 -- "No" --> H6
+    Dm -- "configuración" --> DB5
+    DB5 --> H5
+    H5 --> oQt3
+    iR3 --> D3
+    D3 -- "Sí" --> S3
+    S3 --> DB6
+    DB6 --> H6
+    D3 -- "No" --> H6
+    Dm -- "cerrar" --> H6
+    H6 --> oEnf2
+
+    classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px
+    classDef app fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
+    classDef sof fill:#dbeafe,stroke:#1d4ed8,color:#0b1f4d,stroke-width:2px
+    classDef bas fill:#fef9c3,stroke:#a16207,color:#422006,stroke-width:2px
+    classDef uno fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+    classDef cam fill:#ffedd5,stroke:#c2410c,color:#431407,stroke-width:2px
+    classDef ext fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:1px,stroke-dasharray:4 3

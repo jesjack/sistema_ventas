@@ -1,5 +1,5 @@
 %% chip: App
-%% 1e. Atender Enter (ControladorVenta): descartes de D17, regla de escaneo (D10), agregar, cobrar o abrir la caja.
+%% 1e. Atender Enter (ControladorVenta): descartes de D17, regla de escaneo (D10), código nuevo, agregar, cobrar o abrir la caja (D21).
 flowchart TD
     T0(["Atender Enter"])
     D0{"¿Hay un diálogo abierto?"}
@@ -39,21 +39,7 @@ flowchart TD
     oEnfE(("OUT enfocar_calc<br/>→ UNO")):::uno
     D7{"¿El carrito está vacío?"}
     S2[["Cobrar (1f)"]]
-    DBk[("ventas.db: lee el hash del código<br/>de apertura de caja (D20)")]
-    Dk{"¿Hay código configurado?"}
-    N23["Arma el aviso: falta que el administrador<br/>configure el código de caja"]
-    oQt5(("OUT ventana_qt<br/>→ Usuario")):::ext
-    iR5(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: sin código de caja)")):::ext
-    N24["Vuelve a Calc"]
-    oEnfJ(("OUT enfocar_calc<br/>→ UNO")):::uno
-    N18["Arma el diálogo del<br/>código de apertura"]
-    oQt4(("OUT ventana_qt<br/>→ Usuario")):::ext
-    iR4(("IN respuesta_usuario<br/>← Usuario<br/>(código de apertura)")):::ext
-    N22["Calcula el hash del código escrito<br/>(hashlib) y lo compara con el guardado"]
-    D10{"¿Coinciden?"}
-    N21["Vuelve a Calc"]
-    oEnfH(("OUT enfocar_calc<br/>→ UNO")):::uno
-    S3[["Abrir caja y registrar (1m)"]]
+    S3[["Abrir caja (1m)"]]
     T2(["Regresa"])
 
     T0 --> D0
@@ -95,19 +81,7 @@ flowchart TD
     D6 -- "No" --> D7
     D7 -- "No" --> S2
     S2 --> T2
-    D7 -- "Sí" --> DBk
-    DBk --> Dk
-    Dk -- "No" --> N23
-    N23 --> oQt5
-    iR5 --> N24
-    N24 --> oEnfJ
-    Dk -- "Sí" --> N18
-    N18 --> oQt4
-    iR4 --> N22
-    N22 --> D10
-    D10 -- "No" --> N21
-    N21 --> oEnfH
-    D10 -- "Sí" --> S3
+    D7 -- "Sí: abrir la caja, como en la V2" --> S3
     S3 --> T2
 
     classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px

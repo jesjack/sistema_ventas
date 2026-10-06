@@ -1,10 +1,9 @@
 %% chip: App
-%% 1j. Tras salir soffice: turno perdido, cambio de modo, cierre normal o caída.
+%% 1j. Tras salir soffice: cambio de modo, caída, cierre normal o turno perdido. App sigue viva si camera_viewer está abierto (D22).
 flowchart TD
     T0(["Tras salir soffice"])
     D0{"¿Perdió el turno de caja?<br/>(desplazada por otra App, D8)"}
-    S9[["Cierre de App (1k)"]]
-    T9(["Fin de App"])
+    G0["POS cerrado sin turno: no vuelve<br/>a escribir con ese turno"]
     D1{"¿relanzar = sí?<br/>(cambio de modo)"}
     G1["relanzar = no"]
     S1[["Abrir LibreOffice (1b)"]]
@@ -14,22 +13,29 @@ flowchart TD
     D3{"¿Menos de 2 relanzamientos<br/>en 600 s?"}
     G3["Suma un relanzamiento (RAM)"]
     G4["Registra: no se relanza"]
+    Dcam{"¿camera_viewer sigue abierto?"}
+    T3(["Regresa: App sigue viva hasta que se cierren<br/>las cámaras o se reabra LibreOffice (D22)"])
+    S9[["Cierre de App (1k)"]]
+    T9(["Fin de App"])
 
     T0 --> D0
-    D0 -- "Sí" --> S9
-    S9 --> T9
+    D0 -- "Sí" --> G0
+    G0 --> Dcam
     D0 -- "No" --> D1
     D1 -- "Sí" --> G1
     G1 --> S1
     S1 --> T2
     D1 -- "No" --> D2
     D2 -- "Sí" --> G2
-    G2 --> S9
+    G2 --> Dcam
     D2 -- "No o sin motivo" --> D3
     D3 -- "Sí" --> G3
     G3 --> S1
     D3 -- "No" --> G4
-    G4 --> S9
+    G4 --> Dcam
+    Dcam -- "Sí" --> T3
+    Dcam -- "No" --> S9
+    S9 --> T9
 
     classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
     classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px

@@ -1,42 +1,41 @@
 %% chip: camera_viewer
-%% 4. camera_viewer (caja negra, otra instancia; D11). No se cierra con el POS. El orden interno es ilustrativo.
+%% 4. camera_viewer: hijo de App (D22), caja negra por dentro, conectado por multiprocessing.connection. El orden interno es ilustrativo.
 flowchart TD
     iArr(("IN arrancar_camaras<br/>← App")):::app
-    DBc[("ventas.db: lee las horas de las ventas<br/>del día, solo lectura (D11)")]
+    U1["Se conecta al canal de App<br/>con la clave (D22)"]
+    PAR0["═══ en paralelo ═══"]:::par
+    oLista(("OUT camaras_lista<br/>→ App")):::app
     M1[["Visor<br/>(caja negra, otra instancia)"]]
     PAR1["═══ en paralelo ═══"]:::par
-    LC1[("log_actual: lee la ruta del log<br/>vigente antes de escribir (D20)")]
-    LCd{"¿Cambió desde la última vez?"}
-    LC2[("Log viejo: escribe<br/>«continúa en (ruta nueva)»")]
-    LC3[("Log nuevo: escribe<br/>«viene de (ruta vieja)»")]
-    LC5["Usa el log vigente<br/>(sin App abierta, sigue en el último)"]
-    LC4[("Log vigente:<br/>escribe la línea")]
-    TL(["Espera la siguiente línea"])
+    oLog(("OUT log_camaras<br/>→ App")):::app
     oVen(("OUT ventana_camaras<br/>→ Usuario")):::ext
     oDvrP(("OUT dvr_camaras_pedir<br/>→ DVR")):::ext
     iDvrD(("IN dvr_camaras_datos<br/>← DVR")):::ext
+    iVentas(("IN ventas_del_dia<br/>← App")):::app
+    M3["Marca las ventas en su<br/>línea de tiempo (D11)"]
     iFecha(("IN abrir_en_fecha_hora<br/>← App")):::app
-    M2["Salta a esa fecha y hora<br/>(caja negra)"]
+    M2["Salta a esa fecha y hora"]
+    iMostrar(("IN mostrar_camaras<br/>← App")):::app
+    M4["Se pone al frente"]
     iResp(("IN respuesta_camaras<br/>← Usuario")):::ext
     D1{"¿Cerró la ventana?"}
     oSal(("OUT camaras_salio<br/>→ App")):::app
 
-    iArr --> DBc
-    DBc --> M1
+    iArr --> U1
+    U1 --> PAR0
+    PAR0 --> oLista
+    PAR0 --> M1
     M1 --> PAR1
-    PAR1 --> LC1
-    LC1 --> LCd
-    LCd -- "Sí" --> LC2
-    LC2 --> LC3
-    LC3 --> LC5
-    LCd -- "No" --> LC5
-    LC5 --> LC4
-    LC4 --> TL
+    PAR1 --> oLog
     PAR1 --> oVen
     PAR1 --> oDvrP
     iDvrD --> M1
+    iVentas --> M3
+    M3 --> M1
     iFecha --> M2
     M2 --> M1
+    iMostrar --> M4
+    M4 --> M1
     iResp --> D1
     D1 -- "No" --> M1
     D1 -- "Sí" --> oSal

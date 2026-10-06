@@ -1,15 +1,14 @@
 %% chip: App
-%% 1a. Arranque de App: candado del usuario, LibreOffice, base de datos y turno de caja.
+%% 1a. Arranque de App (D22: proceso de larga vida): instancia única, LibreOffice, base, turno de caja y código de caja (D21).
 flowchart TD
     iInicio(("IN inicio<br/>← SO")):::ext
-    A1["Abre el log de esta ejecución;<br/>arranca el hilo del log y el vigilante (1o)"]
-    LA[("log_actual en la carpeta de ejecución: escribe<br/>la ruta del log de esta ejecución (D20)")]
     K1[("Candado del usuario:<br/>intenta tomarlo (D8)")]
     D1{"¿Lo obtuvo?"}
-    A2["Arma el aviso:<br/>el sistema ya está abierto"]
-    oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
-    iR1(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: ya abierto)")):::ext
-    T2(["Fin de App"])
+    A2["Arma el aviso a la App ya abierta:<br/>que vuelva a abrir LibreOffice (D22)"]
+    PAR0["═══ en paralelo ═══"]:::par
+    oReabrir(("OUT reabrir_libreoffice<br/>→ App ya abierta del mismo usuario")):::app
+    T2(["Fin de esta App: la abierta se encarga"])
+    A1["Abre el log de esta ejecución (la vida de App, D22);<br/>arranca el hilo del log y el vigilante (1o)"]
     A3["Busca LibreOffice y su Python:<br/>PATH o registro (D9)"]
     D2{"¿Los encontró?"}
     A4["Arma el aviso:<br/>falta LibreOffice"]
@@ -17,7 +16,7 @@ flowchart TD
     iR2(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: falta LibreOffice)")):::ext
     T3(["Fin de App"])
     DB0[("ventas.db: aplica las<br/>migraciones pendientes (D16)")]
-    DB1[("ventas.db:<br/>registra usuario y sesión")]
+    DB1[("ventas.db: registra usuario y sesión;<br/>lee sus permisos (D21)")]
     D4{"¿Se registró?"}
     A8["Arma el aviso:<br/>sin botones personalizados"]
     oQt3(("OUT ventana_qt<br/>→ Usuario")):::ext
@@ -25,25 +24,22 @@ flowchart TD
     A9["Arma la toma del turno de caja"]
     DB2[("ventas.db: en una transacción, turno + 1<br/>y la sesión anterior queda «desplazada»<br/>por este usuario (D8)")]
     A7["Guarda su número de turno (RAM)"]
-    DBc[("ventas.db: lee si hay código de<br/>apertura de caja configurado (D20)")]
-    Dc{"¿Hay código configurado?"}
-    Dadm{"¿El usuario es el administrador?"}
+    Dp{"¿Tiene «abrir caja sin límite»? (D21)"}
+    DBc[("ventas.db: lee el estado del<br/>código de autorización (D21)")]
+    Dc{"¿El código está bloqueado<br/>o sin configurar?"}
     S1[["Configurar código de caja (1p)"]]
-    A11["Arma el aviso: la caja con código queda bloqueada<br/>hasta que el administrador configure el código"]
-    oQt4(("OUT ventana_qt<br/>→ Usuario")):::ext
-    iR4(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: sin código de caja)")):::ext
-    A10["modo = normal;<br/>contador de caídas = 0 (RAM)"]
+    A10["modo = normal; contador de caídas = 0;<br/>sesión de LibreOffice = 1 (RAM)"]
     S2[["Abrir LibreOffice (1b)"]]
     T4(["Queda atendiendo eventos (1d)"])
 
-    iInicio --> A1
-    A1 --> LA
-    LA --> K1
+    iInicio --> K1
     K1 --> D1
-    D1 -- "No" --> A2
-    A2 --> oQt1
-    iR1 --> T2
-    D1 -- "Sí" --> A3
+    D1 -- "No: ya hay una App de este usuario" --> A2
+    A2 --> PAR0
+    PAR0 --> oReabrir
+    PAR0 --> T2
+    D1 -- "Sí" --> A1
+    A1 --> A3
     A3 --> D2
     D2 -- "No" --> A4
     A4 --> oQt2
@@ -57,15 +53,13 @@ flowchart TD
     D4 -- "Sí" --> A9
     A9 --> DB2
     DB2 --> A7
-    A7 --> DBc
+    A7 --> Dp
+    Dp -- "No" --> A10
+    Dp -- "Sí" --> DBc
     DBc --> Dc
-    Dc -- "Sí" --> A10
-    Dc -- "No" --> Dadm
-    Dadm -- "Sí" --> S1
+    Dc -- "No" --> A10
+    Dc -- "Sí" --> S1
     S1 --> A10
-    Dadm -- "No" --> A11
-    A11 --> oQt4
-    iR4 --> A10
     A10 --> S2
     S2 --> T4
 

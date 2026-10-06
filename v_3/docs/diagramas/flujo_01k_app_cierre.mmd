@@ -1,12 +1,11 @@
 %% chip: App
-%% 1k. Cierre de App. camera_viewer sigue abierto (D11); el candado lo suelta el SO.
+%% 1k. Cierre de App: solo cuando ya no queda nada abierto (D22). El candado lo suelta el SO.
 flowchart TD
     T0(["Cierre de App"])
     D0{"¿Perdió el turno de caja?"}
     H0["No escribe nada: la sesión ya quedó<br/>marcada como desplazada (D8)"]
     S1[["Comprobar turno (1l)"]]
     DB1[("ventas.db: cierra la sesión,<br/>exitosa o no")]
-    H1["Deja camera_viewer abierto (D11)"]
     T1(["Regresa"])
 
     T0 --> D0
@@ -14,8 +13,7 @@ flowchart TD
     H0 --> T1
     D0 -- "No" --> S1
     S1 --> DB1
-    DB1 --> H1
-    H1 --> T1
+    DB1 --> T1
 
     classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px
     classDef par fill:#15803d,stroke:#111827,color:#ffffff,stroke-width:2px

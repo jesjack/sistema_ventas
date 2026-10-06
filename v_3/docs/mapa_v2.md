@@ -356,8 +356,55 @@ soffice si UNO no arranca en 30 s). La lista completa de 68 pines está en ese a
     teclado de D1, pintar tablas y macros. **Tarea pendiente, con el prototipo.**
   - **Código de apertura de caja:** sale del código fuente (en la V2 está en `nucleo/config.py`,
     público en GitHub). Se guarda como hash (`hashlib`, stdlib) en la configuración de `ventas.db`,
-    nunca en texto plano ni en un `.env`. Se pide en `sistema-ventas instalar`; si falta, en la
-    primera ejecución; se cambia desde un menú solo para el administrador.
+    nunca en texto plano ni en un `.env`. **Corregido por D21:** no lo pide la instalación ni lo
+    conoce el desarrollador. Lo configura un usuario con el permiso "abrir caja sin límite".
+- **D21. Papeles, permisos y apertura de caja — DECIDIDO (2026-10-06).** Sale del uso real: la
+  dueña le daba el código a cada empleada nueva, y la empleada lo usaba una vez al día para
+  contar el cambio. El código no autorizaba nada.
+  - **Desarrollador:** quien instala (hoy jesjack). Tiene el menú de administración (botones,
+    configuración, permisos) y configura el sistema para que la dueña lo tenga fácil. Sustituye a
+    "administrador" y a `ADMIN_RAIZ` de la V2.
+  - **Permisos por usuario, no puestos.** Pensado para más locales en el futuro: nada lleva
+    nombres en el código. Los asigna el desarrollador desde su menú, como la visibilidad de
+    botones de la V2.
+    - **"Abrir caja sin límite"** (hoy: nancy, la dueña, y miriamyaelicastanedaaparicio, su hija,
+      de confianza): botón "Abrir caja" siempre disponible, sin código.
+    - **Empleada** (hoy: emilymaya): botón "Abrir caja" habilitado **una vez al día por caja y
+      solo antes de la primera venta**, para contar el cambio. Hoy no hay segundas empleadas; si
+      hay cambio de turno, se revisa.
+  - **Aperturas fuera de esa ventana** (cambiar dinero a un vecino, pagar a un repartidor, una
+    devolución, recontar): la empleada pulsa "Abrir caja" y se pide el **código de autorización**,
+    que solo conocen los usuarios con "abrir caja sin límite". Una de ellas lo teclea o se lo
+    dice en ese momento. Así el código vuelve a ser una autorización real.
+  - El código se guarda como hash (D20). Lo configura y lo cambia un usuario con "abrir caja sin
+    límite", desde su propio menú; si no hay código, se le pide la primera vez que entra. El
+    desarrollador no lo conoce ni lo pide la instalación.
+  - **Código de un solo uso (decidido 2026-10-06).** Si la dueña se lo dicta a la empleada, la
+    empleada lo conoce y deja de autorizar; el sistema no puede saber quién lo tecleó. Por eso,
+    después de usarse, el código **queda bloqueado**. Si la empleada lo intenta de nuevo, ve
+    "Código usado; pide a Nancy o a Miriam que abran la caja". La siguiente vez que entra
+    cualquier usuario con "abrir caja sin límite", se le pide un código nuevo y se le muestra el
+    uso anterior (quién, cuándo, autorizada con código). Mientras tanto, la empleada sigue
+    vendiendo (cada venta con ticket abre el cajón) y la dueña puede abrir en persona sin código.
+  - Mejora futura, solo si hiciera falta autorizar a distancia con frecuencia: códigos TOTP
+    (cambian cada 30 s en una app del teléfono de la dueña; estándar, implementable con la
+    stdlib). Por ahora no.
+  - Cada apertura se registra con usuario, sesión, hora y cómo se autorizó (permiso, ventana
+    diaria o código). Nunca se guarda el código; en la V2 `autorizaciones_codigos` lo guarda en
+    texto plano.
+- **D22. App de larga vida y cámaras como hijo — DECIDIDO (2026-10-06).** Amplía D5 y D11.
+  - App es el proceso de larga vida y dueña de todo: POS (LibreOffice + UNO) y cámaras. No se
+    cierra mientras quede algo abierto; cuando se cierra lo último, App termina.
+  - Instancia única por usuario (D8): si App ya corre, el acceso directo le avisa que vuelva a
+    abrir LibreOffice, en vez de abrir otra App.
+  - camera_viewer es **proceso hijo de App**, aislado (OpenCV y el video son lo más frágil; un
+    fallo no tumba la caja), conectado por el mismo tipo de canal que UNO. App sabe si está
+    abierto, le pide saltar a una fecha y hora y le pasa las ventas. Sustituye a "camera_viewer
+    sobrevive a App" de D11.
+  - **Logs:** una ejecución = la vida de App. Al reabrir LibreOffice se sigue en el mismo archivo
+    con una marca (`=== LibreOffice abierto de nuevo (sesión N) ===`); solo se cambia de archivo
+    al cambiar el día, con el enlace "continúa en / viene de". El `log_actual` de D20 deja de
+    hacer falta: camera_viewer escribe por el canal de App.
 - **Archivador de cámaras — fuera de la V3 (2026-10-02).** Por la salud del DVR. En la V2 ya está
   desactivado con `share/runtime/archivador_desactivado`: el POS lo lanza, pero sale sin tocar
   el DVR.
@@ -400,19 +447,39 @@ Lo que queda sin decidir o sin medir después de cerrar D1–D20. Los diagramas 
 
 **Por decidir**
 
-1. **¿Quién es "el administrador" en la V3?** En la V2 es una constante en el código
-   (`ADMIN_RAIZ = "jesjack"` en `nucleo/config.py`). La V3 lo necesita para el menú de
-   administración (`flujo_01h`), para configurar el código de caja (`flujo_01p`) y para el aviso
-   de `flujo_01a`. Propuesta: una marca de administrador en la tabla de usuarios de `ventas.db`,
-   que `sistema-ventas instalar` asigna a quien instala y que se cambia desde el menú, en vez de
-   un nombre escrito en el código.
-2. **camera_viewer abierto desde una ejecución anterior.** Como sobrevive al cierre del POS (D11),
-   la App nueva no es su padre. Falta definir cómo sabe si ya está abierto, cómo le pide saltar a
-   una fecha y hora (`abrir_en_fecha_hora`) y qué significa `camaras_salio`. **Se define con la
-   instancia de cámaras.** El log ya está resuelto (D20: `log_actual`).
-3. **Caja con código sin administrador presente.** Si al arrancar no hay código configurado y el
-   usuario no es el administrador, solo se avisa y la caja con código queda bloqueada. Solo
-   debería pasar si se borró la configuración, porque `instalar` ya pide el código.
+1. ~~¿Quién es "el administrador" en la V3?~~ **Resuelto (2026-10-06): el usuario que instala,
+   con el papel de "desarrollador"** (ver D21).
+   `sistema-ventas instalar` lo marca como administrador en la tabla de usuarios de `ventas.db`
+   (sustituye a `ADMIN_RAIZ` de la V2). Pendiente: cómo se transfiere o se agrega otro desde el
+   menú de administración.
+2. ~~camera_viewer abierto desde una ejecución anterior~~ **Resuelto (2026-10-06): ver D22.**
+   - Idea del usuario: las cámaras corren en la misma App Qt, que no se cierra mientras las
+     cámaras sigan abiertas. El acceso directo, si la App ya corre, le pide que vuelva a abrir
+     LibreOffice y lo demás. Cuando se cierra lo último que quedaba, la App sí se cierra.
+   - Ajuste propuesto: App como proceso de larga vida y dueña de todo (POS, LibreOffice,
+     cámaras), pero **camera_viewer como proceso hijo de App** (aislado: OpenCV y el video son lo
+     más frágil; un fallo no debe tumbar la caja), conectado por el mismo tipo de canal que UNO.
+     App sabe siempre si está abierto, le pide saltar a una hora y le pasa las ventas.
+   - Instancia única por usuario (D8) con aviso a la App ya abierta: patrón convencional de
+     aplicación de escritorio.
+   - **Logs:** una ejecución = la vida de App. Se sigue en el mismo archivo al reabrir
+     LibreOffice, con una marca (`=== LibreOffice abierto de nuevo (sesión N) ===`). Solo se cambia
+     de archivo al cambiar el día, con el enlace "continúa en / viene de" de D20.
+   - Confirmado por el usuario: cámaras como proceso hijo de App. Falta coordinar con la
+     instancia de cámaras el canal App ↔ camera_viewer.
+3. ~~Código de apertura de caja: ¿uno solo o uno por usuario?~~ **Resuelto (2026-10-06): ver
+   D21.** Contexto de la discusión:
+   - Caso límite actual: si el código no está configurado (p. ej. se borró la configuración) y
+     quien abre el sistema no es el administrador, no puede abrir la caja con código hasta que
+     el administrador lo configure. Con el código pedido en la instalación, casi no ocurre.
+   - Idea del usuario: cada usuario inventa su propio código la primera vez que abre la caja.
+     Cambia el propósito: un código único **autoriza** (solo quien la dueña elija lo conoce); uno
+     por usuario inventado libremente solo **identifica**, y el usuario ya está identificado por
+     su sesión del SO (solo protege si otra persona usa una sesión ajena abierta).
+   - Pregunta abierta para el usuario: ¿el código sirve para autorizar o para saber quién abrió?
+     Para saber quién abrió, cada apertura ya puede guardar usuario y sesión.
+   - Nota: la V2 guarda el código en texto plano en `autorizaciones_codigos` en cada apertura. En
+     la V3 no se guarda el código, sino quién lo usó.
 
 **Por medir o probar (con el prototipo)**
 
@@ -439,6 +506,10 @@ Lo que queda sin decidir o sin medir después de cerrar D1–D20. Los diagramas 
 
 12. El código de apertura de caja de la V2 (`7410`, en `nucleo/config.py`) es público en el
     repositorio de GitHub. Conviene cambiarlo en la V2.
-13. Lector de códigos con distribución de teclado de EE. UU.: `SN:GLH…` llega como `SNÑGLH…`
-    (D1). Se corrige configurando el lector en español o traduciendo esos caracteres.
+13. **Posibilidad, a revisar más adelante:** lector de códigos con distribución de teclado de
+    EE. UU.: `SN:GLH…` llega como `SNÑGLH…` (D1). En la práctica casi no estorba: los códigos
+    numéricos salen igual y el lector siempre traduce igual, así que el código se registra y se
+    encuentra bien. Solo afectaría si se compara con texto tecleado a mano o si se imprime una
+    etiqueta con ese código (Code 128 no admite la `Ñ`). Si hiciera falta: configurar el lector
+    en español o traducir esos caracteres.
 
