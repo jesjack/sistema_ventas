@@ -83,6 +83,12 @@ flowchart TD
     B5["Arma desktop.terminate()"]
     oApiB5(("OUT api_hoja<br/>→ soffice")):::sof
     iRespB(("IN api_respuesta<br/>← soffice<br/>(órdenes de App y macros)")):::sof
+    iLeer(("IN leer_seleccion<br/>← App")):::app
+    B6["Arma la lectura de la fila seleccionada<br/>en VENTAS REALIZADAS (D23)"]
+    oApiB6(("OUT api_hoja<br/>→ soffice")):::sof
+    iRespS(("IN api_respuesta<br/>← soffice<br/>(fila seleccionada)")):::sof
+    B7["Arma el mensaje con la fila<br/>(o vacío si no hay una venta)"]
+    oSelL(("OUT seleccion_leida<br/>→ App")):::app
 
     iArr --> U1
     U1 --> U2
@@ -152,6 +158,10 @@ flowchart TD
     iCer --> B5
     B5 --> oApiB5
     iRespB --> TB
+    iLeer --> B6
+    B6 --> oApiB6
+    iRespS --> B7
+    B7 --> oSelL
 
     classDef default fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
     classDef par fill:#0f766e,stroke:#111827,color:#ffffff,stroke-width:2px

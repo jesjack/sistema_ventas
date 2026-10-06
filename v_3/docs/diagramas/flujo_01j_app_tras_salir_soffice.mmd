@@ -3,7 +3,9 @@
 flowchart TD
     T0(["Tras salir soffice"])
     D0{"¿Perdió el turno de caja?<br/>(desplazada por otra App, D8)"}
-    G0["POS cerrado sin turno: no vuelve<br/>a escribir con ese turno"]
+    G0["App se cierra entera: ya pidió<br/>cerrar las cámaras (1l, D23)"]
+    Dcam2{"¿camera_viewer sigue abierto?"}
+    T4(["Regresa: se cierra al llegar<br/>camaras_salio (1d)"])
     D1{"¿relanzar = sí?<br/>(cambio de modo)"}
     G1["relanzar = no"]
     S1[["Abrir LibreOffice (1b)"]]
@@ -20,7 +22,9 @@ flowchart TD
 
     T0 --> D0
     D0 -- "Sí" --> G0
-    G0 --> Dcam
+    G0 --> Dcam2
+    Dcam2 -- "Sí" --> T4
+    Dcam2 -- "No" --> S9
     D0 -- "No" --> D1
     D1 -- "Sí" --> G1
     G1 --> S1

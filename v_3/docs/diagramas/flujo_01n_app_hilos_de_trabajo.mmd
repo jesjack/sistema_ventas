@@ -38,6 +38,8 @@ flowchart TD
     oPin(("OUT pintar<br/>→ UNO")):::uno
     X11{"¿Se abrió?"}
     X12["Registra el fallo del cajón<br/>(la venta ya quedó registrada)"]
+    X13["Arma la apertura: autorizada por venta (D23)"]
+    DB2[("ventas.db: registra la apertura con usuario,<br/>sesión, hora y «autorizada por: venta»")]
 
     T0 --> W1
     W1 -- "ticket" --> W2
@@ -57,7 +59,7 @@ flowchart TD
 
     R0 --> X1
     X1 -- "ticket" --> X2
-    X2 -- "Sí" --> TE
+    X2 -- "Sí: el ticket abrió el cajón" --> X13
     X2 -- "No o tiempo agotado" --> X3
     X3 --> TE
     X1 -- "etiqueta" --> X4
@@ -72,8 +74,10 @@ flowchart TD
     X9 --> DB1
     DB1 --> X10
     X10 --> oPin
-    X1 -- "cajón sin evento (venta sin ticket)" --> X11
-    X11 -- "Sí" --> TE
+    X1 -- "cajón de venta sin ticket" --> X11
+    X11 -- "Sí" --> X13
+    X13 --> DB2
+    DB2 --> TE
     X11 -- "No o tiempo agotado" --> X12
     X12 --> TE
 

@@ -392,6 +392,24 @@ soffice si UNO no arranca en 30 s). La lista completa de 68 pines está en ese a
   - Cada apertura se registra con usuario, sesión, hora y cómo se autorizó (permiso, ventana
     diaria o código). Nunca se guarda el código; en la V2 `autorizaciones_codigos` lo guarda en
     texto plano.
+- **D23. Detalles de la quinta ronda — DECIDIDO (2026-10-06).**
+  - **Registro de aperturas:** las aperturas por venta (con ticket o sin ticket) también entran al
+    registro de aperturas, con "autorizada por: venta". Así cada vez que se abrió el cajón queda en
+    un solo lugar.
+  - **Enter con el carrito vacío** sigue exactamente las reglas del botón "Abrir caja" (permiso,
+    ventana diaria de la empleada o código).
+  - **Usuario sin ningún permiso de caja** (ni "sin límite" ni empleada): va directo al código.
+  - **App desplazada:** al perder el turno (D8), App se cierra entera, **cámaras incluidas**. Ya
+    no existe el caso de "App desplazada que sigue viva por las cámaras y retoma el turno".
+  - **Sin botón "CÓDIGO DE CAJA":** quien tiene "sin límite" usa el botón "Abrir caja" de siempre.
+    Como el código se bloquea tras cada uso, el sistema le pide uno nuevo automáticamente al
+    entrar; esa es la única forma de configurarlo.
+  - **Ventas nuevas en camera_viewer:** App le avisa cada venta nueva por el canal, y su marca
+    aparece al instante en la línea de tiempo (no solo al conectarse).
+  - **Elegir la venta para ver las cámaras:** se selecciona una fila de "VENTAS REALIZADAS" en la
+    hoja y se pulsa el botón "VER EN CÁMARAS"; UNO lee la hora de la fila seleccionada y App abre
+    las cámaras (o salta, si ya están abiertas) a esa hora. Si no hay fila de venta seleccionada,
+    aviso.
 - **D22. App de larga vida y cámaras como hijo — DECIDIDO (2026-10-06).** Amplía D5 y D11.
   - App es el proceso de larga vida y dueña de todo: POS (LibreOffice + UNO) y cámaras. No se
     cierra mientras quede algo abierto; cuando se cierra lo último, App termina.

@@ -1,15 +1,22 @@
 %% chip: App
-%% 1l. Comprobar turno de caja (D8): antes de cada acción con efecto y de forma periódica.
+%% 1l. Comprobar turno de caja (D8): antes de cada acción con efecto y cada ~3 s. Si lo perdió, App se cierra entera, cámaras incluidas (D23).
 flowchart TD
     T0(["Comprobar turno"])
     DB1[("ventas.db: lee el<br/>turno vigente")]
     D0{"¿Su número de turno<br/>sigue siendo el vigente?"}
     T1(["Regresa"])
-    I1["desplazada = sí; arma el aviso y la orden de cierre<br/>(el carrito a medias se pierde, D8)"]
+    I1["desplazada = sí; arma el aviso<br/>(el carrito a medias se pierde, D8)"]
     PAR1["═══ en paralelo ═══"]:::par
     oQt(("OUT ventana_qt<br/>→ Usuario")):::ext
+    Ds{"¿soffice está abierto?"}
+    I2["Arma la orden de cierre de LibreOffice"]
     oCerrar(("OUT cerrar_libreoffice<br/>→ UNO")):::uno
-    T2(["No regresa: la acción se cancela"])
+    Tns(["Sin LibreOffice que cerrar"])
+    Dc{"¿camera_viewer está abierto?"}
+    I3["Arma la orden de cierre de las cámaras (D23)"]
+    oCerrarCam(("OUT cerrar_camaras<br/>→ camera_viewer")):::cam
+    Tnc(["Sin cámaras que cerrar"])
+    T2(["No regresa: la acción se cancela; App termina<br/>al cerrarse lo último (1j, 1d)"])
 
     T0 --> DB1
     DB1 --> D0
@@ -17,7 +24,14 @@ flowchart TD
     D0 -- "No" --> I1
     I1 --> PAR1
     PAR1 --> oQt
-    PAR1 --> oCerrar
+    PAR1 --> Ds
+    Ds -- "Sí" --> I2
+    I2 --> oCerrar
+    Ds -- "No" --> Tns
+    PAR1 --> Dc
+    Dc -- "Sí" --> I3
+    I3 --> oCerrarCam
+    Dc -- "No" --> Tnc
     PAR1 --> T2
 
     classDef default fill:#dcfce7,stroke:#15803d,color:#0b3d1c,stroke-width:2px

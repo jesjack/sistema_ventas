@@ -23,14 +23,14 @@ flowchart LR
     APP -- "arrancar_soffice, terminar_soffice" --> SOF
     SOF -- "soffice_salio, log_soffice" --> APP
     APP -- "arrancar_uno" --> UNOB
-    APP -- "configurar, pintar, escribir_producto,<br/>publicar_botones, enfocar_calc,<br/>cerrar_libreoffice" --> UNOB
-    UNOB -- "uno_listo, enter_pulsado,<br/>tab_pulsado, boton_pulsado,<br/>documento_cerrado" --> APP
+    APP -- "configurar, pintar, escribir_producto,<br/>publicar_botones, enfocar_calc,<br/>cerrar_libreoffice, leer_seleccion" --> UNOB
+    UNOB -- "uno_listo, enter_pulsado,<br/>tab_pulsado, boton_pulsado,<br/>documento_cerrado, seleccion_leida" --> APP
     UNOB -- "uno_salio, log_uno" --> APP
     UNOB -- "urp_conectar, api_hoja,<br/>tecla_respuesta, invocar_macro" --> SOF
     SOF -- "urp_listo, api_respuesta,<br/>tecla, documento_murio" --> UNOB
     USR -- "teclado_raton" --> SOF
     SOF -- "pantalla_hoja" --> USR
-    APP -- "arrancar_camaras, abrir_en_fecha_hora,<br/>mostrar_camaras, ventas_del_dia" --> CAM
+    APP -- "arrancar_camaras, abrir_en_fecha_hora,<br/>mostrar_camaras, ventas_del_dia,<br/>venta_nueva, cerrar_camaras" --> CAM
     CAM -- "camaras_lista, camaras_salio, log_camaras" --> APP
     CAM -- "ventana_camaras" --> USR
     USR -- "respuesta_camaras" --> CAM

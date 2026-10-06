@@ -21,7 +21,6 @@ flowchart TD
     iBoton(("IN boton_pulsado<br/>← UNO")):::uno
     S2[["Atender botón (1g)"]]
     Tturno(["Cada ~3 s (D8, D20)"])
-    Dpos{"¿El POS está abierto?"}
     S5[["Comprobar turno (1l)"]]
     iDoc(("IN documento_cerrado<br/>← UNO")):::uno
     E6["Anota el motivo:<br/>cierre normal o caída"]
@@ -34,9 +33,7 @@ flowchart TD
     Dr{"¿soffice está abierto?"}
     E10["Arma el foco: trae Calc al frente"]
     oEnf3(("OUT enfocar_calc<br/>→ UNO")):::uno
-    E11["Arma la toma del turno de caja (D8)"]
-    DB4[("ventas.db: en una transacción, turno + 1<br/>y la sesión anterior queda «desplazada»")]
-    E12["Guarda su número de turno (RAM)"]
+    S9[["Comprobar turno (1l)"]]
     S6[["Abrir LibreOffice (1b)"]]
     iCamL(("IN camaras_lista<br/>← camera_viewer")):::cam
     E13["camaras_abierto = sí (RAM)"]
@@ -69,9 +66,7 @@ flowchart TD
     E4 --> oEnf2
     iBoton --> S2
     S2 --> TW
-    Tturno --> Dpos
-    Dpos -- "Sí" --> S5
-    Dpos -- "No" --> TW
+    Tturno --> S5
     S5 --> TW
     iDoc --> E6
     E6 --> TW
@@ -84,10 +79,8 @@ flowchart TD
     iReabrir --> Dr
     Dr -- "Sí" --> E10
     E10 --> oEnf3
-    Dr -- "No" --> E11
-    E11 --> DB4
-    DB4 --> E12
-    E12 --> S6
+    Dr -- "No" --> S9
+    S9 --> S6
     S6 --> TW
     iCamL --> E13
     E13 --> DB5

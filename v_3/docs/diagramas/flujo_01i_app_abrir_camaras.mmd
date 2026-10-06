@@ -5,7 +5,7 @@ flowchart TD
     D1{"¿camera_viewer está abierto?<br/>(camaras_abierto, en RAM)"}
     C3["Arma el lanzamiento: dirección y clave del canal<br/>y, si se pide, la fecha y hora (D22)"]
     oCam(("OUT arrancar_camaras<br/>→ camera_viewer")):::cam
-    D0{"¿Se pide una fecha y hora concreta?<br/>(de dónde sale: pendiente, D11)"}
+    D0{"¿Viene con fecha y hora?<br/>(botón VER EN CÁMARAS, D23)"}
     C2["Arma la fecha y hora"]
     oFecha(("OUT abrir_en_fecha_hora<br/>→ camera_viewer")):::cam
     C4["Arma la orden de ponerse al frente"]

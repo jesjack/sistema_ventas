@@ -17,6 +17,11 @@ flowchart TD
     M2["Salta a esa fecha y hora"]
     iMostrar(("IN mostrar_camaras<br/>← App")):::app
     M4["Se pone al frente"]
+    iVN(("IN venta_nueva<br/>← App")):::app
+    M6["Marca la venta nueva al instante (D23)"]
+    iCerrar(("IN cerrar_camaras<br/>← App")):::app
+    M5["Cierra el visor (App desplazada, D23)"]
+    oSal2(("OUT camaras_salio<br/>→ App")):::app
     iResp(("IN respuesta_camaras<br/>← Usuario")):::ext
     D1{"¿Cerró la ventana?"}
     oSal(("OUT camaras_salio<br/>→ App")):::app
@@ -36,6 +41,10 @@ flowchart TD
     M2 --> M1
     iMostrar --> M4
     M4 --> M1
+    iVN --> M6
+    M6 --> M1
+    iCerrar --> M5
+    M5 --> oSal2
     iResp --> D1
     D1 -- "No" --> M1
     D1 -- "Sí" --> oSal

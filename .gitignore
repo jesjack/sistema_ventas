@@ -31,3 +31,6 @@ v_2/main.ods.bak_pretest
 # Entorno virtual de camera_viewer/prebake_ventas.py (ver requirements.txt) --
 # cada instalacion crea el suyo, no se versiona.
 v_2/.venv/
+
+# Vistas generadas por dmk a partir de los .mmd (se regeneran; la fuente son los .mmd).
+v_3/docs/diagramas/*.html

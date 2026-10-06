@@ -17,6 +17,13 @@ flowchart TD
     N16["Arma el ticket, que también<br/>abre el cajón (como en la V2)"]
     PAR3["═══ en paralelo ═══"]:::par
     S7[["Hilo de trabajo: ticket (1n)"]]
+    Dc1{"¿camera_viewer está abierto?"}
+    V1["Arma la venta nueva"]
+    oVN1(("OUT venta_nueva<br/>→ camera_viewer")):::cam
+    Dc2{"¿camera_viewer está abierto?"}
+    V2["Arma la venta nueva"]
+    oVN2(("OUT venta_nueva<br/>→ camera_viewer")):::cam
+    Tsin(["Sin cámaras que avisar"])
     Tfin(["El resultado llega por señal (1d)"])
     N20["selling = no"]
     oEnfG(("OUT enfocar_calc<br/>→ UNO")):::uno
@@ -25,7 +32,7 @@ flowchart TD
     N17["Vacía el carrito; arma las<br/>filas de carrito y ventas"]
     PAR4["═══ en paralelo ═══"]:::par
     oPin3(("OUT pintar<br/>→ UNO")):::uno
-    S8[["Hilo de trabajo: cajón sin evento (1n)"]]
+    S8[["Hilo de trabajo: cajón de venta sin ticket (1n)"]]
     N21["selling = no"]
     oEnfI(("OUT enfocar_calc<br/>→ UNO")):::uno
 
@@ -41,6 +48,10 @@ flowchart TD
     N15 --> PAR2
     PAR2 --> oPin2
     PAR2 --> N16
+    PAR2 --> Dc1
+    Dc1 -- "Sí" --> V1
+    V1 --> oVN1
+    Dc1 -- "No" --> Tsin
     N16 --> PAR3
     PAR3 --> S7
     S7 --> Tfin
@@ -52,6 +63,10 @@ flowchart TD
     N17 --> PAR4
     PAR4 --> oPin3
     PAR4 --> S8
+    PAR4 --> Dc2
+    Dc2 -- "Sí" --> V2
+    V2 --> oVN2
+    Dc2 -- "No" --> Tsin
     S8 --> Tfin
     PAR4 --> N21
     N21 --> oEnfI

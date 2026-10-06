@@ -6,9 +6,18 @@ flowchart TD
     S1[["Abrir cámaras (1i)"]]
     T1(["Regresa sin enfocar Calc"])
     S2[["Menú del desarrollador (1h)"]]
-    S7[["Configurar código de caja (1p)"]]
-    F14["Vuelve a Calc"]
+    F20["Arma la lectura de la fila seleccionada<br/>en VENTAS REALIZADAS (D23)"]
+    oSel(("OUT leer_seleccion<br/>→ UNO")):::uno
+    iSel(("IN seleccion_leida<br/>← UNO")):::uno
+    Dsel{"¿Hay una fila de venta seleccionada?"}
+    F21["Arma el aviso: selecciona una venta<br/>de VENTAS REALIZADAS"]
+    oQt6(("OUT ventana_qt<br/>→ Usuario")):::ext
+    iR6(("IN respuesta_usuario<br/>← Usuario<br/>(aviso: sin venta seleccionada)")):::ext
+    F22["Vuelve a Calc"]
     oEnfI(("OUT enfocar_calc<br/>→ UNO")):::uno
+    F23["Toma la fecha y hora de esa venta"]
+    S7[["Abrir cámaras (1i)"]]
+    T3(["Regresa sin enfocar Calc"])
     T2(["Regresa"])
     F1["Arma el diálogo de fecha"]
     oQt1(("OUT ventana_qt<br/>→ Usuario")):::ext
@@ -59,9 +68,16 @@ flowchart TD
     D0 -- "VER CÁMARAS" --> S1
     S1 --> T1
     D0 -- "MENÚ DEL DESARROLLADOR (solo el desarrollador, D21)" --> S2
-    D0 -- "CÓDIGO DE CAJA (solo con «abrir caja sin límite», D21)" --> S7
-    S7 --> F14
-    F14 --> oEnfI
+    D0 -- "VER EN CÁMARAS (D23)" --> F20
+    F20 --> oSel
+    iSel --> Dsel
+    Dsel -- "No" --> F21
+    F21 --> oQt6
+    iR6 --> F22
+    F22 --> oEnfI
+    Dsel -- "Sí" --> F23
+    F23 --> S7
+    S7 --> T3
     S2 --> T2
     D0 -- "VER VENTAS" --> F1
     F1 --> oQt1

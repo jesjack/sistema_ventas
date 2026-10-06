@@ -7,7 +7,7 @@ Este archivo es el índice del flujo: cómo leerlo, qué hay en cada archivo, la
 la verificación de pareja de pines y las discrepancias.
 
 Cada proceso de la V3 es un **chip** con pines de entrada y salida, como microcontroladores en
-una placa. Fuentes: `mapa_v2.md` (D1–D22 y su sección 5, al 2026-10-06), `arranque_v3.md` y
+una placa. Fuentes: `mapa_v2.md` (D1–D23 y su sección 5, al 2026-10-06), `arranque_v3.md` y
 `../README.md`.
 
 ## Cómo leerlo
@@ -54,39 +54,35 @@ Convenciones de ISO 5807 / ANSI X3.5, con las decisiones de forma del usuario:
 | `flujo_01a_app_arranque.mmd` | App | Instancia única con aviso a la App ya abierta (D22), log de la ejecución, LibreOffice, migraciones, usuario y permisos, turno de caja (D8) y código de caja pendiente para quien tiene «abrir caja sin límite» (D21). |
 | `flujo_01b_app_abrir_libreoffice.mmd` | App | Marca en el log al reabrir (D22), perfil propio (D13), copia de `main.ods` (D7), prebake (D4) y arranque de soffice. |
 | `flujo_01c_app_conectar_uno.mmd` | App | Canal con UNO (D18), configuración `consumir_tab` (D14), botones y modo; reintentos. |
-| `flujo_01d_app_eventos.mmd` | App | Lo que App atiende mientras vive: Enter, Tab (D14), botones, turno cada ~3 s, cierres, reabrir LibreOffice y camera_viewer como hijo (D22), y señales de los hilos de trabajo. |
+| `flujo_01d_app_eventos.mmd` | App | Lo que App atiende mientras vive: Enter, Tab (D14), botones, turno cada ~3 s (también con solo las cámaras abiertas), cierres, reabrir LibreOffice y camera_viewer como hijo (D22), y señales de los hilos de trabajo. |
 | `flujo_01e_app_atender_enter.mmd` | App | ControladorVenta: descartes de D17, regla de escaneo (D10), código nuevo, agregar, cobrar o abrir la caja. |
-| `flujo_01f_app_cobrar.mmd` | App | Cobro con ticket o sin ticket (D15). |
-| `flujo_01g_app_atender_boton.mmd` | App | Cada botón de la hoja, incluidos el menú del desarrollador y el código de caja (D21). |
+| `flujo_01f_app_cobrar.mmd` | App | Cobro con ticket o sin ticket (D15); aviso de cada venta nueva a camera_viewer (D23). |
+| `flujo_01g_app_atender_boton.mmd` | App | Cada botón de la hoja, incluidos el menú del desarrollador (D21) y VER EN CÁMARAS con la venta seleccionada (D23). |
 | `flujo_01h_app_menu_desarrollador.mmd` | App | Menú del desarrollador (D21): botones (D12), permisos por usuario y configuración. |
-| `flujo_01i_app_abrir_camaras.mmd` | App | Abrir camera_viewer, o pedirle una fecha y hora o ponerse al frente si ya está abierto (D11, D22). |
-| `flujo_01j_app_tras_salir_soffice.mmd` | App | Turno perdido, cambio de modo, cierre normal o caída; App sigue viva si camera_viewer está abierto (D22). |
+| `flujo_01i_app_abrir_camaras.mmd` | App | Abrir camera_viewer, o pedirle la fecha y hora de la venta elegida o ponerse al frente si ya está abierto (D11, D22, D23). |
+| `flujo_01j_app_tras_salir_soffice.mmd` | App | Turno perdido (App se cierra entera, D23), cambio de modo, cierre normal o caída; si no perdió el turno, App sigue viva mientras camera_viewer esté abierto (D22). |
 | `flujo_01k_app_cierre.mmd` | App | Cierre de App, cuando ya no queda nada abierto (D22). |
-| `flujo_01l_app_comprobar_turno.mmd` | App | Comprobación del turno de caja (D8). |
+| `flujo_01l_app_comprobar_turno.mmd` | App | Comprobación del turno de caja (D8); si lo perdió, cierra LibreOffice y las cámaras (D23). |
 | `flujo_01m_app_abrir_caja.mmd` | App | Abrir la caja: permiso, ventana diaria de la empleada o código de un solo uso (D21). |
-| `flujo_01n_app_hilos_de_trabajo.mmd` | App | Hilos de trabajo con tiempo máximo (D18), su señal en el hilo principal y el registro de cada apertura (D21). |
+| `flujo_01n_app_hilos_de_trabajo.mmd` | App | Hilos de trabajo con tiempo máximo (D18), su señal en el hilo principal y el registro de cada apertura, también las de venta (D21, D23). |
 | `flujo_01o_app_log_y_vigilante.mmd` | App | Log de la ejecución, un archivo por día (D22), vigilante del bucle de Qt y tracebacks para IA (D18). |
-| `flujo_01p_app_configurar_codigo_caja.mmd` | App | Configurar el código de autorización: lo hace un usuario con «abrir caja sin límite», viendo el uso anterior (D21). |
+| `flujo_01p_app_configurar_codigo_caja.mmd` | App | Configurar el código de autorización: se le pide automáticamente al entrar a un usuario con «abrir caja sin límite» si el código está bloqueado o sin configurar, mostrándole el uso anterior (D21, D23). Es la única forma de configurarlo. |
 | `flujo_02_soffice_y_basic.mmd` | soffice | LibreOffice con `main.ods` y su actor Basic (D3 = a, D13, D20). |
-| `flujo_03_uno.mmd` | UNO | Proceso UNO: pinta, captura teclas y sondea los `.evt`. |
-| `flujo_04_camera_viewer.mmd` | camera_viewer | Hijo de App con su canal (D22); caja negra por dentro. |
+| `flujo_03_uno.mmd` | UNO | Proceso UNO: pinta, captura teclas, sondea los `.evt` y lee la fila seleccionada para VER EN CÁMARAS (D23). |
+| `flujo_04_camera_viewer.mmd` | camera_viewer | Hijo de App con su canal (D22): ventas del día, cada venta nueva y orden de cierre (D23); caja negra por dentro. |
 | `flujo_99_placa.mmd` | — | Solo los bloques y los cables entre pines. |
 
 **App es el proceso de larga vida y dueña de todo (D22).** Sus hijos son soffice, UNO y
-camera_viewer; App no termina mientras alguno siga abierto. Si el acceso directo se usa con App
+camera_viewer; App no termina mientras alguno siga abierto. Si pierde el turno de caja, cierra
+LibreOffice y las cámaras y termina (D23). Si el acceso directo se usa con App
 ya abierta, la App nueva le pide a la abierta que vuelva a abrir LibreOffice y termina.
 admin_botones ya no es un proceso (D12), y el archivador de cámaras queda fuera de la V3.
 
 ## Supuestos que quedan
 
-D2, D3, D4, D10, D18, D20, D21 y D22 ya están decididos y no se marcan como supuestos. Quedan:
+D2, D3, D4, D10, D18 y D20–D23 ya están decididos y no se marcan como supuestos. Quedan:
 
 - **Enter se consume** en UNO (`flujo_03_uno.mmd`, A5b). D14 solo fija el Tab.
-- **De dónde sale la fecha y hora** para abrir las cámaras en una venta (`flujo_01i`).
-- **Cómo llega a «su propio menú»** un usuario con «abrir caja sin límite» para cambiar el código
-  (D21). Se dibujó como un botón CÓDIGO DE CAJA, visible solo para ellos (`flujo_01g`).
-- **Cuándo recibe camera_viewer las ventas.** Se dibujó al conectarse (`ventas_del_dia`, en
-  `flujo_01d`). Que reciba también cada venta nueva está por definir con la instancia de cámaras.
 - **Mecanismo de `reabrir_libreoffice`:** un canal de instancia única en la carpeta de ejecución
   del usuario, del mismo tipo que el de UNO.
 
@@ -119,11 +115,15 @@ D2, D3, D4, D10, D18, D20, D21 y D22 ya están decididos y no se marcan como sup
 | `publicar_botones` | OUT | Lista (id, etiqueta) | UNO | Ídem |
 | `enfocar_calc` | OUT | Foco a Calc, en B4 o sin mover el cursor | UNO | Ídem |
 | `cerrar_libreoffice` | OUT | Orden de cierre | UNO | Ídem |
+| `leer_seleccion` | OUT | Pedido de la fila seleccionada en VENTAS REALIZADAS (D23) | UNO | Ídem |
+| `seleccion_leida` | IN | La fila, o vacía si no hay una venta seleccionada | UNO | Ídem |
 | `arrancar_camaras` | OUT | Dirección y clave del canal y, opcionalmente, fecha y hora | camera_viewer | Creación de proceso (D22) |
 | `camaras_lista` | IN | Conectado al canal | camera_viewer | `multiprocessing.connection` (D22) |
 | `ventas_del_dia` | OUT | Horas de las ventas del día | camera_viewer | Ídem |
 | `abrir_en_fecha_hora` | OUT | Fecha y hora | camera_viewer | Ídem |
 | `mostrar_camaras` | OUT | Ponerse al frente | camera_viewer | Ídem |
+| `venta_nueva` | OUT | Hora de la venta recién registrada (D23) | camera_viewer | Ídem |
+| `cerrar_camaras` | OUT | Orden de cierre al perder el turno (D23) | camera_viewer | Ídem |
 | `log_camaras` | IN | Líneas de log | camera_viewer | Ídem (D22) |
 | `camaras_salio` | IN | Código de salida | camera_viewer | Espera del proceso hijo |
 | `imprimir_ticket` | OUT | Ticket con apertura del cajón | Impresora de tickets | Driver, en un hilo de trabajo (D18) |
@@ -137,7 +137,7 @@ Almacenamiento de App (cilindros, no pines):
 
 | Archivo | Uso | Dónde vive |
 |---|---|---|
-| `ventas.db` | Ventas, usuarios y **permisos** (D21), sesiones, catálogo, códigos, botones, eventos, **turno de caja** (D8), **hash y estado del código de autorización** (D20, D21) y cada **apertura de caja** con quién y cómo se autorizó (D21) | Carpeta de datos compartida (grupo, D19) |
+| `ventas.db` | Ventas, usuarios y **permisos** (D21), sesiones, catálogo, códigos, botones, eventos, **turno de caja** (D8), **hash y estado del código de autorización** (D20, D21) y cada **apertura de caja** con quién y cómo se autorizó: permiso, ventana diaria, código o venta (D21, D23) | Carpeta de datos compartida (grupo, D19) |
 | Candado del usuario | Instancia única por usuario (D8) | Carpeta de ejecución del usuario; lo suelta el SO |
 | Perfil de LibreOffice del usuario | Ubicación de confianza para las macros (D13) | Carpeta de datos del usuario |
 | `main.ods` del usuario | Copia de la plantilla, horneada (D4, D7) | Carpeta del usuario |
@@ -176,6 +176,7 @@ carpeta que le pasó UNO (D3, D20).
 | `enfocar_calc` | IN | Foco | App | Ídem |
 | `publicar_botones` | IN | Lista (id, etiqueta) | App | Ídem |
 | `cerrar_libreoffice` | IN | Orden | App | Ídem |
+| `leer_seleccion` | IN | Pedido de la fila seleccionada (D23) | App | Ídem |
 | `urp_listo` | IN | Conexión aceptada | soffice | URP |
 | `api_respuesta` | IN | Resultado de la llamada | soffice | URP |
 | `tecla` | IN | `KeyEvent` | soffice | Callback `XKeyHandler` |
@@ -189,6 +190,7 @@ carpeta que le pasó UNO (D3, D20).
 | `tab_pulsado` | OUT | Texto de B4 | App | Ídem |
 | `boton_pulsado` | OUT | id | App | Ídem |
 | `documento_cerrado` | OUT | Motivo | App | Ídem |
+| `seleccion_leida` | OUT | La fila seleccionada, o vacía | App | Ídem |
 | `uno_salio` | OUT | Código de salida | App | Fin del proceso hijo |
 | `log_uno` | OUT | stdout/stderr, tracebacks en texto plano | App | Tubería |
 
@@ -203,6 +205,8 @@ Almacenamiento: UNO lee y borra los `.evt` de la carpeta de ejecución del usuar
 | `ventas_del_dia` | IN | Horas de las ventas del día | App | `multiprocessing.connection` (D22) |
 | `abrir_en_fecha_hora` | IN | Fecha y hora | App | Ídem |
 | `mostrar_camaras` | IN | Ponerse al frente | App | Ídem |
+| `venta_nueva` | IN | Venta recién registrada: la marca al instante (D23) | App | Ídem |
+| `cerrar_camaras` | IN | Orden de cierre (D23) | App | Ídem |
 | `respuesta_camaras` | IN | Interacción del usuario | Usuario | Qt |
 | `dvr_camaras_datos` | IN | Video | DVR | Propio de la caja negra |
 | `camaras_lista` | OUT | Conectado al canal | App | `multiprocessing.connection` |
@@ -242,73 +246,74 @@ ningún pin quede suelto.
 | 19 | `publicar_botones` | App | UNO | Canal |
 | 20 | `enfocar_calc` | App | UNO | Canal |
 | 21 | `cerrar_libreoffice` | App | UNO | Canal |
-| 22 | `uno_listo` | UNO | App | Canal |
-| 23 | `enter_pulsado` | UNO | App | Canal |
-| 24 | `tab_pulsado` | UNO | App | Canal |
-| 25 | `boton_pulsado` | UNO | App | Canal |
-| 26 | `documento_cerrado` | UNO | App | Canal |
-| 27 | `uno_salio` | UNO | App | Fin de proceso |
-| 28 | `log_uno` | UNO | App | Tubería |
-| 29 | `urp_conectar` | UNO | soffice | URP |
-| 30 | `urp_listo` | soffice | UNO | URP |
-| 31 | `api_hoja` | UNO | soffice | URP |
-| 32 | `api_respuesta` | soffice | UNO | URP |
-| 33 | `tecla` | soffice | UNO | Callback URP |
-| 34 | `tecla_respuesta` | UNO | soffice | Retorno del callback |
-| 35 | `invocar_macro` | UNO | soffice (Basic) | Script provider |
-| 36 | `documento_murio` | soffice | UNO | Excepción en la llamada |
-| 37 | `teclado_raton` | Usuario | soffice | Sistema de ventanas |
-| 38 | `pantalla_hoja` | soffice | Usuario | Pantalla |
-| 39 | `arrancar_camaras` | App | camera_viewer | Creación de proceso |
-| 40 | `camaras_lista` | camera_viewer | App | Canal |
-| 41 | `ventas_del_dia` | App | camera_viewer | Canal |
-| 42 | `abrir_en_fecha_hora` | App | camera_viewer | Canal |
-| 43 | `mostrar_camaras` | App | camera_viewer | Canal |
-| 44 | `log_camaras` | camera_viewer | App | Canal |
-| 45 | `camaras_salio` | camera_viewer | App | Fin de proceso |
-| 46 | `ventana_camaras` | camera_viewer | Usuario | Qt |
-| 47 | `respuesta_camaras` | Usuario | camera_viewer | Qt |
-| 48 | `dvr_camaras_pedir` | camera_viewer | DVR | Caja negra |
-| 49 | `dvr_camaras_datos` | DVR | camera_viewer | Caja negra |
+| 22 | `leer_seleccion` | App | UNO | Canal |
+| 23 | `uno_listo` | UNO | App | Canal |
+| 24 | `enter_pulsado` | UNO | App | Canal |
+| 25 | `tab_pulsado` | UNO | App | Canal |
+| 26 | `boton_pulsado` | UNO | App | Canal |
+| 27 | `documento_cerrado` | UNO | App | Canal |
+| 28 | `seleccion_leida` | UNO | App | Canal |
+| 29 | `uno_salio` | UNO | App | Fin de proceso |
+| 30 | `log_uno` | UNO | App | Tubería |
+| 31 | `urp_conectar` | UNO | soffice | URP |
+| 32 | `urp_listo` | soffice | UNO | URP |
+| 33 | `api_hoja` | UNO | soffice | URP |
+| 34 | `api_respuesta` | soffice | UNO | URP |
+| 35 | `tecla` | soffice | UNO | Callback URP |
+| 36 | `tecla_respuesta` | UNO | soffice | Retorno del callback |
+| 37 | `invocar_macro` | UNO | soffice (Basic) | Script provider |
+| 38 | `documento_murio` | soffice | UNO | Excepción en la llamada |
+| 39 | `teclado_raton` | Usuario | soffice | Sistema de ventanas |
+| 40 | `pantalla_hoja` | soffice | Usuario | Pantalla |
+| 41 | `arrancar_camaras` | App | camera_viewer | Creación de proceso |
+| 42 | `camaras_lista` | camera_viewer | App | Canal |
+| 43 | `ventas_del_dia` | App | camera_viewer | Canal |
+| 44 | `abrir_en_fecha_hora` | App | camera_viewer | Canal |
+| 45 | `mostrar_camaras` | App | camera_viewer | Canal |
+| 46 | `venta_nueva` | App | camera_viewer | Canal |
+| 47 | `cerrar_camaras` | App | camera_viewer | Canal |
+| 48 | `log_camaras` | camera_viewer | App | Canal |
+| 49 | `camaras_salio` | camera_viewer | App | Fin de proceso |
+| 50 | `ventana_camaras` | camera_viewer | Usuario | Qt |
+| 51 | `respuesta_camaras` | Usuario | camera_viewer | Qt |
+| 52 | `dvr_camaras_pedir` | camera_viewer | DVR | Caja negra |
+| 53 | `dvr_camaras_datos` | DVR | camera_viewer | Caja negra |
 
-**Resultado:** los 49 cables tienen su OUT y su IN. Puntos sueltos deliberados:
+**Resultado:** los 53 cables tienen su OUT y su IN. Puntos sueltos deliberados:
 
 - **El código de salida de App no tiene pin**: nadie lo lee.
 - **No hay pin para matar a UNO.** Si no arranca, App termina soffice y UNO sale al recibir
   `documento_murio` (`flujo_01c`).
 - **No hay pin hacia la App desplazada por otro usuario** (D20). Se entera en su siguiente
-  comprobación del turno, cada ~3 s (`flujo_01d`). El único pin entre instancias es
+  comprobación del turno, cada ~3 s (`flujo_01d`), y entonces cierra LibreOffice y las cámaras
+  (D23). El único pin entre instancias es
   `reabrir_libreoffice`, entre dos Apps del **mismo** usuario (D22).
 - **Los clics de Basic llegan a UNO por archivo** (`.evt`, cilindros en `flujo_02` y
   `flujo_03`), no por pin.
 
 ## Discrepancias encontradas
 
-D21 y D22 resolvieron las tres primeras de la ronda anterior:
-- Quién es el administrador: el desarrollador.
-- camera_viewer ya abierto: ahora es hijo de App.
-- Caja con código sin administrador: el código lo configura quien tiene «abrir caja sin límite».
+D23 resolvió las discrepancias 2 a 5 de la ronda anterior:
+- Las aperturas por venta entran al registro de aperturas.
+- Enter con el carrito vacío sigue las reglas del botón.
+- Un usuario sin permisos de caja va directo al código.
+- La App desplazada se cierra entera.
 
-Quedan:
+También resolvió tres supuestos: de dónde sale la fecha y hora (VER EN CÁMARAS), cómo se
+configura el código (solo con el aviso al entrar) y cuándo recibe camera_viewer las ventas
+nuevas. Quedan:
 
 1. **Doble comprobación de «venta en curso».** `flujo_01e` conserva el rombo «¿Hay una venta en
-   curso?» además de los dos descartes de D17 (sección 5 del mapa, punto 10).
-2. **El ticket también abre el cajón** (sección 5, punto 11). Por eso el cobro sin ticket abre el
-   cajón con una tarea propia, sin evento APERTURA DE CAJA (`flujo_01f`, `flujo_01n`). D21 pide
-   registrar «cada apertura» con cómo se autorizó. Las aperturas por venta, con o sin ticket,
-   quedan registradas como venta, no como apertura. Si se quieren también en el registro de
-   aperturas, habría que agregarlas (autorizada por: venta).
-3. **Enter con el carrito vacío.** En la V2 pedía el código y abría la caja. Aquí lleva a la misma
-   página que el botón ABRIR CAJA (`flujo_01m`), así que también aplican el permiso y la
-   ventana diaria de D21. El mapa no lo dice expresamente.
-4. **Usuario sin ningún permiso de caja.** D21 define «abrir caja sin límite» y «empleada».
-   Un usuario sin ninguno de los dos va directo al código de autorización (`flujo_01m`, rombo
-   «¿Tiene el permiso «empleada»?»). Falta confirmar que ese es el comportamiento querido.
-5. **Reabrir LibreOffice con el turno perdido.** Si a una App la desplazó otro usuario, pero
-   camera_viewer sigue abierto, App sigue viva (D22). Si el mismo usuario vuelve a usar el
-   acceso directo, `flujo_01d` vuelve a tomar el turno antes de abrir LibreOffice, como un
-   arranque nuevo (D8: el último que abre se queda con la caja). El mapa no trata este caso
-   combinado.
+   curso?» además de los dos descartes de D17 (sección 5 del mapa, punto 10). Se deja así.
+2. **Apertura por venta solo si el cajón respondió.** En `flujo_01n`, la apertura «autorizada
+   por: venta» se registra cuando el ticket se imprimió (el ticket lleva la orden de abrir el
+   cajón) o cuando el cajón de una venta sin ticket respondió. Si la impresión falla o se agota
+   el tiempo, solo se registra el fallo, porque no hay forma de saber si el cajón se abrió.
+   D23 no lo precisa.
+3. **Comprobación del turno con solo las cámaras abiertas.** Para que una App desplazada se
+   cierre entera aunque LibreOffice ya esté cerrado (D23), `flujo_01d` comprueba el turno cada
+   ~3 s siempre, no solo con el POS abierto. Por la misma razón, al reabrir LibreOffice desde el
+   acceso directo se comprueba el turno antes de abrirlo, en vez de retomarlo.
 
 ## Cómo se verificó
 
