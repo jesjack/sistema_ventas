@@ -11,13 +11,18 @@ RAIZ_PROYECTO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # como quien abre el sistema, no como root (a diferencia de main.py). 2026-09-24.
 DB_POR_DEFECTO = os.path.join(RAIZ_PROYECTO, "share", "ventas.db")
 
+# Cuánto espera una conexión a que otra suelte la base antes de fallar con "database is locked".
+# main.py (root), prebake_ventas.py y admin_botones escriben en la misma base desde procesos
+# distintos; el valor por defecto de sqlite3 (5 s) se queda corto si coinciden. 2026-11-13.
+ESPERA_BLOQUEO_SEGUNDOS = 15.0
+
 
 def ruta_db(db_path=None):
     return DB_POR_DEFECTO if db_path is None else db_path
 
 
 def conectar(db_path=None):
-    con = sqlite3.connect(ruta_db(db_path))
+    con = sqlite3.connect(ruta_db(db_path), timeout=ESPERA_BLOQUEO_SEGUNDOS)
     con.execute("PRAGMA foreign_keys = ON")
     return con
 

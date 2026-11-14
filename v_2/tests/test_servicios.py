@@ -18,6 +18,17 @@ class BaseConDb(unittest.TestCase):
         self.db = os.path.join(self._dir.name, "ventas.db")
 
 
+class TestConexion(BaseConDb):
+    def test_espera_a_que_otro_proceso_suelte_la_base(self):
+        from services import base_datos
+
+        with mock.patch.object(base_datos.sqlite3, "connect", wraps=sqlite3.connect) as conectar:
+            base_datos.conectar(self.db).close()
+
+        self.assertEqual(conectar.call_args.kwargs["timeout"], base_datos.ESPERA_BLOQUEO_SEGUNDOS)
+        self.assertGreater(base_datos.ESPERA_BLOQUEO_SEGUNDOS, 5.0)  # más que el valor por defecto
+
+
 class TestVentas(BaseConDb):
     def test_registra_y_lista_las_ventas_del_dia(self):
         ventas = VentasService(self.db)
