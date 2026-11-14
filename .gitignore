@@ -31,3 +31,11 @@ v_2/main.ods.bak_pretest
 # Entorno virtual de camera_viewer/prebake_ventas.py (ver requirements.txt) --
 # cada instalacion crea el suyo, no se versiona.
 v_2/.venv/
+
+# Logs y salidas que el sistema escribe al correr (se quedan en el disco, no se versionan).
+v_2/logs/*
+!v_2/logs/.gitkeep
+v_2/output.log
+# Copia de la última etiqueta impresa (la escriben barcode_printer.py y printer_test.py).
+v_2/etiqueta_usb.png
+v_2/hardware/etiqueta_usb.png
