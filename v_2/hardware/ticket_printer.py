@@ -82,6 +82,11 @@ class TicketPrinter:
         self.buffer = bytearray()
         self.append_byte(self.ESC)
         self.append_byte(64)
+        # add_print codifica en CP850, pero la impresora no arranca en esa tabla: sin esto las
+        # mayúsculas acentuadas salían como símbolos raros. FS . sale del modo chino y ESC t 2
+        # elige CP850 (probado con un ticket de calibración el 2026-11-13).
+        self.append_bytes(bytes([28, 46]))
+        self.append_bytes(bytes([self.ESC, 116, 2]))
 
     def append_byte(self, value):
         self.buffer.append(int(value) & 0xFF)
@@ -132,6 +137,12 @@ class TicketPrinter:
         height = 180
         if len(logo_bytes) % width_bytes == 0:
             height = len(logo_bytes) // width_bytes
+
+        # Renglones en blanco al pie del mismo bitmap para separar el logo de la dirección
+        # (8 puntos = 1 mm). Esta impresora ignora ESC J, pero respeta el alto de la imagen.
+        margen_inferior = 24
+        logo_bytes = bytes(logo_bytes[: width_bytes * height]) + bytes(width_bytes * margen_inferior)
+        height += margen_inferior
 
         self.append_byte(self.ESC)
         self.append_byte(97)
@@ -465,32 +476,20 @@ class TicketPrinter:
         self.reset()
         self.add_cash_drawer_open()
         self.add_logo_print()
-        self.append_byte(10)
-        self.append_byte(10)
 
         self.add_print("Calle Pino Suárez No. 412")
         self.add_print("Zona Centro C.P. 34000")
         self.add_print("RFC: CAAN8209242C0")
         self.add_print("")
 
-        self.add_print(datetime.now().strftime("Fecha: %d/%m/%Y"))
-        self.add_print(datetime.now().strftime("Hora:  %H:%M:%S"))
+        # Fecha y hora en un renglón, sin etiquetas; con segundos para ubicar la venta en la base.
+        self.add_print(datetime.now().strftime("%d/%m/%Y  %H:%M:%S"))
         self.add_line_print()
 
-        self.append_byte(self.ESC)
-        self.append_byte(97)
-        self.append_byte(1)
-        self.add_print(title)
-        self.append_byte(self.ESC)
-        self.append_byte(97)
-        self.append_byte(0)
-
-        self.add_line_print()
-        self.add_print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        self.add_line_print()
-
+        # Sin título ni segunda fecha: el nombre ya viene en el logo y la fecha arriba.
         for producto, precio, cantidad, subtotal in items:
-            self.add_print(str(producto))
+            # En mayúsculas solo en el ticket: los nombres se capturan a mano y así salen parejos.
+            self.add_print(str(producto).upper())
             self.add_print(f"  {int(cantidad)} x ${float(precio):.2f} = ${float(subtotal):.2f}")
 
         self.add_line_print()
