@@ -141,6 +141,33 @@ def asegurar_esquema(db_path=None):
             )
             """
         )
+        # Corte de caja: desde él, la tabla de ventas de la hoja solo muestra lo que se vendió
+        # después (más el cambio que se dejó en la caja). Las ventas de antes no se tocan.
+        # ultima_venta_id/ultimo_evento_id marcan hasta dónde llegaba cada tabla al hacerlo:
+        # por id y no por hora, para no perder ni duplicar algo que cayera en el mismo segundo.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cortes_caja (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha            TEXT NOT NULL,
+                hora             TEXT NOT NULL,
+                ultima_venta_id  INTEGER NOT NULL,
+                ultimo_evento_id INTEGER NOT NULL,
+                sesion_id        INTEGER REFERENCES sesiones_sistema(id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cortes_caja_cambio (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                corte_id     INTEGER NOT NULL REFERENCES cortes_caja(id),
+                tipo         TEXT NOT NULL,
+                denominacion REAL NOT NULL,
+                cantidad     INTEGER NOT NULL
+            )
+            """
+        )
         _asegurar_autoria(cur)
         con.commit()
 

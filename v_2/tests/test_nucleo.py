@@ -247,6 +247,51 @@ class TestCaja(unittest.TestCase):
         self.assertEqual(ctx.eventos, [("FALLO AL ABRIR CAJA", {"codigo": "7410", "detalle": "no abrió: sin cajón"})])
 
 
+class TestCorteDeCaja(unittest.TestCase):
+    def _ejecutar(self, cambio, confirma=True, abre=True):
+        from unittest import mock
+
+        from acciones import corte_de_caja
+
+        ctx = crear_contexto()
+        cortes, tickets, aperturas = [], [], []
+        ctx.ventas.limpiar_residuos_bajo_tabla = lambda **k: None
+        ctx.table_manager.cash_cut = lambda tabla, c: cortes.append((tabla, c))
+        with mock.patch.object(corte_de_caja, "abrir_caja", lambda ctx, **k: aperturas.append(k) or abre), \
+                mock.patch.object(corte_de_caja, "solicitar_cambio_corte", lambda uno: cambio), \
+                mock.patch.object(corte_de_caja, "confirmar_corte", lambda uno, c: confirma), \
+                mock.patch.object(corte_de_caja, "imprimir_ticket_corte", lambda c, usuario: tickets.append(c)):
+            corte_de_caja.ejecutar(ctx)
+        return ctx, cortes, tickets, aperturas
+
+    def test_abre_la_caja_corta_e_imprime(self):
+        cambio = [("BILLETE", 500, 1)]
+        ctx, cortes, tickets, aperturas = self._ejecutar(cambio)
+        self.assertEqual(len(aperturas), 1)
+        self.assertEqual(cortes, [(ctx.ventas, cambio)])
+        self.assertEqual(tickets, [cambio])
+
+    def test_cancelar_o_no_confirmar_no_corta(self):
+        for cambio, confirma in ((None, True), ([("BILLETE", 500, 1)], False)):
+            _ctx, cortes, tickets, aperturas = self._ejecutar(cambio, confirma=confirma)
+            self.assertEqual((cortes, tickets), ([], []))
+            self.assertEqual(len(aperturas), 1)
+
+    def test_si_la_caja_no_abre_igual_se_puede_cortar(self):
+        _ctx, cortes, _tickets, _aperturas = self._ejecutar([("MONEDA", 10, 2)], abre=False)
+        self.assertEqual(len(cortes), 1)
+
+    def test_table_manager_corta_y_recarga(self):
+        servicio = SimpleNamespace(
+            registrar_corte_de_caja=lambda c: 7,
+            obtener_ventas=lambda desde_ultimo_corte: [("10:00:00", "CAMBIO: BILLETE", 500.0, 1, 500.0)],
+        )
+        tabla = TablaFalsa([("09:00:00", "blusa", 50.0, 1, 50.0)])
+        manager = TableManager(servicio, cobro_provider=None, imprimir_ticket=None)
+        self.assertEqual(manager.cash_cut(tabla, [("BILLETE", 500, 1)]), 7)
+        self.assertEqual(tabla, [("10:00:00", "CAMBIO: BILLETE", 500.0, 1, 500.0)])
+
+
 class TestRedDeSeguridad(unittest.TestCase):
     """on_enter corre en un hilo de la libreria `keyboard` que no atrapa sus excepciones
     (ver el comentario de ControladorVenta.on_enter): un fallo sin atrapar mataria ese hilo

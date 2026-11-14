@@ -220,7 +220,7 @@ def _modo_normal(base_dir, context, desktop, documento, hoja, sheet_admin, contr
     # Es una consulta sqlite local barata.
     ruta_ods = base_dir / "share" / "main.ods"
     tabla_entrada, cart, ventas = preparar_tablas(
-        hoja, sheet_admin, table_manager, ventas_service.obtener_ventas(), ruta_ods=ruta_ods
+        hoja, sheet_admin, table_manager, ventas_service.obtener_ventas(desde_ultimo_corte=True), ruta_ods=ruta_ods
     )
 
     autocompletado_handler = AutocompletadoProductoHandler(

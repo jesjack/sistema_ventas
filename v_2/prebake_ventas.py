@@ -506,7 +506,7 @@ def remove_previous_pb_styles(doc):
 def _construir_tablas_normales(doc, number_formats):
     """Las 3 tablas de siempre: INGRESE LOS DATOS, CARRITO, VENTAS REALIZADAS."""
     ventas_service = VentasService()
-    ventas_rows = ventas_service.obtener_ventas()
+    ventas_rows = ventas_service.obtener_ventas(desde_ultimo_corte=True)
 
     input_styles = build_role_styles(doc, "Input", "#9b111e", number_formats)
     cart_styles = build_role_styles(doc, "Cart", "#1ca9c9", number_formats)

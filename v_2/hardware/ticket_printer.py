@@ -15,6 +15,8 @@ try:
 except ImportError:  # pragma: no cover - fallback para entornos sin dependencia
     qrcode = None
 
+from services.corte_caja import texto_denominacion, total_del_cambio
+
 
 # 2026-09-23: con la impresora atascada, escribir a /dev/usb/lpN se quedaba esperando para
 # siempre (sin excepción, sin timeout propio del driver) -- y como esto corre dentro del mismo
@@ -505,6 +507,39 @@ class TicketPrinter:
         self.add_print("")
         return self.send_print()
 
+    def print_cash_cut(self, cambio, usuario=None, title="Yaeli's Boutique"):
+        """Ticket del corte de caja con el cambio que se dejó: [(tipo, denominacion, cantidad), ...]."""
+        self.reset()
+        self.append_byte(self.ESC)
+        self.append_byte(97)
+        self.append_byte(1)
+        self.add_print(title)
+        self.add_print("CORTE DE CAJA")
+        self.append_byte(self.ESC)
+        self.append_byte(97)
+        self.append_byte(0)
+        self.add_line_print()
+        self.add_print(datetime.now().strftime("Fecha: %d/%m/%Y"))
+        self.add_print(datetime.now().strftime("Hora:  %H:%M:%S"))
+        if usuario:
+            self.add_print(f"Hizo el corte: {usuario}")
+        self.add_line_print()
+        self.add_print("CAMBIO QUE QUEDA EN LA CAJA")
+
+        for tipo, denominacion, cantidad in cambio:
+            if not int(cantidad):
+                continue
+            subtotal = float(denominacion) * int(cantidad)
+            self.add_print(f"{int(cantidad)} x {tipo} {texto_denominacion(denominacion)} = ${subtotal:,.2f}")
+
+        self.add_line_print()
+        self.add_print(f"TOTAL CAMBIO: ${total_del_cambio(cambio):,.2f}")
+        self.add_line_print()
+        self.add_print("")
+        self.add_print("")
+        self.add_print("")
+        return self.send_print()
+
 
 _default_ticket_printer = None
 
@@ -519,3 +554,7 @@ def impresora_de_tickets():
 
 def imprimir_ticket_venta(items, total, recibido, cambio, title="Yaeli's Boutique", website_url=None):
     return impresora_de_tickets().print_sale(items, total, recibido, cambio, title=title, website_url=website_url)
+
+
+def imprimir_ticket_corte(cambio, usuario=None):
+    return impresora_de_tickets().print_cash_cut(cambio, usuario=usuario)

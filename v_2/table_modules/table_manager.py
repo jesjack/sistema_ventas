@@ -44,10 +44,21 @@ class TableManager:
         return None
 
     def load_sales(self, ventas_table):
-        ventas = self.ventas_service.obtener_ventas()
+        ventas = self.ventas_service.obtener_ventas(desde_ultimo_corte=True)
         for venta in ventas:
             hora, producto, precio, cantidad, subtotal = venta
             ventas_table.append((hora, producto, precio, cantidad, subtotal))
+
+    def cash_cut(self, ventas_table, cambio):
+        """Corte de caja: lo registra y deja la tabla solo con el cambio que quedó en la caja."""
+        corte_id = self.ventas_service.registrar_corte_de_caja(cambio)
+        self.reload_sales(ventas_table)
+        return corte_id
+
+    def reload_sales(self, ventas_table):
+        """Vuelve a llenar la tabla desde la base (tras un corte de caja, por ejemplo)."""
+        ventas_table.clear()
+        ventas_table.extend(self.ventas_service.obtener_ventas(desde_ultimo_corte=True))
 
     def registrar_evento_especial(self, ventas_table, evento, codigo=None, detalle=None):
         hora = time.strftime("%H:%M:%S")

@@ -34,6 +34,91 @@ class TestVentas(BaseConDb):
         self.assertIsNone(VentasService(self.db).registrar_venta([]))
 
 
+class TestCorteDeCaja(BaseConDb):
+    def test_el_corte_esconde_lo_anterior_y_empieza_con_el_cambio(self):
+        ventas = VentasService(self.db)
+        ventas.registrar_venta([("blusa", 50.0, 2, 100.0)], fecha="2026-01-02", hora="09:00:00")
+        ventas.registrar_evento_especial("APERTURA DE CAJA", fecha="2026-01-02", hora="09:30:00")
+        cambio = [("BILLETE", 500, 2), ("BILLETE", 200, 0), ("MONEDA", 0.5, 3)]
+        ventas.registrar_corte_de_caja(cambio, fecha="2026-01-02", hora="10:00:00")
+        # Misma hora que el corte: cuenta como posterior porque se registró después.
+        ventas.registrar_venta([("short", 80.0, 1, 80.0)], fecha="2026-01-02", hora="10:00:00")
+
+        filas = ventas.obtener_ventas(fecha="2026-01-02", desde_ultimo_corte=True)
+
+        self.assertEqual(
+            filas,
+            [
+                ("10:00:00", "CAMBIO: BILLETE", 500.0, 2, 1000.0),
+                ("10:00:00", "CAMBIO: MONEDA", 0.5, 3, 1.5),
+                ("10:00:00", "short", 80.0, 1, 80.0),
+            ],
+        )
+
+    def test_el_dia_completo_sigue_mostrando_todo_y_el_corte_como_evento(self):
+        ventas = VentasService(self.db)
+        ventas.registrar_venta([("blusa", 50.0, 1, 50.0)], fecha="2026-01-02", hora="09:00:00")
+        ventas.registrar_corte_de_caja([("BILLETE", 100, 1)], fecha="2026-01-02", hora="10:00:00")
+
+        filas = ventas.obtener_ventas(fecha="2026-01-02")
+
+        self.assertEqual(filas[0], ("09:00:00", "blusa", 50.0, 1, 50.0))
+        self.assertEqual(filas[1], ("10:00:00", "CORTE DE CAJA", "", "", ""))
+        self.assertEqual(len(filas), 2)
+
+    def test_vale_el_ultimo_corte_y_solo_el_de_ese_dia(self):
+        ventas = VentasService(self.db)
+        ventas.registrar_corte_de_caja([("BILLETE", 500, 1)], fecha="2026-01-02", hora="09:00:00")
+        ventas.registrar_corte_de_caja([("MONEDA", 10, 4)], fecha="2026-01-02", hora="12:00:00")
+        ventas.registrar_venta([("blusa", 50.0, 1, 50.0)], fecha="2026-01-03", hora="09:00:00")
+
+        self.assertEqual(
+            ventas.obtener_ventas(fecha="2026-01-02", desde_ultimo_corte=True),
+            [("12:00:00", "CAMBIO: MONEDA", 10.0, 4, 40.0)],
+        )
+        # Al día siguiente se empieza en limpio aunque no haya corte.
+        self.assertEqual(
+            ventas.obtener_ventas(fecha="2026-01-03", desde_ultimo_corte=True),
+            [("09:00:00", "blusa", 50.0, 1, 50.0)],
+        )
+
+    def test_sin_corte_es_igual_que_el_dia_completo(self):
+        ventas = VentasService(self.db)
+        ventas.registrar_venta([("blusa", 50.0, 1, 50.0)], fecha="2026-01-02", hora="09:00:00")
+        self.assertEqual(
+            ventas.obtener_ventas(fecha="2026-01-02", desde_ultimo_corte=True),
+            ventas.obtener_ventas(fecha="2026-01-02"),
+        )
+
+
+class TestCambioDelCorte(unittest.TestCase):
+    def test_leer_cambio(self):
+        from services.corte_caja import DENOMINACIONES, leer_cambio, total_del_cambio
+
+        textos = ["2", "", " 1 "] + [""] * (len(DENOMINACIONES) - 4) + ["3"]
+        cambio = leer_cambio(textos)
+        self.assertEqual(cambio[0], ("BILLETE", 500, 2))
+        self.assertEqual(cambio[2], ("BILLETE", 100, 1))
+        self.assertEqual(cambio[-1], ("MONEDA", 0.5, 3))
+        self.assertEqual(total_del_cambio(cambio), 1101.5)
+
+        for malo in ("x", "-1", "1.5"):
+            with self.assertRaises(ValueError) as error:
+                leer_cambio([malo] + [""] * (len(DENOMINACIONES) - 1))
+            self.assertIn("billetes de $500", str(error.exception))
+
+    def test_textos(self):
+        from services.corte_caja import resumen_del_cambio, texto_denominacion
+
+        self.assertEqual(texto_denominacion(500), "$500")
+        self.assertEqual(texto_denominacion(0.5), "$0.50")
+        self.assertEqual(
+            resumen_del_cambio([("BILLETE", 500, 2), ("BILLETE", 200, 0), ("MONEDA", 10, 3)]),
+            "2 x BILLETE $500, 3 x MONEDA $10 = $1,030.00",
+        )
+        self.assertEqual(resumen_del_cambio([("BILLETE", 500, 0)]), "Sin cambio ($0.00)")
+
+
 class TestCatalogo(BaseConDb):
     def test_agregar_normaliza_y_no_permite_repetidos(self):
         catalogo = CatalogoService(self.db)
