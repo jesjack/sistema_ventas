@@ -416,7 +416,7 @@ class TestBotonesDeLaHoja(unittest.TestCase):
 
         bridge = BridgeFalso()
         servicio = BotonesServiceFalso()
-        ctx = SimpleNamespace(acciones={}, base_dir=Path("/base"))
+        ctx = SimpleNamespace(acciones={}, base_dir=Path("/base"), cart=SimpleNamespace(al_redibujar=None))
         botones = BotonesDeLaHoja(ctx, bridge, servicio, usuario_id=1, usuario_actual=usuario_actual)
         return botones, bridge, servicio
 
@@ -450,6 +450,87 @@ class TestBotonesDeLaHoja(unittest.TestCase):
         botones, bridge, _servicio = self.crear(usuario_actual="ana")
         botones.construir()
         self.assertNotIn("ADMINISTRAR ADMINS", bridge.botones)
+
+    def test_sin_boton_de_limpiar_carrito_el_carrito_no_mueve_nada(self):
+        botones, _bridge, _servicio = self.crear()
+        botones.ctx.cart.al_redibujar = lambda: None
+        botones.construir()
+        self.assertIsNone(botones.ctx.cart.al_redibujar)
+
+
+class FormaFalsa:
+    def __init__(self, nombre, x, y, ancho=4600, alto=900):
+        self.Name = nombre
+        self.Position = SimpleNamespace(X=x, Y=y)
+        self.Size = SimpleNamespace(Width=ancho, Height=alto)
+        self.modelo = SimpleNamespace()
+
+    def getControl(self):
+        return self.modelo
+
+
+class HojaConFormas:
+    """Columnas de 1000 de ancho y filas de 500 de alto, en 1/100 mm."""
+
+    def __init__(self, formas):
+        self.formas = formas
+
+    def getDrawPage(self):
+        formas = self.formas
+        return SimpleNamespace(getCount=lambda: len(formas), getByIndex=lambda i: formas[i])
+
+    def getCellByPosition(self, columna, fila):
+        return SimpleNamespace(
+            Position=SimpleNamespace(X=columna * 1000, Y=fila * 500),
+            Size=SimpleNamespace(Width=1000, Height=500),
+        )
+
+
+class TestBotonBajoCarrito(unittest.TestCase):
+    def test_queda_alineado_a_la_derecha_y_a_la_misma_distancia_aunque_crezca(self):
+        from nucleo.boton_bajo_carrito import MARGEN_BAJO_TABLA, BotonBajoCarrito
+
+        forma = FormaFalsa("tpv_action_limpiar", 27500, 1200)
+        hoja = HojaConFormas([forma])
+        filas = {"ultima": 8}
+        carrito = SimpleNamespace(x=1, columnas=("A", "B", "C", "D"), ultima_fila_y=lambda: filas["ultima"])
+        boton = BotonBajoCarrito(hoja, carrito, "tpv_action_limpiar")
+
+        boton.acomodar()
+        # Columna E (índice 4) termina en 5000; la fila 8 termina en 4500.
+        self.assertEqual((forma.Position.X, forma.Position.Y), (5000 - 4600, 4500 + MARGEN_BAJO_TABLA))
+
+        filas["ultima"] = 12
+        boton.acomodar()
+        self.assertEqual((forma.Position.X, forma.Position.Y), (5000 - 4600, 6500 + MARGEN_BAJO_TABLA))
+
+    def test_un_fallo_no_rompe_la_operacion_del_carrito(self):
+        from nucleo.boton_bajo_carrito import BotonBajoCarrito
+
+        def falla():
+            raise RuntimeError("UNO se cayó")
+
+        hoja = HojaConFormas([FormaFalsa("tpv_action_limpiar", 0, 0)])
+        carrito = SimpleNamespace(x=1, columnas=("A",), ultima_fila_y=falla)
+        BotonBajoCarrito(hoja, carrito, "tpv_action_limpiar").acomodar()  # no lanza
+
+    def test_el_boton_toma_el_color_del_carrito(self):
+        from nucleo.boton_bajo_carrito import COLOR_TEXTO, BotonBajoCarrito
+
+        forma = FormaFalsa("tpv_action_limpiar", 0, 0)
+        carrito = SimpleNamespace(header_color=0x1CA9C9)
+        BotonBajoCarrito(HojaConFormas([forma]), carrito, "tpv_action_limpiar").dar_estilo()
+        self.assertEqual((forma.modelo.BackgroundColor, forma.modelo.TextColor), (0x1CA9C9, COLOR_TEXTO))
+
+    def test_compactar_columna_cierra_el_hueco(self):
+        from nucleo.boton_bajo_carrito import compactar_columna
+
+        a = FormaFalsa("tpv_action_a", 27500, 1200)
+        limpiar = FormaFalsa("tpv_action_limpiar", 27500, 2350)
+        b = FormaFalsa("tpv_action_b", 27500, 3500)
+        c = FormaFalsa("tpv_action_c", 27500, 4650)
+        compactar_columna(HojaConFormas([c, limpiar, a, b]), "tpv_action_", "tpv_action_limpiar")
+        self.assertEqual([a.Position.Y, b.Position.Y, c.Position.Y], [1200, 2350, 3500])
 
 
 if __name__ == "__main__":

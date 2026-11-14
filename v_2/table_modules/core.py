@@ -24,6 +24,10 @@ class Table(list):
         self._rendered_placeholder = False
         self._rendered_total_label_span = 1
         self._view = TableViewRenderer(self)
+        # Se llama sin argumentos cada vez que la tabla se vuelve a dibujar (puede haber cambiado
+        # de alto). Lo usa nucleo/boton_bajo_carrito.py para que el botón de limpiar carrito siga
+        # al carrito hacia abajo.
+        self.al_redibujar = None
 
     @property
     def show_total(self):
@@ -178,11 +182,22 @@ class Table(list):
             limpiar_total_izquierda=limpiar_total_izquierda,
         )
 
+    def ultima_fila_y(self):
+        """Fila de hoja (base 0) donde termina hoy la tabla: la del TOTAL si lo muestra, si no la
+        última de datos (o la del placeholder, o la de encabezados si no hay nada)."""
+        fila_total_y = self._fila_total_y()
+        return fila_total_y if self._show_total else fila_total_y - 1
+
+    def _avisar_redibujo(self):
+        if self.al_redibujar is not None:
+            self.al_redibujar()
+
     def _render(self, sync_from_sheet=True, limpiar_completamente=False):
         self._view.render(
             sync_from_sheet=sync_from_sheet,
             limpiar_completamente=limpiar_completamente,
         )
+        self._avisar_redibujo()
 
     def __getitem__(self, index):
         self._sincronizar_desde_hoja()
@@ -290,6 +305,7 @@ class Table(list):
         self._rendered_show_total = tenia_total
         self._rendered_placeholder = False
         self._rendered_total_label_span = self._total_label_span
+        self._avisar_redibujo()
 
     def extend(self, items):
         self._sincronizar_desde_hoja()

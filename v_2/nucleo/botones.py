@@ -1,7 +1,16 @@
 """Los botones de la hoja: se arman con los que el usuario tiene visibles en la base de datos y cada
 uno ejecuta su archivo de acciones/."""
 
+from nucleo.boton_bajo_carrito import BotonBajoCarrito, compactar_columna
 from nucleo.config import ADMIN_RAIZ
+
+# Igual que TPV_BUTTON_PREFIX en libreofficeModules/Module1: la figura de cada botón en la hoja se
+# llama así + su action_id.
+PREFIJO_FORMA = "tpv_action_"
+
+# Este botón no va en la columna de la derecha sino pegado debajo del carrito (ver
+# nucleo/boton_bajo_carrito.py).
+ACCION_BAJO_CARRITO = "limpiar_carrito"
 
 
 class BotonesDeLaHoja:
@@ -27,6 +36,7 @@ class BotonesDeLaHoja:
         if self.usuario_actual == ADMIN_RAIZ:
             self.bridge.add_button("ADMINISTRAR ADMINS", self.abrir_panel_admin)
 
+        nombre_forma_bajo_carrito = None
         botones_visibles = []
         if self.usuario_id is not None:
             botones_visibles = self.botones_service.listar_botones_visibles_para(self.usuario_id)
@@ -45,14 +55,32 @@ class BotonesDeLaHoja:
                 return modulo.ejecutar(self.ctx)
 
             manejador.__name__ = f"boton_dinamico_{boton_id}"
+            if archivo_accion == ACCION_BAJO_CARRITO:
+                nombre_forma_bajo_carrito = PREFIJO_FORMA + manejador.__name__
 
             self.bridge.add_button(etiqueta, manejador)
 
         self.bridge.publish_layout()
+        self._colocar_bajo_carrito(nombre_forma_bajo_carrito)
 
         # Punto de referencia para revisar_cambios(): cualquier cambio hecho DESPUES de este
         # construir() (por admin_botones, en su propio proceso) hará que el resumen difiera.
         self._ultimo_resumen = self.botones_service.resumen_cambios()
+
+    def _colocar_bajo_carrito(self, nombre_forma):
+        carrito = self.ctx.cart
+        if nombre_forma is None:
+            carrito.al_redibujar = None
+            return
+
+        boton = BotonBajoCarrito(self.ctx.hoja, carrito, nombre_forma)
+        try:
+            compactar_columna(self.ctx.hoja, PREFIJO_FORMA, nombre_forma)
+        except Exception as exc:
+            print(f"[botones] No se pudo recorrer la columna de botones: {exc}")
+        boton.dar_estilo()
+        boton.acomodar()
+        carrito.al_redibujar = boton.acomodar
 
     def revisar_cambios(self):
         """Engancha aqui, via SheetButtonBridge.on_tick (ver nucleo/arranque.py), para notar
