@@ -1,6 +1,12 @@
 from dialogs.aviso_impresion import mostrar_aviso_impresion
 from dialogs.imprimir_codigo_barras import solicitar_datos_codigo_barras
-from hardware.barcode_printer import CODIFICADORES, imprimir_codigo_barras, imprimir_etiqueta_prueba, validar_codigo
+from hardware.barcode_printer import (
+    CODIFICADORES,
+    PARTES_VERTICAL,
+    imprimir_codigo_barras,
+    imprimir_etiqueta_prueba,
+    validar_codigo,
+)
 
 
 def ejecutar(ctx):
@@ -29,6 +35,9 @@ def ejecutar(ctx):
 
     # Aparte del try de arriba: si la base falla, la etiqueta ya salió y no hay que decir lo contrario.
     try:
-        ctx.codigos_barras.registrar_impresion(codigo, copias, horizontal=horizontal, codificador=codificador)
+        piezas = copias if horizontal else copias * PARTES_VERTICAL
+        ctx.codigos_barras.registrar_impresion(
+            codigo, copias, horizontal=horizontal, codificador=codificador, piezas=piezas
+        )
     except Exception as exc:
         print(f"No se pudo registrar la impresion del codigo de barras: {exc}")

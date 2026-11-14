@@ -79,8 +79,13 @@ class ConstructorDialogo:
             propiedades["DefaultButton"] = True
         return self.agregar("boton", nombre, x, y, ancho, alto, **propiedades)
 
-    def aceptar_cancelar(self, y, x_aceptar=96, x_cancelar=146, ancho=46, alto=14, etiqueta_aceptar="Aceptar"):
-        self.boton("btnOk", x_aceptar, y, ancho, alto, etiqueta_aceptar, ACEPTAR, por_defecto=True)
+    def aceptar_cancelar(
+        self, y, x_aceptar=96, x_cancelar=146, ancho=46, alto=14, etiqueta_aceptar="Aceptar", cierra_solo=True
+    ):
+        """`cierra_solo=False`: "Aceptar" es un botón normal y quien arma el diálogo lo cierra con
+        endDialog(1) desde su listener. Tiene que decidirse aquí: cambiar PushButtonType después de
+        crear el diálogo no surte efecto (el botón sigue cerrándolo sin llamar al listener)."""
+        self.boton("btnOk", x_aceptar, y, ancho, alto, etiqueta_aceptar, ACEPTAR if cierra_solo else 0, por_defecto=True)
         self.boton("btnCancel", x_cancelar, y, ancho, alto, "Cancelar", CANCELAR)
 
     def crear(self):

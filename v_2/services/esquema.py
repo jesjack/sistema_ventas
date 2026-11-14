@@ -163,11 +163,16 @@ def _asegurar_autoria(cur):
             # que se agrega sesion_id).
             cur.execute(f"UPDATE {tabla} SET creado_en = datetime(creado_en, 'localtime') WHERE creado_en IS NOT NULL")
 
-    if not tabla_tiene_columnas(cur, "catalogo_autocompletado", {"actualizado_en"}):
-        cur.execute("ALTER TABLE catalogo_autocompletado ADD COLUMN actualizado_en TEXT")
-        cur.execute(
-            "ALTER TABLE catalogo_autocompletado ADD COLUMN actualizado_sesion_id INTEGER REFERENCES sesiones_sistema(id)"
-        )
+    # Cuántos códigos salieron de verdad: con "imprimir varios códigos" una etiqueta lleva piezas
+    # de códigos distintos y `copias` (etiquetas) ya no lo dice. Las filas viejas quedan en NULL.
+    if not tabla_tiene_columnas(cur, "impresiones_codigos_barras", {"piezas"}):
+        cur.execute("ALTER TABLE impresiones_codigos_barras ADD COLUMN piezas INTEGER")
+
+    # Quién cambió por última vez un producto del catálogo o un código registrado (y cuándo).
+    for tabla in ("catalogo_autocompletado", "codigos_barras_registrados"):
+        if not tabla_tiene_columnas(cur, tabla, {"actualizado_en"}):
+            cur.execute(f"ALTER TABLE {tabla} ADD COLUMN actualizado_en TEXT")
+            cur.execute(f"ALTER TABLE {tabla} ADD COLUMN actualizado_sesion_id INTEGER REFERENCES sesiones_sistema(id)")
 
 
 def _migrar_autorizaciones_codigos(cur):

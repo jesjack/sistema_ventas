@@ -1,7 +1,11 @@
 """Ventana con los códigos de barras registrados: código, producto, precio y cuándo se registró.
-Se filtra mientras se escribe en "Buscar" (por código o por nombre del producto)."""
+Se filtra mientras se escribe en "Buscar" (por código o por nombre del producto), y con "Editar..."
+se cambian el código, el producto o el precio del renglón seleccionado."""
 
-from dialogs._base import ConstructorDialogo, EscuchaTexto, mostrar_y_cerrar
+import uno
+
+from dialogs._base import ConstructorDialogo, EscuchaAccion, EscuchaTexto, mostrar_y_cerrar
+from dialogs.editar_codigo_barras import editar_codigo_barras
 from dialogs.formato import formatear_fecha_registro, formatear_precio
 
 # (título, ancho): deben sumar un poco menos que el ancho de la tabla (ANCHO - 16) para dejar sitio
@@ -42,17 +46,28 @@ def _crear_dialogo(uno_context):
     tabla.ColumnModel = columnas
     tabla.GridDataModel = c.smgr.createInstanceWithContext("com.sun.star.awt.grid.DefaultGridDataModel", uno_context)
     tabla.ShowRowHeader = False
+    tabla.SelectionModel = uno.Enum("com.sun.star.view.SelectionType", "SINGLE")
     c.modelo.insertByName("tabla", tabla)
 
+    c.boton("btnEditar", 8, ALTO - 22, 60, 14, "Editar...")
+    c.etiqueta("lblAviso", 72, ALTO - 20, ANCHO - 72 - 62, 12, "")
     c.boton("btnCerrar", ANCHO - 58, ALTO - 22, 50, 14, "Cerrar", 1, por_defecto=True)
     return c.crear()
 
 
-def abrir_lista_codigos_barras(uno_context, codigos_service):
+def _fila_seleccionada(tabla):
+    filas = tabla.getSelectedRows()  # en LibreOffice nuevos se llama getSelectedRowIndexes()
+    return int(filas[0]) if filas else -1
+
+
+def abrir_lista_codigos_barras(uno_context, codigos_service, catalogo):
     dialog = _crear_dialogo(uno_context)
-    datos = dialog.getControl("tabla").getModel().GridDataModel
+    tabla = dialog.getControl("tabla")
+    datos = tabla.getModel().GridDataModel
     conteo = dialog.getControl("lblConteo").getModel()
+    aviso = dialog.getControl("lblAviso").getModel()
     campo = dialog.getControl("txtBuscar")
+    estado = {"mostrados": []}
 
     def actualizar():
         try:
@@ -62,17 +77,31 @@ def abrir_lista_codigos_barras(uno_context, codigos_service):
         except Exception as exc:
             print(f"No se pudo leer la lista de códigos de barras: {exc}")
             datos.removeAllRows()
+            estado["mostrados"] = []
             conteo.Label = "No se pudo consultar la lista."
             return
 
+        estado["mostrados"] = mostrados
         datos.removeAllRows()
         for fila in filas_de(mostrados):
             datos.addRow("", fila)
         conteo.Label = texto_conteo(len(mostrados), len(todos))
 
-    escucha = EscuchaTexto(actualizar)  # se conserva mientras la ventana esté abierta
-    campo.addTextListener(escucha)
+    def editar():
+        indice = _fila_seleccionada(tabla)
+        if not 0 <= indice < len(estado["mostrados"]):
+            aviso.Label = "Seleccione un código de la lista."
+            return
+        aviso.Label = ""
+        if editar_codigo_barras(uno_context, estado["mostrados"][indice], codigos_service, catalogo):
+            actualizar()
+            aviso.Label = "Cambios guardados."
+
+    # Se conservan mientras la ventana esté abierta.
+    escuchas = [EscuchaTexto(actualizar), EscuchaAccion(editar)]
+    campo.addTextListener(escuchas[0])
+    dialog.getControl("btnEditar").addActionListener(escuchas[1])
     actualizar()
     campo.setFocus()
     mostrar_y_cerrar(dialog)
-    del escucha
+    del escuchas

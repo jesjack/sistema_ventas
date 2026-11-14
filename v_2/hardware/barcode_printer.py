@@ -109,14 +109,16 @@ def _fuente(tamano):
     return ImageFont.truetype(ImageWriter().font_path, tamano)
 
 
-def dibujar_codigo(texto, ancho, alto, codificador=CODIFICADOR_PREDETERMINADO):
+def dibujar_codigo(texto, ancho, alto, codificador=CODIFICADOR_PREDETERMINADO, leyenda=None):
     """Barras y, debajo, el texto del código, en exactamente ancho x alto px, en blanco y negro puro.
+
+    `leyenda` cambia solo el texto de abajo (las barras siguen siendo `texto`).
 
     Las barras se dibujan desde el patrón de módulos y no escalando una imagen ya hecha: así cada
     módulo mide lo mismo (o casi) y el texto no queda estirado ni encimado sobre las barras."""
     generador = _crear_generador(texto, codificador)
     modulos = generador.build()[0]
-    leyenda = generador.get_fullcode()
+    leyenda = generador.get_fullcode() if leyenda is None else str(leyenda)
 
     imagen = Image.new("L", (ancho, alto), color=255)
     dibujo = ImageDraw.Draw(imagen)
@@ -158,14 +160,26 @@ def linea_punteada(dibujo, x0, y0, x1, y1, trazo=6, hueco=4):
             dibujo.line((x0, y, x0, min(y + trazo - 1, y1)), fill=0, width=2)
 
 
+def repartir_en_etiquetas(piezas, partes=PARTES_VERTICAL):
+    """[("ABC", 2), ("XYZ", 4)] -> [["ABC", "ABC", "XYZ"], ["XYZ", "XYZ", "XYZ"]]: las piezas en orden,
+    `partes` por etiqueta. La última etiqueta queda con None en los huecos que no se llenaron."""
+    seguidas = [codigo for codigo, cantidad in piezas for _ in range(int(cantidad))]
+    etiquetas = [seguidas[inicio:inicio + partes] for inicio in range(0, len(seguidas), partes)]
+    if etiquetas:
+        etiquetas[-1] += [None] * (partes - len(etiquetas[-1]))
+    return etiquetas
+
+
 def componer_vertical(texto, ancho, alto, codificador, margenes, partes=PARTES_VERTICAL,
-                      separacion=SEPARACION_PARTES_PX):
-    """La etiqueta en vertical: `partes` copias del código apiladas a lo largo de la etiqueta, con
-    una línea punteada en medio de cada separación para recortarlas. Se arma "derecha" (el código
-    leyéndose de izquierda a derecha, texto abajo) y al final se gira 90° a la izquierda; por eso
-    los márgenes de la imagen se reacomodan: su izquierda es la parte de arriba de la etiqueta
-    derecha, su derecha es la de abajo, su parte de abajo es la izquierda y su parte de arriba es
-    la derecha."""
+                      separacion=SEPARACION_PARTES_PX, leyendas=None):
+    """La etiqueta en vertical: `partes` piezas apiladas a lo largo de la etiqueta, con una línea
+    punteada en medio de cada separación para recortarlas. `texto` es un código (todas las piezas
+    iguales) o una lista con el código de cada pieza (None deja esa pieza en blanco). Se arma
+    "derecha" (el código leyéndose de izquierda a derecha, texto abajo) y al final se gira 90° a la
+    izquierda; por eso los márgenes de la imagen se reacomodan: su izquierda es la parte de arriba
+    de la etiqueta derecha, su derecha es la de abajo, su parte de abajo es la izquierda y su parte
+    de arriba es la derecha."""
+    textos = [texto] * partes if isinstance(texto, str) else list(texto)
     m_arriba, m_derecho, m_abajo, m_izquierdo = margenes
     ancho_d, alto_d = alto, ancho  # medidas de la etiqueta vista derecha
     arriba_d, abajo_d, izquierda_d, derecha_d = m_izquierdo, m_derecho, m_abajo, m_arriba
@@ -173,16 +187,22 @@ def componer_vertical(texto, ancho, alto, codificador, margenes, partes=PARTES_V
     ancho_util = ancho_d - izquierda_d - derecha_d
     alto_util = alto_d - arriba_d - abajo_d
     alto_parte = (alto_util - separacion * (partes - 1)) // partes
-    pieza = dibujar_codigo(texto, ancho_util, alto_parte, codificador)
+    piezas = {}  # cada código distinto se dibuja una sola vez
 
     lienzo = Image.new("L", (ancho_d, alto_d), color=255)
     dibujo = ImageDraw.Draw(lienzo)
-    for indice in range(partes):
+    for indice, texto_pieza in enumerate(textos[:partes]):
         y = arriba_d + indice * (alto_parte + separacion)
-        lienzo.paste(pieza, (izquierda_d, y))
-        if indice:
+        # Después de cada pieza impresa (también antes de un hueco en blanco, para saber dónde cortar).
+        if indice and textos[indice - 1] is not None:
             # De borde a borde, para que se vea por dónde cortar aunque la etiqueta se mueva un poco.
             linea_punteada(dibujo, 0, y - separacion // 2, ancho_d - 1, y - separacion // 2)
+        if texto_pieza is None:
+            continue
+        if texto_pieza not in piezas:
+            leyenda = (leyendas or {}).get(texto_pieza)
+            piezas[texto_pieza] = dibujar_codigo(texto_pieza, ancho_util, alto_parte, codificador, leyenda)
+        lienzo.paste(piezas[texto_pieza], (izquierda_d, y))
     return lienzo.rotate(90, expand=True)
 
 
@@ -301,17 +321,20 @@ class BarcodePrinter:
         return self._imprimir_imagen_bloqueante(imagen, numero_copias=numero_copias, density=density)
 
     def _imprimir_imagen_bloqueante(self, imagen, numero_copias=1, density=1):
-        imagen.save(self.ruta_imagen)
+        return self._imprimir_imagenes_bloqueante([imagen] * max(1, int(numero_copias)), density=density)
 
+    def _imprimir_imagenes_bloqueante(self, imagenes, density=1):
+        """Una etiqueta por imagen, en orden, con una sola conexión a la impresora."""
         with _PRINT_LOCK:
             puerto = resolver_puerto_impresora(self.puerto_impresora)
             transporte = SerialTransport(port=puerto)
             cliente = PrinterClientFixed(transporte)
 
-            with Image.open(self.ruta_imagen) as img:
-                total_copias = max(1, int(numero_copias))
-                for indice in range(total_copias):
-                    cliente.print_image(img, density=density, esperar_final=(indice == total_copias - 1))
+            for indice, imagen in enumerate(imagenes):
+                # Se pasa por el PNG (que además queda como la última etiqueta impresa, para revisarla).
+                imagen.save(self.ruta_imagen)
+                with Image.open(self.ruta_imagen) as img:
+                    cliente.print_image(img, density=density, esperar_final=(indice == len(imagenes) - 1))
 
         return True
 
@@ -328,6 +351,27 @@ class BarcodePrinter:
             horizontal=horizontal,
             codificador=codificador,
         )
+
+    def crear_etiquetas_por_piezas(self, piezas, codificador=CODIFICADOR_PREDETERMINADO, leyendas=None):
+        """Las imágenes de las etiquetas en vertical para `piezas` = [(codigo, cantidad), ...].
+        `leyendas` = {codigo: texto} cambia lo que se lee debajo de las barras de ese código."""
+        margenes = (self.margen_superior, self.margen_derecho, self.margen_inferior, self.margen_izquierdo)
+        return [
+            componer_vertical(etiqueta, self.ancho_px, self.alto_px, codificador, margenes, leyendas=leyendas)
+            for etiqueta in repartir_en_etiquetas(piezas)
+        ]
+
+    def imprimir_por_piezas(self, piezas, density=1, en_segundo_plano=True, codificador=CODIFICADOR_PREDETERMINADO,
+                            leyendas=None):
+        """Imprime en vertical cada código las veces que diga su cantidad, llenando cada etiqueta con
+        códigos distintos si hace falta: [("ABC", 2), ("XYZ", 1)] es una sola etiqueta."""
+        for codigo, _cantidad in piezas:
+            validar_codigo(codigo, codificador)
+        # Se arman aquí (y no en el hilo) para que cualquier error llegue a quien imprime.
+        imagenes = self.crear_etiquetas_por_piezas(piezas, codificador, leyendas)
+        if not imagenes:
+            raise ValueError("No hay códigos para imprimir.")
+        return self._lanzar(self._imprimir_imagenes_bloqueante, en_segundo_plano, imagenes, density=density)
 
     def imprimir_etiqueta_prueba(self, density=1, en_segundo_plano=True):
         imagen = generar_etiqueta_prueba(self.ancho_px, self.alto_px)
@@ -361,6 +405,12 @@ def imprimir_codigo_barras(texto_codigo, numero_copias=1, density=1, en_segundo_
         en_segundo_plano=en_segundo_plano,
         horizontal=horizontal,
         codificador=codificador,
+    )
+
+
+def imprimir_por_piezas(piezas, density=1, en_segundo_plano=True, codificador=CODIFICADOR_PREDETERMINADO, leyendas=None):
+    return _default_barcode_printer.imprimir_por_piezas(
+        piezas, density=density, en_segundo_plano=en_segundo_plano, codificador=codificador, leyendas=leyendas
     )
 
 

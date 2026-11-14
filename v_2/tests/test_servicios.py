@@ -6,7 +6,7 @@ from unittest import mock
 
 from services.botones_service import BotonesService
 from services.catalogo_service import CatalogoService, ProductoDuplicado, ProductoEnUso, formatear_nombre
-from services.codigos_barras_service import CodigosBarrasService
+from services.codigos_barras_service import CodigoDuplicado, CodigosBarrasService
 from services.usuarios_service import UsuariosService
 from services.ventas_service import VentasService
 
@@ -102,6 +102,23 @@ class TestCodigosBarras(BaseConDb):
             self.codigos.registrar_codigo_barras("SHOM", self.mayon, 5)
         with self.assertRaises(ValueError):
             self.codigos.registrar_codigo_barras(" ", self.mayon, 5)
+
+    def test_actualizar_cambia_codigo_producto_y_precio(self):
+        codigo = self.codigos.obtener_detalle_codigo_barras("shom")
+        self.assertTrue(self.codigos.actualizar_codigo_barras(codigo.id, " shom2 ", self.mayon, 150))
+        self.assertIsNone(self.codigos.obtener_detalle_codigo_barras("shom"))
+        self.assertEqual(self.codigos.obtener_codigo_barras_registrado("shom2"), (self.mayon, "mayón faja", 150.0))
+        self.assertFalse(self.codigos.actualizar_codigo_barras(9999, "x", self.mayon, 1))
+
+    def test_actualizar_no_permite_un_codigo_de_otro_ni_vacio(self):
+        codigo = self.codigos.obtener_detalle_codigo_barras("shom")
+        with self.assertRaises(CodigoDuplicado):
+            self.codigos.actualizar_codigo_barras(codigo.id, "MAYFAJ", self.short, 100)
+        with self.assertRaises(ValueError):
+            self.codigos.actualizar_codigo_barras(codigo.id, "  ", self.short, 100)
+        # Cambiar solo las mayúsculas del mismo código sí se puede.
+        self.codigos.actualizar_codigo_barras(codigo.id, "SHOM", self.short, 90)
+        self.assertEqual(self.codigos.obtener_detalle_codigo_barras("shom").codigo_barras, "SHOM")
 
 
 class TestAutoria(BaseConDb):
