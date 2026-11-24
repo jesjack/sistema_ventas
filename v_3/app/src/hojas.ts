@@ -5,7 +5,7 @@
 // (sin filas ni columnas vacías: el proveedor usa extent={false}) y nombra sus columnas con
 // `headers`. El id de la hoja es FIJO para no perder la celda seleccionada al regenerarla.
 
-import { cellKey, createSheet, createWorkbook, sheetFromRows, type Sheet, type Workbook } from '@nexfluid/react/sheets'
+import { cellKey, createSheet, createWorkbook, type Sheet, type Workbook } from '@nexfluid/react/sheets'
 import type { FilaCarrito } from './carrito.ts'
 
 export const ID_HOJA_CARRITO = 'carrito'
@@ -46,23 +46,38 @@ const RELLENO_CELDA = 16 + 1 + 6
 const RELLENO_CABEZA = 12 + 1 + 6
 
 /**
- * Anchos de las columnas del carrito ajustados al contenido: Precio, C. (cantidad) y Subtotal al
- * más ancho entre su encabezado y sus números; Producto ocupa el espacio que sobra (sin hueco a
- * la derecha) pero nunca menos que el nombre más largo.
+ * Anchos de columna ajustados al contenido: cada columna mide lo que su encabezado o su valor más
+ * ancho, y la columna `flexible` ocupa además el espacio que sobra (sin hueco a la derecha), pero
+ * nunca menos que su valor más largo (no recorta nombres).
  */
+export function anchosAjustados(
+  encabezados: readonly string[],
+  valores: readonly (readonly string[])[],
+  flexible: number,
+  disponible: number,
+  medir: (texto: string, encabezado?: boolean) => number,
+): Record<number, number> {
+  const anchos = encabezados.map((e, c) =>
+    Math.ceil(Math.max(medir(e, true) + RELLENO_CABEZA, ...(valores[c] ?? []).map((v) => medir(v) + RELLENO_CELDA))),
+  )
+  const resto = anchos.reduce((suma, a, c) => (c === flexible ? suma : suma + a), 0)
+  anchos[flexible] = Math.max(anchos[flexible]!, Math.floor(disponible - resto))
+  return Object.fromEntries(anchos.map((a, c) => [c, a]))
+}
+
+/** Anchos del carrito: Precio, C. y Subtotal a su contenido; Producto ocupa el resto. */
 export function anchosCarrito(
   carrito: readonly FilaCarrito[],
   disponible: number,
   medir: (texto: string, encabezado?: boolean) => number,
 ): Record<number, number> {
-  const columna = (indice: number, valores: string[]) =>
-    Math.ceil(Math.max(medir(ENCABEZADOS_CARRITO[indice]!, true) + RELLENO_CABEZA, ...valores.map((v) => medir(v) + RELLENO_CELDA)))
-  const precio = columna(1, carrito.map((f) => String(f.precio)))
-  const cantidad = columna(2, carrito.map((f) => String(f.cantidad)))
-  const subtotal = columna(3, carrito.map((f) => String(f.subtotal)))
-  const nombreMasLargo = columna(0, carrito.map((f) => f.producto))
-  const producto = Math.max(nombreMasLargo, Math.floor(disponible - precio - cantidad - subtotal))
-  return { 0: producto, 1: precio, 2: cantidad, 3: subtotal }
+  const valores = [
+    carrito.map((f) => f.producto),
+    carrito.map((f) => String(f.precio)),
+    carrito.map((f) => String(f.cantidad)),
+    carrito.map((f) => String(f.subtotal)),
+  ]
+  return anchosAjustados(ENCABEZADOS_CARRITO, valores, 0, disponible, medir)
 }
 
 /** Libro con una hoja: una fila por producto; el subtotal es una fórmula (`=Precio*Cantidad`). */
@@ -107,9 +122,48 @@ export interface LineaVenta {
   subtotal: number | null
 }
 
-/** Tabla de lo vendido un día, con las mismas columnas que la hoja de la v2. */
-export function hojaDeVentas(lineas: readonly LineaVenta[]): Sheet {
-  const filas: (string | number)[][] = [['Hora', 'Producto', 'Precio', 'Cantidad', 'Subtotal']]
-  for (const l of lineas) filas.push([l.hora.slice(0, 5), l.producto, l.precio ?? '', l.cantidad ?? '', l.subtotal ?? ''])
-  return sheetFromRows('Ventas realizadas', filas)
+export const ID_HOJA_VENTAS = 'ventas'
+const ENCABEZADOS_VENTAS = ['Hora', 'Producto', 'Precio', 'C.', 'Subtotal']
+/** Filas visibles de VENTAS REALIZADAS antes de desplazarse. */
+export const FILAS_VISIBLES_VENTAS = 12
+
+const texto = (v: number | null) => (v === null ? '' : String(v))
+
+/**
+ * VENTAS REALIZADAS como hoja de solo lectura, con las columnas de la hoja de la v2. Los eventos
+ * (APERTURA DE CAJA…) no llevan precio, cantidad ni subtotal.
+ */
+export function libroDeVentas(lineas: readonly LineaVenta[], anchos?: Record<number, number>): Workbook {
+  const celdas: Sheet['cells'] = {}
+  lineas.forEach((l, fila) => {
+    ;[l.hora.slice(0, 5), l.producto, texto(l.precio), texto(l.cantidad), texto(l.subtotal)].forEach((v, c) => {
+      if (v !== '') celdas[cellKey(fila, c)] = { input: v }
+    })
+  })
+  const hoja: Sheet = {
+    ...createSheet('Ventas realizadas', { rows: Math.max(lineas.length, 1), columns: 5, cells: celdas, headers: ENCABEZADOS_VENTAS }, ID_HOJA_VENTAS),
+    ...(anchos ? { columnWidths: anchos } : {}),
+  }
+  return createWorkbook([hoja])
+}
+
+/** Anchos de VENTAS REALIZADAS: todo a su contenido; Producto ocupa el resto. */
+export function anchosVentas(
+  lineas: readonly LineaVenta[],
+  disponible: number,
+  medir: (texto: string, encabezado?: boolean) => number,
+): Record<number, number> {
+  const valores = [
+    lineas.map((l) => l.hora.slice(0, 5)),
+    lineas.map((l) => l.producto),
+    lineas.map((l) => texto(l.precio)),
+    lineas.map((l) => texto(l.cantidad)),
+    lineas.map((l) => texto(l.subtotal)),
+  ]
+  return anchosAjustados(ENCABEZADOS_VENTAS, valores, 1, disponible, medir)
+}
+
+/** Alto de VENTAS REALIZADAS: hasta FILAS_VISIBLES_VENTAS filas; con más, se desplaza. */
+export function altoHojaVentas(lineas: readonly LineaVenta[], extra: number): number {
+  return (Math.min(Math.max(lineas.length, 1), FILAS_VISIBLES_VENTAS) + 1) * ALTO_FILA_HOJA + extra
 }

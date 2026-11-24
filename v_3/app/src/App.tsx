@@ -1,8 +1,9 @@
 import { useCallback, useEffect, type CSSProperties, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexInput, NexProvider, NexSegmented, NexSelect } from '@nexfluid/react'
-import { NexDataView, NexSheets, type Workbook } from '@nexfluid/react/sheets'
-import { altoHojaCarrito, anchosCarrito, hojaDeVentas, libroDeCarrito, medidorDeTexto, type LineaVenta } from './hojas.ts'
+import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
+import { altoHojaCarrito, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
+import { useMarcoHoja } from './marcoHoja.ts'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
 import { agregarAlCarrito, dinero, leerNumero, totalDelCarrito, type FilaCarrito } from './carrito.ts'
 import { DetectorEscaner, type Escaneo } from './escaner.ts'
@@ -75,29 +76,7 @@ export default function App() {
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
   // ajustan al contenido y al ancho disponible (Producto ocupa lo que sobra: sin hueco a la derecha).
   const refHoja = useRef<HTMLDivElement>(null)
-  // Medidas reales de la hoja, sin estimar: el ancho útil del área de la tabla (sin la columna de
-  // números de fila) y lo que ocupa todo lo que no es la tabla (barra de fórmulas, bordes).
-  const [marcoHoja, setMarcoHoja] = useState({ anchoUtil: 0, extraAlto: 0 })
-  useEffect(() => {
-    const nodo = refHoja.current
-    if (!nodo) return
-    const medir = () => {
-      const editor = nodo.querySelector<HTMLElement>('.nx-sheets')
-      const vista = nodo.querySelector<HTMLElement>('.nx-sheet__viewport')
-      const esquina = nodo.querySelector<HTMLElement>('.nx-sheet__corner')
-      if (!editor || !vista) return
-      // Medido por FUERA de la zona con scroll (offsetWidth/offsetHeight incluyen sus barras): si
-      // se midiera por dentro, una barra que aparece cambia la medida, el ajuste la vuelve a
-      // provocar y las dos barras se sostienen solas.
-      const anchoUtil = vista.offsetWidth - (esquina?.offsetWidth ?? 0)
-      const extraAlto = editor.offsetHeight - vista.offsetHeight
-      setMarcoHoja((m) => (m.anchoUtil === anchoUtil && m.extraAlto === extraAlto ? m : { anchoUtil, extraAlto }))
-    }
-    medir()
-    const observador = new ResizeObserver(medir)
-    observador.observe(nodo)
-    return () => observador.disconnect()
-  }, [vistaCarrito])
+  const marcoHoja = useMarcoHoja(refHoja, [vistaCarrito])
   const libroCarrito = useMemo<Workbook>(() => {
     const nodo = refHoja.current
     if (!nodo || !marcoHoja.anchoUtil) return libroDeCarrito(carrito)
@@ -142,7 +121,19 @@ export default function App() {
       setAviso({ tono: 'danger', texto: `No se pudieron leer las ventas: ${e}` }),
     )
   }, [fecha, recargaVentas])
-  const hojaVentas = useMemo(() => hojaDeVentas(lineasVenta), [lineasVenta])
+  // VENTAS REALIZADAS como hoja de solo lectura, igual que el carrito.
+  const refVentas = useRef<HTMLDivElement>(null)
+  const marcoVentas = useMarcoHoja(refVentas, [lineasVenta.length > 0])
+  const libroVentas = useMemo<Workbook>(() => {
+    const nodo = refVentas.current
+    if (!nodo || !marcoVentas.anchoUtil) return libroDeVentas(lineasVenta)
+    return libroDeVentas(lineasVenta, anchosVentas(lineasVenta, marcoVentas.anchoUtil, medidorDeTexto(nodo)))
+  }, [lineasVenta, marcoVentas.anchoUtil])
+  // Lo más reciente abajo, como en la hoja de la v2: al cargar o al cobrar, se baja al final.
+  useEffect(() => {
+    const vista = refVentas.current?.querySelector<HTMLElement>('.nx-sheet__viewport')
+    if (vista) requestAnimationFrame(() => (vista.scrollTop = vista.scrollHeight))
+  }, [lineasVenta])
 
   useEffect(() => {
     invoke<InfoBase>('info_base').then(setInfo, (e) => setErrorBase(String(e)))
@@ -461,6 +452,7 @@ export default function App() {
               tabs={false}
               statusBar={false}
               toolbar={false}
+              formulaBar={false}
             />
             </div>
           )}
@@ -505,7 +497,21 @@ export default function App() {
             </div>
             {lineasVenta.length ? (
               <>
-                <NexDataView sheet={hojaVentas} title={`Ventas del ${fecha}`} controls={false} view="table" />
+                <div ref={refVentas}>
+                  <NexSheets
+                    className="caja__hoja caja__hoja--ventas"
+                    workbook={libroVentas}
+                    readOnly
+                    extent={false}
+                    height={altoHojaVentas(lineasVenta, marcoVentas.extraAlto)}
+                    label={`Ventas del ${fecha}`}
+                    columnLabels="name"
+                    tabs={false}
+                    statusBar={false}
+                    toolbar={false}
+                    formulaBar={false}
+                  />
+                </div>
               </>
             ) : (
               <p className="caja__nota">No hay ventas ese día.</p>

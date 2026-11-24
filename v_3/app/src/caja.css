@@ -250,6 +250,7 @@ body,
   display: none;
 }
 
-.caja__hoja .nx-sheet__viewport {
+/* El carrito mide exactamente sus filas: sin scroll vertical. VENTAS REALIZADAS sí se desplaza. */
+.caja__hoja:not(.caja__hoja--ventas) .nx-sheet__viewport {
   overflow-y: hidden;
 }
