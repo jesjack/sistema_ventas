@@ -13,30 +13,42 @@ import { useEffect, useState, type DependencyList, type RefObject } from 'react'
 export interface MarcoHoja {
   anchoUtil: number
   extraAlto: number
+  /** Ancho de la columna de números de fila. */
+  anchoRotulos: number
   /** Cambia cuando cargan fuentes: los anchos medidos con la fuente anterior ya no valen. */
   fuentes: number
 }
 
 export function useMarcoHoja(ref: RefObject<HTMLElement | null>, deps: DependencyList): MarcoHoja {
-  const [marco, setMarco] = useState<MarcoHoja>({ anchoUtil: 0, extraAlto: 0, fuentes: 0 })
+  const [marco, setMarco] = useState<MarcoHoja>({ anchoUtil: 0, extraAlto: 0, anchoRotulos: 0, fuentes: 0 })
   useEffect(() => {
     const nodo = ref.current
     if (!nodo) return
+    const observador = new ResizeObserver(() => medir())
+    let vistaObservada: HTMLElement | null = null
     const medir = () => {
       const editor = nodo.querySelector<HTMLElement>('.nx-sheets')
       const vista = nodo.querySelector<HTMLElement>('.nx-sheet__viewport')
       const esquina = nodo.querySelector<HTMLElement>('.nx-sheet__corner')
       if (!editor || !vista) return
+      // La hoja puede montarse después (o volver a montarse): se observa su área en cuanto exista.
+      if (vista !== vistaObservada) {
+        if (vistaObservada) observador.unobserve(vistaObservada)
+        observador.observe(vista)
+        vistaObservada = vista
+      }
+      const anchoRotulos = esquina?.offsetWidth ?? 0
       // Un píxel de holgura: los anchos de las columnas se redondean y no deben sumar de más.
       const anchoUtil = vista.offsetWidth - (esquina?.offsetWidth ?? 0) - 1
       const extraAlto = editor.offsetHeight - vista.offsetHeight
-      setMarco((m) => (m.anchoUtil === anchoUtil && m.extraAlto === extraAlto ? m : { ...m, anchoUtil, extraAlto }))
+      setMarco((m) =>
+        m.anchoUtil === anchoUtil && m.extraAlto === extraAlto && m.anchoRotulos === anchoRotulos
+          ? m
+          : { ...m, anchoUtil, extraAlto, anchoRotulos },
+      )
     }
     medir()
-    const observador = new ResizeObserver(medir)
     observador.observe(nodo)
-    const vista = nodo.querySelector<HTMLElement>('.nx-sheet__viewport')
-    if (vista) observador.observe(vista)
     const fuentesListas = () => {
       setMarco((m) => ({ ...m, fuentes: m.fuentes + 1 }))
       medir()

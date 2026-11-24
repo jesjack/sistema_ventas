@@ -295,3 +295,39 @@ body,
 .caja__venta > .nx-segmented {
   align-self: flex-start;
 }
+
+/* Botones de la columna: el icono no se encoge; un texto largo se corta con "…". */
+.caja__botones .nx-button__label {
+  min-width: 0;
+  max-width: 100%;
+}
+.caja__botones .nx-button__label > svg {
+  flex-shrink: 0;
+}
+.caja__boton-texto {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Carrito vacío (como la v2): la fila se ve como una sola celda con el aviso, centrado y en gris. */
+.caja__marco-hoja {
+  position: relative;
+}
+.caja__carrito-vacio {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  display: grid;
+  place-items: center;
+  background: var(--nx-surface);
+  color: var(--nx-fg-subtle);
+  font: 500 var(--nx-text-small) / 1 var(--nx-font-body);
+  border-bottom-right-radius: calc(var(--nx-sheets-radius, 22px) - 1px);
+  pointer-events: none;
+}
+.caja__marco-hoja--vacio .nx-sheet__selection,
+.caja__marco-hoja--vacio .nx-sheet__active {
+  display: none;
+}

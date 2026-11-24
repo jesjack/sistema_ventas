@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexDatePicker, NexInput, NexMorph, NexProvider, NexSegmented, NexSelect, toIsoDate } from '@nexfluid/react'
 import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
-import { altoHojaCarrito, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
+import { ALTO_FILA_HOJA, altoHojaCarrito, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
 import { useAltoDisponible, useMarcoHoja } from './marcoHoja.ts'
 import { Icono } from './iconos.tsx'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
@@ -113,7 +113,7 @@ export default function App() {
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
   // ajustan al contenido y al ancho disponible (Producto ocupa lo que sobra: sin hueco a la derecha).
   const refHoja = useRef<HTMLDivElement>(null)
-  const marcoHoja = useMarcoHoja(refHoja, [])
+  const marcoHoja = useMarcoHoja(refHoja, [vista])
   const libroCarrito = useMemo<Workbook>(() => {
     const nodo = refHoja.current
     if (!nodo || !marcoHoja.anchoUtil) return libroDeCarrito(carrito)
@@ -555,7 +555,7 @@ export default function App() {
         title={typeof hacer === 'string' ? hacer : undefined}
         onClick={typeof hacer === 'string' ? undefined : hacer}
       >
-        {b.etiqueta}
+        <span className="caja__boton-texto">{b.etiqueta}</span>
       </NexButton>
     )
     if (b.accion === 'cobrar_carrito')
@@ -661,7 +661,7 @@ export default function App() {
                 />
               </div>
 
-              <div ref={refHoja}>
+              <div ref={refHoja} className={carrito.length ? 'caja__marco-hoja' : 'caja__marco-hoja caja__marco-hoja--vacio'}>
                 <NexSheets
                   className="caja__hoja"
                   workbook={libroCarrito}
@@ -675,13 +675,14 @@ export default function App() {
                   toolbar={false}
                   formulaBar={false}
                 />
+                {/* Como en la v2: con el carrito vacío, la fila se ve como una sola celda con el aviso
+                    (NexSheets no fusiona celdas: se cubre la fila). */}
+                {carrito.length === 0 && (
+                  <div className="caja__carrito-vacio" style={{ height: ALTO_FILA_HOJA - 1, left: marcoHoja.anchoRotulos }}>
+                    El carrito está vacío
+                  </div>
+                )}
               </div>
-
-              <div className="caja__total">
-                <span>Total</span>
-                <strong>{dinero(total)}</strong>
-              </div>
-
 
               <div className="caja__total">
                 <span>Total</span>
