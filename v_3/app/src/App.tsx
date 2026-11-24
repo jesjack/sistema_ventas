@@ -14,6 +14,8 @@ interface InfoBase {
   ruta: string
   productos: number
   codigos: number
+  usuario: string | null
+  sesion_id: number | null
 }
 
 /** Producto del catálogo (núcleo: `nucleo::Producto`). */
@@ -330,6 +332,7 @@ export default function App() {
         </div>
         {info ? (
           <NexBadge tone="success" dot>
+            {info.usuario ? `${info.usuario} · sesión ${info.sesion_id} · ` : 'sin sesión · '}
             {info.productos} productos · {info.codigos} códigos
           </NexBadge>
         ) : (

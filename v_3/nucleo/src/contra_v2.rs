@@ -10,6 +10,7 @@ use crate::carrito::{Carrito, FilaCarrito};
 use crate::catalogo::{ErrorCatalogo, formatear_nombre};
 use crate::cobro::leer_monto;
 use crate::corte::PiezaCambio;
+use crate::sesiones::DatosUsuario;
 use crate::ventas::{FilaVentas, Momento};
 
 const CASOS: &str = include_str!("../pruebas_v2/casos_v2.json");
@@ -227,4 +228,56 @@ fn la_base_real_es_compatible() {
     let filas = base.ventas_del_dia(&dias[0], false).unwrap();
     println!("{} productos, {} días con ventas; el {}: {} filas", productos.len(), dias.len(), dias[0], filas.len());
     assert!(!productos.is_empty() && !filas.is_empty());
+}
+
+#[test]
+fn usuarios_y_sesiones_como_la_v2() {
+    let casos = casos();
+    let mut base = base_v2();
+    for paso in casos["usuarios"]["pasos"].as_array().unwrap() {
+        let a = &paso["args"];
+        let momento = || Momento::nuevo(a[1].as_str().unwrap(), a[2].as_str().unwrap());
+        match paso["op"].as_str().unwrap() {
+            "asegurar_usuario" => {
+                let d = &paso["datos"];
+                let t = |k: &str| d[k].as_str().unwrap().to_string();
+                let datos = DatosUsuario {
+                    nombre_usuario: t("nombre_usuario"),
+                    sistema_operativo: t("sistema_operativo"),
+                    version_sistema: t("version_sistema"),
+                    nombre_equipo: t("nombre_equipo"),
+                    dominio: t("dominio"),
+                };
+                let (id, nuevo) = base.asegurar_usuario(&datos).unwrap();
+                assert_eq!(json!([id, nuevo]), paso["resultado"], "{datos:?}");
+            }
+            "iniciar_sesion" => {
+                let id = base.iniciar_sesion(a[0].as_i64().unwrap(), &momento(), a[3].as_i64(), a[4].as_str()).unwrap();
+                assert_eq!(json!(id), paso["resultado"]);
+            }
+            "latido" => base.latido(a[0].as_i64().unwrap(), &momento()).unwrap(),
+            "cerrar_sesion" => base.cerrar_sesion(a[0].as_i64().unwrap(), &momento(), a[3].as_str(), a[4].as_bool().unwrap()).unwrap(),
+            otra => panic!("operación desconocida {otra}"),
+        }
+    }
+    let tablas = &casos["usuarios"]["tablas"];
+    let consulta = |sql: &str| -> Value {
+        let mut c = base.con.prepare(sql).unwrap();
+        let n = c.column_count();
+        json!(c.query_map([], |f| Ok((0..n).map(|i| match f.get_ref(i).unwrap() {
+            ValueRef::Null => Value::Null,
+            ValueRef::Integer(x) => json!(x),
+            ValueRef::Real(x) => json!(x),
+            ValueRef::Text(t) => json!(String::from_utf8_lossy(t)),
+            ValueRef::Blob(_) => Value::Null,
+        }).collect::<Vec<_>>())).unwrap().map(Result::unwrap).collect::<Vec<_>>())
+    };
+    // El usuario plantilla trae el último acceso de cuando se generaron los casos: se compara sin él.
+    let mut usuarios = consulta("SELECT id, nombre_usuario, sistema_operativo, version_sistema, nombre_equipo, dominio, ultimo_acceso, activo FROM usuarios_sistema ORDER BY id");
+    let mut esperados = tablas["usuarios_sistema"].clone();
+    for filas in [&mut usuarios, &mut esperados] {
+        filas[0][6] = Value::Null;
+    }
+    assert_eq!(usuarios, esperados);
+    assert_eq!(consulta("SELECT * FROM sesiones_sistema ORDER BY id"), tablas["sesiones_sistema"]);
 }

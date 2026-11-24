@@ -13,6 +13,7 @@ pub mod carrito;
 pub mod catalogo;
 pub mod cobro;
 pub mod corte;
+pub mod sesiones;
 pub mod ventas;
 
 #[cfg(test)]
@@ -22,4 +23,5 @@ pub use base::{Base, ErrorBase};
 pub use carrito::{Carrito, FilaCarrito};
 pub use catalogo::{CodigoBarras, ErrorCatalogo, Producto};
 pub use cobro::{Cobro, ErrorCobro, leer_monto};
+pub use sesiones::DatosUsuario;
 pub use ventas::{FilaVentas, Momento};

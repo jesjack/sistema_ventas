@@ -1204,5 +1204,157 @@
     ]
    ]
   }
+ },
+ "usuarios": {
+  "pasos": [
+   {
+    "op": "asegurar_usuario",
+    "datos": {
+     "nombre_usuario": "ana",
+     "sistema_operativo": "Linux",
+     "version_sistema": "#1 SMP",
+     "nombre_equipo": "caja",
+     "dominio": ""
+    },
+    "resultado": [
+     2,
+     true
+    ]
+   },
+   {
+    "op": "asegurar_usuario",
+    "datos": {
+     "nombre_usuario": "ana",
+     "sistema_operativo": "Linux",
+     "version_sistema": "#2 SMP",
+     "nombre_equipo": "caja",
+     "dominio": ""
+    },
+    "resultado": [
+     2,
+     false
+    ]
+   },
+   {
+    "op": "asegurar_usuario",
+    "datos": {
+     "nombre_usuario": "beto",
+     "sistema_operativo": "Linux",
+     "version_sistema": "#1 SMP",
+     "nombre_equipo": "caja",
+     "dominio": ""
+    },
+    "resultado": [
+     3,
+     true
+    ]
+   },
+   {
+    "op": "iniciar_sesion",
+    "args": [
+     2,
+     "2026-11-24",
+     "09:00:00",
+     1234,
+     null
+    ],
+    "resultado": 1
+   },
+   {
+    "op": "iniciar_sesion",
+    "args": [
+     3,
+     "2026-11-24",
+     "09:05:00",
+     null,
+     "desde el acceso directo"
+    ],
+    "resultado": 2
+   },
+   {
+    "op": "latido",
+    "args": [
+     1,
+     "2026-11-24",
+     "09:01:00"
+    ]
+   },
+   {
+    "op": "cerrar_sesion",
+    "args": [
+     1,
+     "2026-11-24",
+     "18:00:00",
+     null,
+     true
+    ]
+   },
+   {
+    "op": "cerrar_sesion",
+    "args": [
+     2,
+     "2026-11-24",
+     "18:30:00",
+     "desplazada",
+     false
+    ]
+   }
+  ],
+  "tablas": {
+   "usuarios_sistema": [
+    [
+     1,
+     "__default__",
+     "sistema",
+     "",
+     "",
+     "",
+     null,
+     1
+    ],
+    [
+     2,
+     "ana",
+     "Linux",
+     "#2 SMP",
+     "caja",
+     "",
+     "2026-11-24 18:00:00",
+     1
+    ],
+    [
+     3,
+     "beto",
+     "Linux",
+     "#1 SMP",
+     "caja",
+     "",
+     "2026-11-24 18:30:00",
+     1
+    ]
+   ],
+   "sesiones_sistema": [
+    [
+     1,
+     2,
+     "2026-11-24 09:00:00",
+     "2026-11-24 18:00:00",
+     "2026-11-24 18:00:00",
+     1,
+     1234,
+     null
+    ],
+    [
+     2,
+     3,
+     "2026-11-24 09:05:00",
+     "2026-11-24 18:30:00",
+     "2026-11-24 18:30:00",
+     0,
+     null,
+     "desplazada"
+    ]
+   ]
+  }
  }
 }

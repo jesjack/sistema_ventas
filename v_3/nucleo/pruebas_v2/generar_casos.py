@@ -26,6 +26,8 @@ from dialogs.parseo import parse_monto  # noqa: E402
 from dialogs.varios_codigos import filtrar_productos  # noqa: E402
 from services.catalogo_service import CatalogoService, ProductoDuplicado, formatear_nombre  # noqa: E402
 from services.codigos_barras_service import CodigoDuplicado, CodigosBarrasService  # noqa: E402
+from services.esquema import asegurar_esquema  # noqa: E402
+from services.usuarios_service import UsuariosService  # noqa: E402
 from services.ventas_service import VentasService  # noqa: E402
 from table_modules.carrito import agregar_al_carrito, total_del_carrito  # noqa: E402
 
@@ -176,21 +178,57 @@ def casos_catalogo(db: Path):
     return {"pasos": pasos, "tablas": tablas}
 
 
+def casos_usuarios(db: Path):
+    """Usuarios del sistema y sesiones con datos y horas explícitos. `ultimo_acceso` de
+    asegurar_usuario usa la hora del momento: se compara el valor final, que lo fija la última
+    operación de sesión (hora explícita)."""
+    servicio = UsuariosService(db_path=str(db), sesion_id=None)
+    ana = {"nombre_usuario": "ana", "sistema_operativo": "Linux", "version_sistema": "#1 SMP", "nombre_equipo": "caja", "dominio": ""}
+    ana_nueva_version = dict(ana, version_sistema="#2 SMP")
+    beto = dict(ana, nombre_usuario="beto")
+    pasos = []
+    for datos in (ana, ana_nueva_version, beto):
+        usuario_id, es_nuevo = servicio.asegurar_usuario_sistema(datos)
+        pasos.append({"op": "asegurar_usuario", "datos": datos, "resultado": [usuario_id, es_nuevo]})
+    s1 = servicio.iniciar_sesion_sistema(2, fecha="2026-11-24", hora="09:00:00", pid=1234)
+    pasos.append({"op": "iniciar_sesion", "args": [2, "2026-11-24", "09:00:00", 1234, None], "resultado": s1})
+    s2 = servicio.iniciar_sesion_sistema(3, fecha="2026-11-24", hora="09:05:00", detalle="desde el acceso directo")
+    pasos.append({"op": "iniciar_sesion", "args": [3, "2026-11-24", "09:05:00", None, "desde el acceso directo"], "resultado": s2})
+    servicio.registrar_latido_sesion(s1, fecha="2026-11-24", hora="09:01:00")
+    pasos.append({"op": "latido", "args": [s1, "2026-11-24", "09:01:00"]})
+    servicio.cerrar_sesion_sistema(s1, fecha="2026-11-24", hora="18:00:00", exitosa=True)
+    pasos.append({"op": "cerrar_sesion", "args": [s1, "2026-11-24", "18:00:00", None, True]})
+    servicio.cerrar_sesion_sistema(s2, fecha="2026-11-24", hora="18:30:00", detalle="desplazada", exitosa=False)
+    pasos.append({"op": "cerrar_sesion", "args": [s2, "2026-11-24", "18:30:00", "desplazada", False]})
+    con = sqlite3.connect(db)
+    tablas = {
+        "usuarios_sistema": [list(f) for f in con.execute(
+            "SELECT id, nombre_usuario, sistema_operativo, version_sistema, nombre_equipo, dominio, ultimo_acceso, activo FROM usuarios_sistema ORDER BY id")],
+        "sesiones_sistema": [list(f) for f in con.execute("SELECT * FROM sesiones_sistema ORDER BY id")],
+    }
+    con.close()
+    return {"pasos": pasos, "tablas": tablas}
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / "ventas.db"
         ventas = casos_ventas(db)  # crea el esquema de la v2 (asegurar_esquema) en la base temporal
         db_catalogo = Path(tmp) / "catalogo.db"
         catalogo = casos_catalogo(db_catalogo)
-        con = sqlite3.connect(db)
-        esquema = [sql for (sql,) in con.execute(
-            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type DESC, name")]
-        con.close()
-    (AQUI / "esquema_v2.sql").write_text(";\n\n".join(esquema) + ";\n", encoding="utf-8")
-    casos = {"carrito": casos_carrito(), "monto": casos_monto(), "ventas": ventas, "textos": casos_textos(), "catalogo": catalogo}
+        usuarios = casos_usuarios(Path(tmp) / "usuarios.db")
+        # El esquema TAL COMO LO DEJA LA V2 al crearlo, con sus datos semilla (el usuario plantilla
+        # "__default__" queda como id 1): así las pruebas de Rust parten de la misma base.
+        db_nueva = Path(tmp) / "nueva.db"
+        asegurar_esquema(str(db_nueva))
+        semilla = "\n".join(l for l in sqlite3.connect(db_nueva).iterdump() if l not in ("BEGIN TRANSACTION;", "COMMIT;"))
+    (AQUI / "esquema_v2.sql").write_text(
+        "-- Generado por generar_casos.py: el esquema de la v2 recién creado, con sus datos semilla.\n" + semilla + "\n",
+        encoding="utf-8")
+    casos = {"carrito": casos_carrito(), "monto": casos_monto(), "ventas": ventas, "textos": casos_textos(), "catalogo": catalogo, "usuarios": usuarios}
     (AQUI / "casos_v2.json").write_text(json.dumps(casos, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"Casos: {len(casos['carrito'])} de carrito, {len(casos['monto'])} de monto, "
-          f"{len(ventas['operaciones'])} operaciones de ventas, {len(catalogo['pasos'])} de catálogo. Esquema: {len(esquema)} sentencias.")
+          f"{len(ventas['operaciones'])} operaciones de ventas, {len(catalogo['pasos'])} de catálogo, {len(usuarios['pasos'])} de usuarios.")
 
 
 if __name__ == "__main__":

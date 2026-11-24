@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use nucleo::{Base, Carrito, Cobro, FilaVentas, Momento, Producto};
+use nucleo::{Base, Carrito, Cobro, DatosUsuario, FilaVentas, Momento, Producto};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
@@ -20,7 +20,18 @@ use tauri::Manager;
 struct Estado {
     ruta: PathBuf,
     base: Result<Base, String>,
+    /// La sesión de esta ejecución (sesiones_sistema) y su usuario. Lo que se registra la lleva.
+    sesion: Option<Sesion>,
 }
+
+#[derive(Clone)]
+struct Sesion {
+    id: i64,
+    usuario: String,
+}
+
+/// Cada cuánto se registra el latido de la sesión (como la v2).
+const LATIDO: std::time::Duration = std::time::Duration::from_secs(60);
 
 type Compartido = Mutex<Estado>;
 
@@ -29,6 +40,8 @@ struct InfoBase {
     ruta: String,
     productos: usize,
     codigos: usize,
+    usuario: Option<String>,
+    sesion_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -115,9 +128,14 @@ fn buscar_codigo(estado: tauri::State<'_, Compartido>, codigo: String) -> Result
 
 #[tauri::command]
 fn info_base(estado: tauri::State<'_, Compartido>) -> Result<InfoBase, String> {
-    let ruta = estado.lock().map_err(|e| e.to_string())?.ruta.display().to_string();
+    let (ruta, sesion) = {
+        let e = estado.lock().map_err(|e| e.to_string())?;
+        (e.ruta.display().to_string(), e.sesion.clone())
+    };
     con_base(&estado, |b| {
         Ok(InfoBase {
+            usuario: sesion.as_ref().map(|s| s.usuario.clone()),
+            sesion_id: sesion.as_ref().map(|s| s.id),
             ruta,
             productos: b.productos().map_err(|e| e.to_string())?.len(),
             codigos: b.codigos("").map_err(|e| e.to_string())?.len(),
@@ -160,25 +178,56 @@ fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: S
         return Err("El carrito está vacío.".into());
     }
     let cobro = Cobro::con_texto(carrito.total(), &recibido).map_err(|e| e.to_string())?;
+    let sesion_id = estado.lock().map_err(|e| e.to_string())?.sesion.as_ref().map(|s| s.id);
     con_base(&estado, |b| {
         let venta_id = b
-            .registrar_venta(&carrito.filas, cobro.recibido, cobro.cambio, &Momento::ahora(), None)
+            .registrar_venta(&carrito.filas, cobro.recibido, cobro.cambio, &Momento::ahora(), sesion_id)
             .map_err(|e| e.to_string())?
             .ok_or("El carrito está vacío.")?;
         Ok(VentaRegistrada { venta_id, total: cobro.total, recibido: cobro.recibido, cambio: cobro.cambio })
     })
 }
 
+/// Abre la sesión de esta ejecución con el usuario del sistema (el mismo que reconoce la v2).
+fn abrir_sesion(base: &mut Base) -> Result<Sesion, String> {
+    let datos = DatosUsuario::del_sistema();
+    let (usuario_id, _nuevo) = base.asegurar_usuario(&datos).map_err(|e| e.to_string())?;
+    let id = base
+        .iniciar_sesion(usuario_id, &Momento::ahora(), Some(std::process::id() as i64), Some("caja v3 (prototipo)"))
+        .map_err(|e| e.to_string())?;
+    Ok(Sesion { id, usuario: datos.nombre_usuario })
+}
+
+/// Latido cada `LATIDO` mientras viva la app (hilo de fondo; un fallo solo se anota).
+fn iniciar_latido(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(LATIDO);
+        let estado = app.state::<Compartido>();
+        let Ok(mut e) = estado.lock() else { return };
+        let Some(sesion) = e.sesion.clone() else { return };
+        if let Ok(base) = &mut e.base {
+            if let Err(error) = base.latido(sesion.id, &Momento::ahora()) {
+                log::warn!("No se pudo registrar el latido de la sesión {}: {error}", sesion.id);
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let app = tauri::Builder::default()
     .setup(|app| {
       let ruta = ruta_base(app.handle());
-      let base = abrir(&ruta);
+      let mut base = abrir(&ruta);
       if let Err(motivo) = &base {
         log::error!("{motivo}");
       }
-      app.manage(Mutex::new(Estado { ruta, base }));
+      let sesion = match &mut base {
+        Ok(b) => abrir_sesion(b).map_err(|e| log::error!("No se pudo abrir la sesión: {e}")).ok(),
+        Err(_) => None,
+      };
+      app.manage(Mutex::new(Estado { ruta, base, sesion }));
+      iniciar_latido(app.handle().clone());
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -189,8 +238,22 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar])
-    .run(tauri::generate_context!())
+    .build(tauri::generate_context!())
     .expect("error while building tauri application");
+  app.run(|app, evento| {
+    // Cierre normal: la sesión se cierra como exitosa. Si la app se cae, la sesión queda abierta
+    // (sin salida_real ni cerrada_correctamente), y así se distingue una caída de un cierre.
+    if let tauri::RunEvent::Exit = evento {
+      let estado = app.state::<Compartido>();
+      if let Ok(mut e) = estado.lock() {
+        if let (Some(sesion), Ok(base)) = (e.sesion.clone(), &mut e.base) {
+          if let Err(error) = base.cerrar_sesion(sesion.id, &Momento::ahora(), Some("cierre normal"), true) {
+            log::warn!("No se pudo cerrar la sesión {}: {error}", sesion.id);
+          }
+        }
+      }
+    }
+  });
 }
 
 #[cfg(test)]
