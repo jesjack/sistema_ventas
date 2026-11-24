@@ -13,6 +13,8 @@ pub mod carrito;
 pub mod catalogo;
 pub mod cobro;
 pub mod corte;
+pub mod esquema;
+pub mod importar;
 pub mod sesiones;
 pub mod ventas;
 

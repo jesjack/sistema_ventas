@@ -3,11 +3,12 @@
 //! Aquí solo hay comandos que traducen entre la vista web y el núcleo; las reglas (carrito,
 //! cobro, ventas, catálogo) viven en el núcleo y están probadas contra la v2.
 //!
-//! **Base de datos (D9, sin rutas fijas):** `CAJA_DB` si está definida; si no, `ventas.db` en la
-//! carpeta de datos de la app que da el sistema (`~/.local/share/local.sistemaventas.caja/` en
-//! Linux). Solo en desarrollo, si no existe ninguna de las dos, se usa `datos/ventas_copia.db` del
-//! prototipo. **La app se niega a abrir la base real de la v2** (`v_2/share/ventas.db`): mientras
-//! la v2 esté en producción, la v3 escribe solo en una copia.
+//! **Base de datos:** la v3 tiene su PROPIA base, con su esquema (`nucleo::esquema`); los datos de
+//! la v2 se importan con `cargo run --bin importar_v2` (en `v_3/nucleo`). Ruta (D9, sin rutas
+//! fijas): `CAJA_DB` si está definida; si no, `ventas.db` en la carpeta de datos de la app que da el
+//! sistema (`~/.local/share/local.sistemaventas.caja/` en Linux); solo en desarrollo, si esa no
+//! existe, `datos/ventas_v3.db` del prototipo. **Nunca abre una base de la v2:** ni la ruta real
+//! (`v_2/share/ventas.db`) ni ninguna otra con su esquema (el núcleo se niega a migrarla).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -76,8 +77,8 @@ fn ruta_base(app: &tauri::AppHandle) -> PathBuf {
             return ruta.clone();
         }
     }
-    // Solo en desarrollo: la copia del prototipo (scripts/copiar_base_real.py o crear_base_demo.py).
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../datos/ventas_copia.db"))
+    // Solo en desarrollo: la base del prototipo, importada de una copia de la v2 (ver scripts/).
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../datos/ventas_v3.db"))
 }
 
 /// ¿Es la base real de la v2? Mientras la v2 esté en producción, la v3 no la toca.
@@ -92,11 +93,13 @@ fn abrir(ruta: &Path) -> Result<Base, String> {
     }
     if !ruta.exists() {
         return Err(format!(
-            "No hay base en {}. En la caja: scripts/copiar_base_real.py; fuera de ella: scripts/crear_base_demo.py.",
+            "No hay base de la v3 en {}. Créala importando una copia de la v2: \
+             scripts/copiar_base_real.py (en la caja) o scripts/crear_base_demo.py (fuera), y luego \
+             `cargo run --bin importar_v2 -- datos/ventas_copia.db datos/ventas_v3.db` en v_3/nucleo.",
             ruta.display()
         ));
     }
-    let base = Base::abrir(ruta).map_err(|e| format!("No se pudo abrir {}: {e}", ruta.display()))?;
+    let base = Base::abrir_v3(ruta).map_err(|e| format!("No se pudo abrir {}: {e}", ruta.display()))?;
     base.verificar_esquema().map_err(|e| format!("{}: {e}", ruta.display()))?;
     Ok(base)
 }
