@@ -1,7 +1,7 @@
 # Contexto para continuar la V3 (Rust + Tauri + NexFluid)
 
 Documento de traspaso entre sesiones de trabajo (con o sin Claude). **Léelo antes de seguir.**
-Última actualización: 2026-11-24, noche (núcleo de la fase 1 completo; base propia de la v3; ver §8).
+Última actualización: 2026-11-24, noche (**fase 1 completa**; ver §8; siguiente: fase 2).
 
 ## 1. La decisión de fondo
 
@@ -32,7 +32,7 @@ haga todo lo que hace la v2.
 | Fase | Qué | Estado |
 |---|---|---|
 | 0 | Prototipo: Tauri + NexFluid en la PC de la caja, medir | **Hecha** (2026-11-24, también en release) |
-| 1 | Núcleo en Rust: reglas de la v2 probadas contra ella, base propia de la v3 con importación, turno y permisos | **Núcleo completo** (§8); falta usar turno y permisos en la app |
+| 1 | Núcleo en Rust: reglas de la v2 probadas contra ella, base propia de la v3 con importación, turno y permisos | **Hecha** (2026-11-24, §8) |
 | 2 | Pantalla de venta completa (captura, carrito, cobro, VENTAS REALIZADAS), en paralelo con la v2 sobre una copia | |
 | 3 | Hardware: ticket, cajón (reglas D21/D23), etiquetas | |
 | 4 | Administración: usuarios, roles, turnos, botones | |
@@ -233,8 +233,21 @@ permisos, D23); `registrar_apertura` deja el evento "APERTURA DE CAJA" y su fila
 como SHA-256 con sal (`poner_codigo` solo con "sin límite"; `usar_codigo` lo bloquea).
 28 pruebas en total.
 
-**Siguiente:** usar turno y permisos en la app: tomar el turno al abrir y comprobarlo cada ~3 s
-(cerrarse si otra caja lo tomó), botón "Abrir caja" con `como_abrir` y el código (el cajón real
-llega en la fase 3; hasta entonces, simulado). Hace falta decidir con el usuario los permisos
-iniciales (D21: nancy y miriam "sin límite", emilymaya empleada, jesjack desarrollador; en la base
-existen nancy=41 y emilymaya=193, miriam no aparece) y cómo se asignan (pantalla de administración).
+**Turno y permisos en la app (hecho y probado con el usuario, 2026-11-24):** al abrir toma el turno
+y lo comprueba cada 3 s; si otra caja lo toma, cierra la sesión como "desplazada", avisa
+(evento `turno-perdido`) y sale (probado subiendo el número a mano). Cobrar y abrir caja exigen el
+turno vigente. Botón "Abrir caja" e Intro con carrito vacío siguen `como_abrir`; si toca código y
+no hay uno disponible, avisa sin pedirlo; si lo hay, lo pide (uno incorrecto no lo gasta). Cada
+cobro registra su apertura ("venta"). Con "sin límite" y sin código (o usado), la caja pide uno
+nuevo. El cajón es SIMULADO hasta la fase 3. Comandos: `estado_caja`, `abrir_caja`, `poner_codigo`.
+
+**Permisos:** herramienta `cargo run --bin permisos -- <base v3> [<usuario> <permiso> [quitar]]`
+(sin nombres en el código, D21; registra de antemano a un usuario de este equipo). Asignados en
+`datos/ventas_v3.db`: nancy y miriamyaelicastanedaaparicio (id 194, registrada de antemano)
+"sin límite"; emilymaya "empleada"; jesjack "desarrollador" + "sin límite" (**provisional**: el
+usuario aún no decide; quiere poder hacer lo que hace hoy). **Al volver a importar desde la v2 se
+pierden: asignarlos otra vez.** Pendiente: pantalla de administración (D21).
+
+**Siguiente: fase 2** (pantalla de venta definitiva): afinar textos e interfaz (el usuario lo dejó
+para aquí), botones configurables (P1, modelo de la v2), corte de caja desde la pantalla, prueba
+en paralelo con la v2 sobre una importación reciente.
