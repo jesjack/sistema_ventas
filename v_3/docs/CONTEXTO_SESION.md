@@ -1,7 +1,7 @@
 # Contexto para continuar la V3 (Rust + Tauri + NexFluid)
 
 Documento de traspaso entre sesiones de trabajo (con o sin Claude). **Léelo antes de seguir.**
-Última actualización: 2026-11-24 (fase 0 cerrada; prueba de cámaras hecha).
+Última actualización: 2026-11-24, tarde (fase 1 casi completa: núcleo en Rust; ver §8).
 
 ## 1. La decisión de fondo
 
@@ -32,7 +32,7 @@ haga todo lo que hace la v2.
 | Fase | Qué | Estado |
 |---|---|---|
 | 0 | Prototipo: Tauri + NexFluid en la PC de la caja, medir | **Hecha** (2026-11-24, también en release) |
-| 1 | Núcleo: Rust lee/escribe `ventas.db` con el MISMO esquema; reglas del carrito y cobro con pruebas contra la v2 | Siguiente |
+| 1 | Núcleo: Rust lee/escribe `ventas.db` con el MISMO esquema; reglas del carrito y cobro con pruebas contra la v2 | **Casi completa** (§8): falta turno y permisos |
 | 2 | Pantalla de venta completa (captura, carrito, cobro, VENTAS REALIZADAS), en paralelo con la v2 sobre una copia | |
 | 3 | Hardware: ticket, cajón (reglas D21/D23), etiquetas | |
 | 4 | Administración: usuarios, roles, turnos, botones | |
@@ -184,3 +184,44 @@ cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.11.tgz/$N.tgz/g" package.
 9. **DVR:** ninguna prueba contra el DVR fuera del embudo; leer `camaras_v3.md` §1 antes de tocarlo.
    La contraseña del DVR quedó visible en una sesión de trabajo (2026-11-24); el usuario no puede
    cambiarla fácil (hay que conectarle monitor y ratón al DVR).
+
+## 8. Fase 1: el núcleo en Rust (`v_3/nucleo/`), estado al 2026-11-24
+
+Crate sin interfaz (D18), probado con `cargo test` (16 pruebas; 2 de ellas solo a petición, ver
+abajo). La app de Tauri (`v_3/app/src-tauri/src/lib.rs`) ya solo tiene comandos sobre el núcleo.
+
+| Módulo | Qué hace | Equivale en la v2 |
+|---|---|---|
+| `base` | Abre la base (espera 15 s si está bloqueada, claves foráneas); `verificar_esquema` sin migrar; `abrir_solo_lectura` | `base_datos.py` |
+| `carrito` | Agregar (suma si producto y precio coinciden), quitar, total | `table_modules/carrito.py` |
+| `cobro` | `leer_monto` ("1,234.50", "1.234,50"…) y `Cobro` (alcanza / faltan $X, textos de la v2). Vacío = pago exacto (la v2 no lo permitía) | `dialogs/parseo.py`, `cobro_uno.py` |
+| `ventas` | Registrar venta, evento y corte; `ventas_del_dia` (hoy desde el último corte, con el cambio dejado en caja) | `services/ventas_service.py` |
+| `corte` | Denominaciones, `resumen_del_cambio` ("Sin cambio ($0.00)"…) | `services/corte_caja.py` |
+| `catalogo` | Productos en minúsculas y únicos; `formatear_nombre`; búsqueda "contiene o iniciales" sin acentos ("bb" → blusa básica; las iniciales saltan "de", "y"…); códigos de barras | `catalogo_service.py`, `codigos_barras_service.py`, `filtrar_productos` |
+| `sesiones` | Identidad del usuario y equipo IGUAL que la v2 (la versión del kernel termina en espacio: no recortar); `asegurar_usuario`, sesión, latido, cierre | `usuarios_service.py`, `identidad.py`, `seguimiento_sesion.py` |
+
+**Pruebas contra la v2:** `nucleo/pruebas_v2/generar_casos.py` ejecuta el código REAL de la v2 (con
+`~/sistema_ventas/v_2/.venv/bin/python3 -I`) sobre bases temporales y guarda `casos_v2.json` y
+`esquema_v2.sql` (el esquema como lo crea la v2, con el usuario semilla `__default__` = id 1). Las
+pruebas de `src/contra_v2.rs` repiten todo y comparan resultados y el contenido de las tablas.
+Volver a correr el generador si cambia la v2. `serde_json` necesita `float_roundtrip` (si no, falla
+por el último decimal al leer el JSON). Pruebas a petición:
+`CAJA_DB=../app/datos/ventas_copia.db IDENTIDAD_V2="$(python3 … obtener_datos_usuario_sistema)" cargo test -- --include-ignored`.
+
+**La app:** busca con el núcleo (iniciales), cobra con el comando `cobrar` (registra la venta
+firmada con la sesión), VENTAS REALIZADAS en NexSheets de solo lectura (`useMarcoHoja` en
+`src/marcoHoja.ts`), abre sesión al iniciar, latido cada 60 s, la cierra como normal al cerrar la
+ventana (comprobado: sesión 200). Ruta de la base (D9): `CAJA_DB`, si no la carpeta de datos de la
+app; en desarrollo, `datos/ventas_copia.db`. **Se niega a abrir `v_2/share/ventas.db`** (prueba).
+Escribe SOLO en la copia; `copiar_base_real.py` la reemplaza (borra lo de prueba).
+
+**DECISIÓN PENDIENTE (propuesta del usuario, 2026-11-24, de acuerdo):** que la v3 use **una base
+propia con su propio esquema** y que los datos de la v2 se **importen una vez** al pasar a
+producción (y durante la prueba en paralelo, importar una foto). Ventajas: esquema limpio para lo
+nuevo (turno, permisos, código de caja como hash, registro de aperturas; sin `autorizaciones_codigos`
+en texto plano), migraciones propias versionadas, corte limpio. Las pruebas contra la v2 pasan a
+probar la IMPORTACIÓN. **Decidirlo antes del bloque de turno y permisos**, porque cambia dónde y
+cómo van sus tablas (antes se pensaba en tablas aparte dentro de la base de la v2).
+
+**Siguiente:** decidir lo anterior; luego turno de caja (D8: una caja activa, el último que abre
+se queda, la anterior se cierra en ~3 s) y permisos/apertura de caja (D21, D23).
