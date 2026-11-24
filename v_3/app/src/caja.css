@@ -1,0 +1,220 @@
+/* Caja V3, fase 0. Todo el color y la tipografía salen de los tokens de NexFluid (--nx-*),
+   así que cambiar de tema en el panel cambia toda la pantalla. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.caja {
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--nx-bg);
+  color: var(--nx-fg);
+  font-family: var(--nx-font-body);
+}
+
+.caja__cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.caja__titulo {
+  margin: 0;
+  font-family: var(--nx-font-heading);
+  font-size: var(--nx-text-title);
+  line-height: var(--nx-text-title-leading);
+}
+
+.caja__sub,
+.caja__ayuda,
+.caja__nota {
+  margin: 0;
+  color: var(--nx-fg-muted);
+  font-size: var(--nx-text-small);
+}
+
+.caja__cuerpo {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 24px;
+  align-items: start;
+}
+
+.caja__venta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.caja__entrada {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 0.7fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.caja__aviso {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--nx-control-radius);
+  background: var(--nx-surface-sunken);
+}
+
+.caja__aviso--success {
+  background: var(--nx-success-soft);
+}
+
+.caja__aviso--warning {
+  background: var(--nx-warning-soft);
+}
+
+.caja__aviso--danger {
+  background: var(--nx-danger-soft);
+}
+
+.caja__carrito {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-content-radius);
+  overflow: hidden;
+}
+
+.caja__carrito th,
+.caja__carrito td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--nx-border);
+}
+
+.caja__carrito th {
+  color: var(--nx-fg-muted);
+  font-size: var(--nx-text-small);
+  font-weight: 600;
+  background: var(--nx-surface-sunken);
+}
+
+.caja__carrito tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.caja__carrito .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.caja__vacio {
+  color: var(--nx-fg-subtle);
+  text-align: center !important;
+  padding: 28px !important;
+}
+
+.caja__total {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 16px;
+  font-size: var(--nx-text-heading);
+}
+
+.caja__total strong {
+  font-family: var(--nx-font-heading);
+  font-size: var(--nx-text-display);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.caja__cobro {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--nx-accent-line);
+  border-radius: var(--nx-content-radius);
+  background: var(--nx-surface-raised);
+}
+
+.caja__cobro-total {
+  margin: 0;
+  font-family: var(--nx-font-heading);
+  font-size: var(--nx-text-heading);
+}
+
+.caja__cambio {
+  margin: 0;
+  font-size: var(--nx-text-subhead);
+}
+
+.caja__medicion {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-content-radius);
+  background: var(--nx-surface);
+}
+
+.caja__medicion h2,
+.caja__medicion h3 {
+  margin: 0;
+  font-family: var(--nx-font-heading);
+}
+
+.caja__medicion h2 {
+  font-size: var(--nx-text-subhead);
+}
+
+.caja__medicion h3 {
+  margin-top: 4px;
+  font-size: var(--nx-text-body);
+}
+
+.caja__medida {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.caja__medida-titulo {
+  font-weight: 600;
+}
+
+.caja__escaneos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--nx-text-small);
+}
+
+.caja__nota {
+  overflow-wrap: anywhere;
+}
+
+.caja__deslizador {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--nx-text-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.caja__deslizador input {
+  accent-color: var(--nx-accent);
+}
