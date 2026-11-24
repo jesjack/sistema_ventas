@@ -282,3 +282,16 @@ body,
   display: flex;
   gap: 8px;
 }
+
+/* Modales (NexMorph): el panel mide su contenido. */
+.caja__modal .caja__cobro {
+  width: min(440px, 86vw);
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* La pantalla elegida arriba (Carrito / Ver ventas / Desarrollador). */
+.caja__venta > .nx-segmented {
+  align-self: flex-start;
+}

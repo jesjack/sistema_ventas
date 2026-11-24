@@ -163,7 +163,11 @@ export function anchosVentas(
   return anchosAjustados(ENCABEZADOS_VENTAS, valores, 1, disponible, medir)
 }
 
-/** Alto de VENTAS REALIZADAS: hasta FILAS_VISIBLES_VENTAS filas; con más, se desplaza. */
-export function altoHojaVentas(lineas: readonly LineaVenta[], extra: number): number {
-  return (Math.min(Math.max(lineas.length, 1), FILAS_VISIBLES_VENTAS) + 1) * ALTO_FILA_HOJA + extra
+/**
+ * Alto de VENTAS REALIZADAS: sus filas, hasta las que caben en `disponible` (px, todo el alto que
+ * puede ocupar la hoja); con más, se desplaza. Sin medida todavía, FILAS_VISIBLES_VENTAS.
+ */
+export function altoHojaVentas(lineas: readonly LineaVenta[], extra: number, disponible = 0): number {
+  const caben = disponible > 0 ? Math.max(1, Math.floor((disponible - extra) / ALTO_FILA_HOJA) - 1) : FILAS_VISIBLES_VENTAS
+  return (Math.min(Math.max(lineas.length, 1), caben) + 1) * ALTO_FILA_HOJA + extra
 }

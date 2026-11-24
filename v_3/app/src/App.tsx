@@ -1,10 +1,11 @@
 import { useCallback, useEffect, type CSSProperties, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexInput, NexProvider, NexSelect } from '@nexfluid/react'
+import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexDatePicker, NexInput, NexMorph, NexProvider, NexSegmented, NexSelect, toIsoDate } from '@nexfluid/react'
 import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
 import { altoHojaCarrito, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
-import { useMarcoHoja } from './marcoHoja.ts'
+import { useAltoDisponible, useMarcoHoja } from './marcoHoja.ts'
+import { Icono } from './iconos.tsx'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
 import { agregarAlCarrito, dinero, leerNumero, totalDelCarrito, type FilaCarrito } from './carrito.ts'
 import { DetectorEscaner, type Escaneo } from './escaner.ts'
@@ -43,7 +44,11 @@ interface EstadoCaja {
   como_abrir: 'permiso' | 'ventana_diaria' | 'codigo'
   codigo: EstadoCodigo
   puede_poner_codigo: boolean
+  ve_otros_dias: boolean
 }
+
+/** Las pantallas de la caja (arriba de todo): la venta, las ventas realizadas y el desarrollador. */
+type Vista = 'carrito' | 'ventas' | 'desarrollador'
 
 const TEXTO_AUTORIZACION: Record<string, string> = {
   permiso: 'con tu permiso sin límite',
@@ -90,7 +95,7 @@ export default function App() {
   const [depurarGota, setDepurarGota] = useState(false)
   const [gotaSimetrica, setGotaSimetrica] = useState(true)
   const [hoverMembrana, setHoverMembrana] = useState(true)
-  const [redondez, setRedondez] = useState<NexRadius | 'tema'>('tema')
+  const [redondez, setRedondez] = useState<NexRadius | 'tema'>('md')
   const [esquina, setEsquina] = useState<NexCorner | 'tema'>('tema')
   const [gotaAncho, setGotaAncho] = useState(0.6)
   const [gotaEstiramiento, setGotaEstiramiento] = useState(0.35)
@@ -102,8 +107,9 @@ export default function App() {
   const [carrito, setCarrito] = useState<FilaCarrito[]>([])
   // Botones configurables de la columna derecha (P1) y el panel de desarrollador.
   const [botones, setBotones] = useState<Boton[]>([])
-  const [verDesarrollador, setVerDesarrollador] = useState(false)
-  const refDia = useRef<HTMLDivElement>(null)
+  const [vista, setVista] = useState<Vista>('carrito')
+  // Pago exacto: se pide una segunda confirmación (Intro otra vez).
+  const [confirmarExacto, setConfirmarExacto] = useState(false)
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
   // ajustan al contenido y al ancho disponible (Producto ocupa lo que sobra: sin hueco a la derecha).
   const refHoja = useRef<HTMLDivElement>(null)
@@ -112,7 +118,7 @@ export default function App() {
     const nodo = refHoja.current
     if (!nodo || !marcoHoja.anchoUtil) return libroDeCarrito(carrito)
     return libroDeCarrito(carrito, anchosCarrito(carrito, marcoHoja.anchoUtil, medidorDeTexto(nodo)))
-  }, [carrito, marcoHoja.anchoUtil])
+  }, [carrito, marcoHoja.anchoUtil, marcoHoja.fuentes])
   const [fechas, setFechas] = useState<string[]>([])
   const [fecha, setFecha] = useState<string | null>(null)
   const [lineasVenta, setLineasVenta] = useState<LineaVenta[]>([])
@@ -161,17 +167,18 @@ export default function App() {
   }, [fecha, recargaVentas])
   // VENTAS REALIZADAS como hoja de solo lectura, igual que el carrito.
   const refVentas = useRef<HTMLDivElement>(null)
-  const marcoVentas = useMarcoHoja(refVentas, [lineasVenta.length > 0])
+  const marcoVentas = useMarcoHoja(refVentas, [lineasVenta.length > 0, vista])
+  const altoVentas = useAltoDisponible(refVentas, 24, [lineasVenta.length > 0, vista])
   const libroVentas = useMemo<Workbook>(() => {
     const nodo = refVentas.current
     if (!nodo || !marcoVentas.anchoUtil) return libroDeVentas(lineasVenta)
     return libroDeVentas(lineasVenta, anchosVentas(lineasVenta, marcoVentas.anchoUtil, medidorDeTexto(nodo)))
-  }, [lineasVenta, marcoVentas.anchoUtil])
+  }, [lineasVenta, marcoVentas.anchoUtil, marcoVentas.fuentes])
   // Lo más reciente abajo, como en la hoja de la v2: al cargar o al cobrar, se baja al final.
   useEffect(() => {
     const vista = refVentas.current?.querySelector<HTMLElement>('.nx-sheet__viewport')
     if (vista) requestAnimationFrame(() => (vista.scrollTop = vista.scrollHeight))
-  }, [lineasVenta])
+  }, [lineasVenta, vista])
 
   useEffect(() => {
     invoke<InfoBase>('info_base').then(setInfo, (e) => setErrorBase(String(e)))
@@ -300,6 +307,7 @@ export default function App() {
   }
 
   const abrirCobro = () => {
+    setConfirmarExacto(false)
     setCobro('')
     requestAnimationFrame(() => refRecibido.current?.focus())
   }
@@ -323,6 +331,7 @@ export default function App() {
       })
       setCarrito([])
       setCobro(null)
+      setConfirmarExacto(false)
       setRecargaVentas((n) => n + 1)
       leerEstadoCaja()
       enfocarProducto()
@@ -396,14 +405,30 @@ export default function App() {
   const teclaCobro = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      void confirmarCobro(false)
+      cobrarNormal()
     } else if (e.key === 'F4') {
       e.preventDefault()
       void confirmarCobro(true)
-    } else if (e.key === 'Escape') {
-      setCobro(null)
-      enfocarProducto()
+    } else if (e.key === 'Escape' && confirmarExacto) {
+      // Escape en la confirmación vuelve a pedir lo recibido (NexMorph no cierra si se previene).
+      e.preventDefault()
+      setConfirmarExacto(false)
     }
+  }
+
+  // Pago exacto (vacío o igual al total): primero se pide confirmarlo; el segundo Intro cobra.
+  const cobrarNormal = () => {
+    const exacto = cobro === null || cobro.trim() === '' || leerNumero(cobro) === total
+    if (exacto && !confirmarExacto) {
+      setConfirmarExacto(true)
+      return
+    }
+    void confirmarCobro(false)
+  }
+  const cerrarCobro = () => {
+    setCobro(null)
+    setConfirmarExacto(false)
+    enfocarProducto()
   }
 
   const recibido = cobro === null || cobro.trim() === '' ? total : leerNumero(cobro)
@@ -425,7 +450,7 @@ export default function App() {
       case 'abrir_caja':
         return () => void abrirCaja()
       case 'ver_ventas':
-        return () => refDia.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return () => setVista('ventas')
       case 'ping':
         return () => setAviso({ tono: 'neutral', texto: 'pong' })
       case 'corte_de_caja':
@@ -442,6 +467,116 @@ export default function App() {
     }
   }
   const esDesarrollador = estadoCaja?.permisos.includes('desarrollador') ?? false
+
+  // Cada acción de botón; las que abren un modal lo hacen desde su botón (NexMorph: la superficie
+  // crece desde él). Si el usuario no tiene ese botón, el modal aparece igual, sin origen.
+  const tieneBoton = (nombre: string) => botones.some((b) => b.accion === nombre)
+  const modalCobro = (
+              <NexMorph.Target label="Cobrar" className="caja__modal">
+                {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
+                <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+                  <div className="caja__cobro">
+
+                    <p className="caja__cobro-total">Cobrar {dinero(total)}</p>
+                    <NexInput
+                      ref={refRecibido}
+                      label="Recibido"
+                      description="Intro sin escribir nada = pago exacto · F4 sin ticket · Escape cancela"
+                      inputMode="decimal"
+                      leading="$"
+                      value={cobro ?? ''}
+                      autoComplete="off"
+                      onChange={(e) => {
+                        setCobro(e.target.value)
+                        setConfirmarExacto(false)
+                      }}
+                      onKeyDown={teclaCobro}
+                      onFocus={cursorAlFinal}
+                    />
+                    <p className="caja__cambio">
+                      Cambio: <strong>{recibido >= total ? dinero(recibido - total) : '—'}</strong>
+                    </p>
+                    {confirmarExacto && (
+                      <p className="caja__aviso caja__aviso--warning" role="alert">
+                        ¿Pago exacto de {dinero(total)}, sin cambio? Intro otra vez para cobrar · Escape para escribir lo recibido
+                      </p>
+                    )}
+                    <div className="caja__cobro-acciones">
+                      <NexButton appearance="filled" onClick={cobrarNormal} disabled={cobrando}>
+                        {confirmarExacto ? 'Sí, pago exacto (Intro)' : 'Cobrar (Intro)'}
+                      </NexButton>
+                      <NexButton appearance="outlined" onClick={() => void confirmarCobro(true)} disabled={cobrando}>
+                        Sin ticket (F4)
+                      </NexButton>
+                    </div>
+
+                  </div>
+                </NexProvider>
+              </NexMorph.Target>
+  )
+  const modalCodigo = (
+              <NexMorph.Target label="Código de autorización" className="caja__modal">
+                {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
+                <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+                  <div className="caja__cobro">
+
+                    <p className="caja__cobro-total">Abrir caja con código</p>
+                    <NexInput
+                      ref={refCodigo}
+                      label="Código de autorización"
+                      description="Lo da quien tiene permiso para abrir la caja. Sirve una sola vez · Escape cancela"
+                      type="password"
+                      autoComplete="off"
+                      value={pideCodigo ?? ''}
+                      onChange={(e) => setPideCodigo(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          void abrirCaja(pideCodigo ?? '')
+                        }
+                      }}
+                    />
+
+                  </div>
+                </NexProvider>
+              </NexMorph.Target>
+  )
+  const botonDe = (b: Boton) => {
+    const hacer = accion(b.accion)
+    const deshabilitado = typeof hacer === 'string' || turnoPerdido
+    const boton = (
+      <NexButton
+        key={b.id}
+        appearance={b.accion === 'cobrar_carrito' ? 'filled' : 'default'}
+        fullWidth
+        contentAlign="start"
+        iconStart={<Icono nombre={b.accion} />}
+        disabled={deshabilitado}
+        title={typeof hacer === 'string' ? hacer : undefined}
+        onClick={typeof hacer === 'string' ? undefined : hacer}
+      >
+        {b.etiqueta}
+      </NexButton>
+    )
+    if (b.accion === 'cobrar_carrito')
+      return (
+        <NexMorph key={b.id} open={cobro !== null} onOpenChange={(abierto) => !abierto && cerrarCobro()}>
+          <NexMorph.Source>{boton}</NexMorph.Source>
+          {modalCobro}
+        </NexMorph>
+      )
+    if (b.accion === 'abrir_caja')
+      return (
+        <NexMorph key={b.id} open={pideCodigo !== null} onOpenChange={(abierto) => !abierto && (setPideCodigo(null), enfocarProducto())}>
+          <NexMorph.Source>{boton}</NexMorph.Source>
+          {modalCodigo}
+        </NexMorph>
+      )
+    return boton
+  }
+
+  const hoy = toIsoDate(new Date())
+  const conVentas = useMemo(() => new Set(fechas), [fechas])
 
   return (
     <NexProvider
@@ -462,68 +597,17 @@ export default function App() {
       }
     >
       <main className="caja__cuerpo">
-        <section className="caja__venta" aria-label="Venta">
-          <div className="caja__entrada">
-            <NexCombobox
-              ref={refProducto}
-              label="Producto"
-              value={producto}
-              options={opciones}
-              filter={false}
-              autoFocus
-              onValueChange={setProducto}
-              onOptionSelect={() => requestAnimationFrame(() => refPrecio.current?.focus())}
-              onKeyDown={teclaProducto}
-              onFocus={cursorAlFinal}
-            />
-            <NexInput
-              ref={refPrecio}
-              label="Precio"
-              inputMode="decimal"
-              value={precio}
-              leading="$"
-              autoComplete="off"
-              onChange={(e) => setPrecio(e.target.value)}
-              onKeyDown={teclaAgregar}
-              onFocus={cursorAlFinal}
-            />
-            <NexInput
-              label="Cantidad"
-              inputMode="numeric"
-              value={cantidad}
-              autoComplete="off"
-              onChange={(e) => setCantidad(e.target.value)}
-              onKeyDown={teclaAgregar}
-              onFocus={cursorAlFinal}
-            />
-          </div>
-
-          {aviso && (
-            <p className={`caja__aviso caja__aviso--${aviso.tono}`} role="status">
-              {aviso.texto}
-            </p>
-          )}
-
-          <div ref={refHoja}>
-            <NexSheets
-              className="caja__hoja"
-              workbook={libroCarrito}
-              readOnly
-              extent={false}
-              height={altoHojaCarrito(carrito, marcoHoja.extraAlto)}
-              label="Carrito"
-              columnLabels="name"
-              tabs={false}
-              statusBar={false}
-              toolbar={false}
-              formulaBar={false}
-            />
-          </div>
-
-          <div className="caja__total">
-            <span>Total</span>
-            <strong>{dinero(total)}</strong>
-          </div>
+        <section className="caja__venta" aria-label="Caja">
+          <NexSegmented
+            aria-label="Pantalla"
+            value={vista}
+            onValueChange={(v) => setVista(v as Vista)}
+            options={[
+              { value: 'carrito', label: 'Carrito' },
+              { value: 'ventas', label: 'Ver ventas' },
+              ...(esDesarrollador ? [{ value: 'desarrollador', label: 'Desarrollador' }] : []),
+            ]}
+          />
 
           {turnoPerdido && (
             <p className="caja__aviso caja__aviso--danger" role="alert">
@@ -531,110 +615,106 @@ export default function App() {
             </p>
           )}
 
-          {pideCodigo !== null && (
-            <div className="caja__cobro" role="dialog" aria-label="Código de autorización">
-              <p className="caja__cobro-total">Abrir caja con código</p>
-              <NexInput
-                ref={refCodigo}
-                label="Código de autorización"
-                description="Lo da quien tiene permiso para abrir la caja. Sirve una sola vez · Escape cancela"
-                type="password"
-                autoComplete="off"
-                value={pideCodigo}
-                onChange={(e) => setPideCodigo(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void abrirCaja(pideCodigo)
-                  } else if (e.key === 'Escape') {
-                    setPideCodigo(null)
-                    enfocarProducto()
-                  }
-                }}
-              />
-            </div>
+
+
+
+          {aviso && (
+            <p className={`caja__aviso caja__aviso--${aviso.tono}`} role="status">
+              {aviso.texto}
+            </p>
           )}
 
-          {codigoNuevo !== null && estadoCaja?.puede_poner_codigo && (
-            <div className="caja__cobro" role="dialog" aria-label="Código nuevo">
-              <p className="caja__cobro-total">
-                {estadoCaja.codigo === 'SinCodigo'
-                  ? 'Todavía no hay código de autorización'
-                  : typeof estadoCaja.codigo === 'object'
-                    ? `El código se usó el ${estadoCaja.codigo.Usado.usado_en}${estadoCaja.codigo.Usado.usado_sesion_id ? ` (sesión ${estadoCaja.codigo.Usado.usado_sesion_id})` : ''}`
-                    : 'Código nuevo'}
-              </p>
-              <NexInput
-                ref={refCodigoNuevo}
-                label="Pon un código nuevo"
-                description="Al menos 4 caracteres. Se guarda cifrado y sirve para una sola apertura · Escape: más tarde"
-                type="password"
-                autoComplete="new-password"
-                value={codigoNuevo}
-                onChange={(e) => setCodigoNuevo(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void guardarCodigoNuevo()
-                  } else if (e.key === 'Escape') {
-                    setCodigoNuevo(null)
-                    enfocarProducto()
-                  }
-                }}
-              />
-            </div>
-          )}
-
-          {cobro !== null && (
-            <div className="caja__cobro" role="dialog" aria-label="Cobrar">
-              <p className="caja__cobro-total">Cobrar {dinero(total)}</p>
-              <NexInput
-                ref={refRecibido}
-                label="Recibido"
-                description="Enter sin escribir nada = pago exacto · Escape cancela"
-                inputMode="decimal"
-                leading="$"
-                value={cobro}
-                autoComplete="off"
-                onChange={(e) => setCobro(e.target.value)}
-                onKeyDown={teclaCobro}
-                onFocus={cursorAlFinal}
-              />
-              <p className="caja__cambio">
-                Cambio: <strong>{recibido >= total ? dinero(recibido - total) : '—'}</strong>
-              </p>
-              <div className="caja__cobro-acciones">
-                <NexButton appearance="filled" onClick={() => void confirmarCobro(false)} disabled={cobrando}>
-                  Cobrar (Intro)
-                </NexButton>
-                <NexButton appearance="outlined" onClick={() => void confirmarCobro(true)} disabled={cobrando}>
-                  Sin ticket (F4)
-                </NexButton>
+          {vista === 'carrito' && (
+            <>
+              <div className="caja__entrada">
+                <NexCombobox
+                  ref={refProducto}
+                  label="Producto"
+                  value={producto}
+                  options={opciones}
+                  filter={false}
+                  autoFocus
+                  onValueChange={setProducto}
+                  onOptionSelect={() => requestAnimationFrame(() => refPrecio.current?.focus())}
+                  onKeyDown={teclaProducto}
+                  onFocus={cursorAlFinal}
+                />
+                <NexInput
+                  ref={refPrecio}
+                  label="Precio"
+                  inputMode="decimal"
+                  value={precio}
+                  leading="$"
+                  autoComplete="off"
+                  onChange={(e) => setPrecio(e.target.value)}
+                  onKeyDown={teclaAgregar}
+                  onFocus={cursorAlFinal}
+                />
+                <NexInput
+                  label="Cantidad"
+                  inputMode="numeric"
+                  value={cantidad}
+                  autoComplete="off"
+                  onChange={(e) => setCantidad(e.target.value)}
+                  onKeyDown={teclaAgregar}
+                  onFocus={cursorAlFinal}
+                />
               </div>
-            </div>
+
+              <div ref={refHoja}>
+                <NexSheets
+                  className="caja__hoja"
+                  workbook={libroCarrito}
+                  readOnly
+                  extent={false}
+                  height={altoHojaCarrito(carrito, marcoHoja.extraAlto)}
+                  label="Carrito"
+                  columnLabels="name"
+                  tabs={false}
+                  statusBar={false}
+                  toolbar={false}
+                  formulaBar={false}
+                />
+              </div>
+
+              <div className="caja__total">
+                <span>Total</span>
+                <strong>{dinero(total)}</strong>
+              </div>
+
+
+              <div className="caja__total">
+                <span>Total</span>
+                <strong>{dinero(total)}</strong>
+              </div>
+            </>
           )}
 
-          <section className="caja__ventas" aria-label="Ventas realizadas">
-            <div className="caja__ventas-cabecera" ref={refDia}>
-              <h2>Ventas realizadas</h2>
-              <NexSelect
-                label="Día"
-                hideLabel
-                value={fecha}
-                onValueChange={setFecha}
-                options={fechas.map((f) => ({ value: f, label: f }))}
-                placeholder="Sin ventas"
-              />
-            </div>
-            {lineasVenta.length ? (
-              <>
-                <div ref={refVentas}>
+          {vista === 'ventas' && (
+            <section className="caja__ventas" aria-label="Ventas realizadas">
+              <div className="caja__ventas-cabecera">
+                <h2>{estadoCaja?.ve_otros_dias ? 'Ventas realizadas' : 'Ventas de hoy'}</h2>
+                {estadoCaja?.ve_otros_dias && (
+                  <NexDatePicker
+                    label="Día"
+                    hideLabel
+                    locale="es-MX"
+                    value={fecha}
+                    onValueChange={setFecha}
+                    max={hoy}
+                    isDateMarked={(d) => conVentas.has(d)}
+                    format={{ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }}
+                  />
+                )}
+              </div>
+              <div ref={refVentas}>
+                {lineasVenta.length ? (
                   <NexSheets
                     className="caja__hoja caja__hoja--ventas"
                     workbook={libroVentas}
                     readOnly
                     extent={false}
-                    height={altoHojaVentas(lineasVenta, marcoVentas.extraAlto)}
+                    height={altoHojaVentas(lineasVenta, marcoVentas.extraAlto, altoVentas)}
                     label={`Ventas del ${fecha}`}
                     columnLabels="name"
                     tabs={false}
@@ -642,32 +722,165 @@ export default function App() {
                     toolbar={false}
                     formulaBar={false}
                   />
-                </div>
-              </>
-            ) : (
-              <p className="caja__nota">No hay ventas ese día.</p>
-            )}
-          </section>
+                ) : (
+                  <p className="caja__nota">No hay ventas ese día.</p>
+                )}
+              </div>
+            </section>
+          )}
+
+          {vista === 'desarrollador' && esDesarrollador && (
+            <section className="caja__medicion" aria-label="Desarrollador">
+              <Medida titulo="Tecla → pantalla" resumen={resumenTeclas} nota="incluye hasta 1 cuadro (≈16 ms)" />
+              <Medida titulo="Consulta a Rust" resumen={resumenConsultas} nota="autocompletado y códigos" />
+
+              <h3>Escaneos</h3>
+              {escaneos.length === 0 ? (
+                <p className="caja__nota">Escanea algo para ver su ritmo.</p>
+              ) : (
+                <ul className="caja__escaneos">
+                  {escaneos.map((e, i) => (
+                    <li key={i}>
+                      <code>{e.codigo}</code> · {e.ritmoMs.toFixed(1)} ms/tecla · {e.encontrado ? 'registrado' : 'no registrado'}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <NexButton
+                appearance="outlined"
+                tabIndex={-1}
+                onClick={() => {
+                  serieTeclas.limpiar()
+                  serieConsultas.limpiar()
+                  setEscaneos([])
+                }}
+              >
+                Reiniciar mediciones
+              </NexButton>
+
+              <h3>Aspecto</h3>
+              <NexSelect
+                label="Tema"
+                value={tema}
+                onValueChange={setTema}
+                options={TEMAS.map((t) => ({ value: t, label: t }))}
+              />
+              <NexSelect
+                label="Movimiento"
+                value={movimiento}
+                onValueChange={(v) => setMovimiento(v as NexMotion)}
+                options={MOVIMIENTOS.map((m) => ({ value: m, label: m }))}
+              />
+              <NexCheckbox
+                label="Depurar gota"
+                description="Rastro verde del borde derecho de la gota, un punto por cuadro"
+                checked={depurarGota}
+                onChange={(e) => setDepurarGota(e.target.checked)}
+              />
+              <NexCheckbox
+                label="Gota simétrica"
+                description='liquid="symmetric": igual al salir que al llegar (fluid completa, subtle a un tercio, elastic sin cambio)'
+                checked={gotaSimetrica}
+                onChange={(e) => setGotaSimetrica(e.target.checked)}
+              />
+              <NexSelect
+                label="Redondez de los controles"
+                value={redondez}
+                onValueChange={(v) => setRedondez(v as NexRadius | 'tema')}
+                options={[
+                  { value: 'tema', label: 'Del tema (cápsula)' },
+                  { value: 'none', label: 'none · 0' },
+                  { value: 'sm', label: 'sm · 6 px' },
+                  { value: 'md', label: 'md · 10 px' },
+                  { value: 'lg', label: 'lg · 16 px' },
+                  { value: 'pill', label: 'pill · cápsula' },
+                ]}
+              />
+              <NexSelect
+                label="Curva de la esquina"
+                value={esquina}
+                onValueChange={(v) => setEsquina(v as NexCorner | 'tema')}
+                options={[
+                  { value: 'tema', label: 'Del tema (round)' },
+                  { value: 'round', label: 'round · círculo' },
+                  { value: 'squircle', label: 'squircle · superelipse' },
+                ]}
+              />
+              <NexCheckbox
+                label="Hover sigue la membrana"
+                description='hitArea="membrane": la parte abombada de los botones también responde al puntero'
+                checked={hoverMembrana}
+                onChange={(e) => setHoverMembrana(e.target.checked)}
+              />
+              <Deslizador titulo="Ancho a mitad del viaje" valor={gotaAncho} min={0.3} max={1} paso={0.05} cambiar={setGotaAncho} />
+              <Deslizador
+                titulo="Estiramiento"
+                valor={gotaEstiramiento}
+                min={0}
+                max={1}
+                paso={0.05}
+                cambiar={setGotaEstiramiento}
+                desactivado={!gotaSimetrica}
+              />
+              {info && (
+                <p className="caja__nota">
+                  Base: {info.ruta} · {info.productos} productos · {info.codigos} códigos
+                </p>
+              )}
+            </section>
+          )}
         </section>
 
         <aside className="caja__botones" aria-label="Botones">
-          {botones.map((b) => {
-            const hacer = accion(b.accion)
-            const deshabilitado = typeof hacer === 'string' || turnoPerdido
-            return (
-              <NexButton
-                key={b.id}
-                appearance={b.accion === 'cobrar_carrito' ? 'filled' : 'default'}
-                fullWidth
-                disabled={deshabilitado}
-                title={typeof hacer === 'string' ? hacer : undefined}
-                onClick={typeof hacer === 'string' ? undefined : hacer}
-              >
-                {b.etiqueta}
-              </NexButton>
-            )
-          })}
+          {botones.map(botonDe)}
           {botones.length === 0 && <p className="caja__nota">Este usuario no tiene botones asignados.</p>}
+          {!tieneBoton('cobrar_carrito') && (
+            <NexMorph open={cobro !== null} onOpenChange={(abierto) => !abierto && cerrarCobro()}>
+              {modalCobro}
+            </NexMorph>
+          )}
+          {!tieneBoton('abrir_caja') && (
+            <NexMorph open={pideCodigo !== null} onOpenChange={(abierto) => !abierto && (setPideCodigo(null), enfocarProducto())}>
+              {modalCodigo}
+            </NexMorph>
+          )}
+          <NexMorph
+            open={codigoNuevo !== null && !!estadoCaja?.puede_poner_codigo}
+            onOpenChange={(abierto) => !abierto && (setCodigoNuevo(null), enfocarProducto())}
+          >
+            <NexMorph.Target label="Código nuevo" className="caja__modal">
+                {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
+                <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+                  <div className="caja__cobro">
+
+                    <p className="caja__cobro-total">
+                      {estadoCaja?.codigo === 'SinCodigo'
+                        ? 'Todavía no hay código de autorización'
+                        : typeof estadoCaja?.codigo === 'object'
+                          ? `El código se usó el ${estadoCaja?.codigo.Usado.usado_en}${estadoCaja?.codigo.Usado.usado_sesion_id ? ` (sesión ${estadoCaja?.codigo.Usado.usado_sesion_id})` : ''}`
+                          : 'Código nuevo'}
+                    </p>
+                    <NexInput
+                      ref={refCodigoNuevo}
+                      label="Pon un código nuevo"
+                      description="Al menos 4 caracteres. Se guarda cifrado y sirve para una sola apertura · Escape: más tarde"
+                      type="password"
+                      autoComplete="new-password"
+                      value={codigoNuevo ?? ''}
+                      onChange={(e) => setCodigoNuevo(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          void guardarCodigoNuevo()
+                        }
+                      }}
+                    />
+
+                  </div>
+                </NexProvider>
+              </NexMorph.Target>
+          </NexMorph>
           <div className="caja__sesion">
             {info ? (
               <NexBadge tone="success" dot>
@@ -678,113 +891,9 @@ export default function App() {
                 {errorBase ?? 'Abriendo la base…'}
               </NexBadge>
             )}
-            {esDesarrollador && (
-              <NexButton appearance="ghost" density="compact" onClick={() => setVerDesarrollador((v) => !v)}>
-                {verDesarrollador ? 'Ocultar desarrollador' : 'Desarrollador'}
-              </NexButton>
-            )}
           </div>
         </aside>
       </main>
-
-      {verDesarrollador && (
-        <aside className="caja__medicion" aria-label="Desarrollador">
-          <h2>Mediciones</h2>
-          <Medida titulo="Tecla → pantalla" resumen={resumenTeclas} nota="incluye hasta 1 cuadro (≈16 ms)" />
-          <Medida titulo="Consulta a Rust" resumen={resumenConsultas} nota="autocompletado y códigos" />
-
-          <h3>Escaneos</h3>
-          {escaneos.length === 0 ? (
-            <p className="caja__nota">Escanea algo para ver su ritmo.</p>
-          ) : (
-            <ul className="caja__escaneos">
-              {escaneos.map((e, i) => (
-                <li key={i}>
-                  <code>{e.codigo}</code> · {e.ritmoMs.toFixed(1)} ms/tecla · {e.encontrado ? 'registrado' : 'no registrado'}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <NexButton
-            appearance="outlined"
-            tabIndex={-1}
-            onClick={() => {
-              serieTeclas.limpiar()
-              serieConsultas.limpiar()
-              setEscaneos([])
-            }}
-          >
-            Reiniciar mediciones
-          </NexButton>
-
-          <h3>Aspecto</h3>
-          <NexSelect
-            label="Tema"
-            value={tema}
-            onValueChange={setTema}
-            options={TEMAS.map((t) => ({ value: t, label: t }))}
-          />
-          <NexSelect
-            label="Movimiento"
-            value={movimiento}
-            onValueChange={(v) => setMovimiento(v as NexMotion)}
-            options={MOVIMIENTOS.map((m) => ({ value: m, label: m }))}
-          />
-          <NexCheckbox
-            label="Depurar gota"
-            description="Rastro verde del borde derecho de la gota, un punto por cuadro"
-            checked={depurarGota}
-            onChange={(e) => setDepurarGota(e.target.checked)}
-          />
-          <NexCheckbox
-            label="Gota simétrica"
-            description='liquid="symmetric": igual al salir que al llegar (fluid completa, subtle a un tercio, elastic sin cambio)'
-            checked={gotaSimetrica}
-            onChange={(e) => setGotaSimetrica(e.target.checked)}
-          />
-          <NexSelect
-            label="Redondez de los controles"
-            value={redondez}
-            onValueChange={(v) => setRedondez(v as NexRadius | 'tema')}
-            options={[
-              { value: 'tema', label: 'Del tema (cápsula)' },
-              { value: 'none', label: 'none · 0' },
-              { value: 'sm', label: 'sm · 6 px' },
-              { value: 'md', label: 'md · 10 px' },
-              { value: 'lg', label: 'lg · 16 px' },
-              { value: 'pill', label: 'pill · cápsula' },
-            ]}
-          />
-          <NexSelect
-            label="Curva de la esquina"
-            value={esquina}
-            onValueChange={(v) => setEsquina(v as NexCorner | 'tema')}
-            options={[
-              { value: 'tema', label: 'Del tema (round)' },
-              { value: 'round', label: 'round · círculo' },
-              { value: 'squircle', label: 'squircle · superelipse' },
-            ]}
-          />
-          <NexCheckbox
-            label="Hover sigue la membrana"
-            description='hitArea="membrane": la parte abombada de los botones también responde al puntero'
-            checked={hoverMembrana}
-            onChange={(e) => setHoverMembrana(e.target.checked)}
-          />
-          <Deslizador titulo="Ancho a mitad del viaje" valor={gotaAncho} min={0.3} max={1} paso={0.05} cambiar={setGotaAncho} />
-          <Deslizador
-            titulo="Estiramiento"
-            valor={gotaEstiramiento}
-            min={0}
-            max={1}
-            paso={0.05}
-            cambiar={setGotaEstiramiento}
-            desactivado={!gotaSimetrica}
-          />
-          {info && <p className="caja__nota">Base: {info.ruta} · {info.productos} productos · {info.codigos} códigos</p>}
-        </aside>
-      )}
     </NexProvider>
   )
 }

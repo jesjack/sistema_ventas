@@ -171,8 +171,13 @@ fn info_base(estado: tauri::State<'_, Compartido>) -> Result<InfoBase, String> {
 #[tauri::command]
 fn fechas_con_ventas(estado: tauri::State<'_, Compartido>) -> Result<Vec<String>, String> {
     let hoy = Momento::ahora().fecha;
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
     con_base(&estado, |b| {
-        let mut dias = b.dias_con_ventas(30).map_err(|e| e.to_string())?;
+        if !ve_otros_dias(b, sesion.usuario_id)? {
+            return Ok(vec![hoy]);
+        }
+        // Para señalar en el calendario los días con ventas (unos dos años).
+        let mut dias = b.dias_con_ventas(800).map_err(|e| e.to_string())?;
         if !dias.contains(&hoy) {
             dias.insert(0, hoy);
         }
@@ -185,7 +190,21 @@ fn fechas_con_ventas(estado: tauri::State<'_, Compartido>) -> Result<Vec<String>
 #[tauri::command]
 fn ventas_del_dia(estado: tauri::State<'_, Compartido>, fecha: String) -> Result<Vec<FilaVentas>, String> {
     let es_hoy = fecha == Momento::ahora().fecha;
-    con_base(&estado, |b| b.ventas_del_dia(&fecha, es_hoy).map_err(|e| e.to_string()))
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    con_base(&estado, |b| {
+        if !es_hoy && !ve_otros_dias(b, sesion.usuario_id)? {
+            return Err("Solo puedes ver las ventas de hoy.".into());
+        }
+        b.ventas_del_dia(&fecha, es_hoy).map_err(|e| e.to_string())
+    })
+}
+
+/// Las ventas de otros días solo las ven los administradores: "sin límite" o "desarrollador".
+/// La empleada ve las de hoy.
+fn ve_otros_dias(b: &Base, usuario_id: i64) -> Result<bool, String> {
+    use nucleo::caja::Permiso;
+    let permisos = b.permisos(usuario_id).map_err(|e| e.to_string())?;
+    Ok(permisos.contains(&Permiso::AbrirCajaSinLimite) || permisos.contains(&Permiso::Desarrollador))
 }
 
 /// Cobra el carrito y registra la venta. El carrito se rearma con las reglas del núcleo (las de la
@@ -227,6 +246,8 @@ struct EstadoCaja {
     codigo: EstadoCodigo,
     /// Tiene "abrir caja sin límite": puede (y debe, si falta) poner el código.
     puede_poner_codigo: bool,
+    /// Ve las ventas de otros días (administradores); la empleada, solo las de hoy.
+    ve_otros_dias: bool,
 }
 
 /// Lo que la vista necesita para el botón "Abrir caja" y el código (D21, D23).
@@ -237,6 +258,7 @@ fn estado_caja(estado: tauri::State<'_, Compartido>) -> Result<EstadoCaja, Strin
         let permisos = b.permisos(sesion.usuario_id).map_err(|e| e.to_string())?;
         Ok(EstadoCaja {
             puede_poner_codigo: permisos.contains(&nucleo::caja::Permiso::AbrirCajaSinLimite),
+            ve_otros_dias: ve_otros_dias(b, sesion.usuario_id)?,
             permisos: permisos.iter().map(|p| p.clave()).collect(),
             como_abrir: b.como_abrir(sesion.usuario_id, &Momento::ahora().fecha).map_err(|e| e.to_string())?.clave(),
             codigo: b.estado_codigo().map_err(|e| e.to_string())?,

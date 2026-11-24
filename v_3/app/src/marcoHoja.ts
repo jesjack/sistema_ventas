@@ -3,16 +3,22 @@
 // bordes). Se miden POR FUERA de la zona con scroll (offsetWidth/offsetHeight incluyen sus
 // barras): si se midiera por dentro, una barra que aparece cambia la medida, el ajuste la vuelve a
 // provocar y las barras se sostienen solas.
+//
+// Se vuelve a medir cuando cambia el contenedor, cuando cambia el área de la tabla (p. ej. aparece
+// el carril vertical de NexSheets al pasar de las filas visibles: le quita 14 px) y cuando terminan
+// de cargar las fuentes (los anchos de las columnas se calculan con ellas).
 
 import { useEffect, useState, type DependencyList, type RefObject } from 'react'
 
 export interface MarcoHoja {
   anchoUtil: number
   extraAlto: number
+  /** Cambia cuando cargan fuentes: los anchos medidos con la fuente anterior ya no valen. */
+  fuentes: number
 }
 
 export function useMarcoHoja(ref: RefObject<HTMLElement | null>, deps: DependencyList): MarcoHoja {
-  const [marco, setMarco] = useState<MarcoHoja>({ anchoUtil: 0, extraAlto: 0 })
+  const [marco, setMarco] = useState<MarcoHoja>({ anchoUtil: 0, extraAlto: 0, fuentes: 0 })
   useEffect(() => {
     const nodo = ref.current
     if (!nodo) return
@@ -21,14 +27,41 @@ export function useMarcoHoja(ref: RefObject<HTMLElement | null>, deps: Dependenc
       const vista = nodo.querySelector<HTMLElement>('.nx-sheet__viewport')
       const esquina = nodo.querySelector<HTMLElement>('.nx-sheet__corner')
       if (!editor || !vista) return
-      const anchoUtil = vista.offsetWidth - (esquina?.offsetWidth ?? 0)
+      // Un píxel de holgura: los anchos de las columnas se redondean y no deben sumar de más.
+      const anchoUtil = vista.offsetWidth - (esquina?.offsetWidth ?? 0) - 1
       const extraAlto = editor.offsetHeight - vista.offsetHeight
-      setMarco((m) => (m.anchoUtil === anchoUtil && m.extraAlto === extraAlto ? m : { anchoUtil, extraAlto }))
+      setMarco((m) => (m.anchoUtil === anchoUtil && m.extraAlto === extraAlto ? m : { ...m, anchoUtil, extraAlto }))
     }
     medir()
     const observador = new ResizeObserver(medir)
     observador.observe(nodo)
-    return () => observador.disconnect()
+    const vista = nodo.querySelector<HTMLElement>('.nx-sheet__viewport')
+    if (vista) observador.observe(vista)
+    const fuentesListas = () => {
+      setMarco((m) => ({ ...m, fuentes: m.fuentes + 1 }))
+      medir()
+    }
+    document.fonts.addEventListener('loadingdone', fuentesListas)
+    void document.fonts.ready.then(fuentesListas)
+    return () => {
+      observador.disconnect()
+      document.fonts.removeEventListener('loadingdone', fuentesListas)
+    }
   }, deps) // eslint-disable-line react-hooks/exhaustive-deps
   return marco
+}
+
+/** Alto que queda desde el borde superior del elemento hasta el fondo de la ventana. */
+export function useAltoDisponible(ref: RefObject<HTMLElement | null>, margenInferior: number, deps: DependencyList): number {
+  const [alto, setAlto] = useState(0)
+  useEffect(() => {
+    const medir = () => {
+      const nodo = ref.current
+      if (nodo) setAlto(Math.max(0, Math.floor(window.innerHeight - nodo.getBoundingClientRect().top - margenInferior)))
+    }
+    medir()
+    window.addEventListener('resize', medir)
+    return () => window.removeEventListener('resize', medir)
+  }, deps) // eslint-disable-line react-hooks/exhaustive-deps
+  return alto
 }
