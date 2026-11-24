@@ -94,35 +94,22 @@ export function altoHojaCarrito(carrito: readonly FilaCarrito[], extra: number):
   return (Math.max(carrito.length, 1) + 1) * ALTO_FILA_HOJA + extra
 }
 
+/**
+ * Una fila de VENTAS REALIZADAS (núcleo: `nucleo::FilaVentas`): un producto vendido, un evento
+ * (APERTURA DE CAJA, CORTE DE CAJA…: sin precio, cantidad ni subtotal) o, tras un corte, una pieza
+ * del cambio que se dejó en la caja.
+ */
 export interface LineaVenta {
-  venta_id: number
   hora: string
   producto: string
-  precio: number
-  cantidad: number
-  subtotal: number
-  total_venta: number
+  precio: number | null
+  cantidad: number | null
+  subtotal: number | null
 }
 
-/** Tabla de lo vendido un día (solo tabla: la venta es un número de folio, no una cantidad). */
+/** Tabla de lo vendido un día, con las mismas columnas que la hoja de la v2. */
 export function hojaDeVentas(lineas: readonly LineaVenta[]): Sheet {
-  const filas: (string | number)[][] = [['Hora', 'Venta', 'Producto', 'Precio', 'Cantidad', 'Subtotal']]
-  // `#229`: texto, para que nadie lo sume ni lo grafique como si fuera una cantidad.
-  for (const l of lineas) filas.push([l.hora.slice(0, 5), `#${l.venta_id}`, l.producto, l.precio, l.cantidad, l.subtotal])
+  const filas: (string | number)[][] = [['Hora', 'Producto', 'Precio', 'Cantidad', 'Subtotal']]
+  for (const l of lineas) filas.push([l.hora.slice(0, 5), l.producto, l.precio ?? '', l.cantidad ?? '', l.subtotal ?? ''])
   return sheetFromRows('Ventas realizadas', filas)
-}
-
-/** Total vendido por hora del día (la gráfica se quitó de la caja; se conserva por si vuelve). */
-export function hojaVentasPorHora(lineas: readonly LineaVenta[]): Sheet {
-  const porHora = new Map<string, { total: number; ventas: Set<number> }>()
-  for (const l of lineas) {
-    const hora = `${l.hora.slice(0, 2)}:00`
-    const h = porHora.get(hora) ?? { total: 0, ventas: new Set<number>() }
-    h.total += l.subtotal
-    h.ventas.add(l.venta_id)
-    porHora.set(hora, h)
-  }
-  const filas: (string | number)[][] = [['Hora', 'Total vendido']]
-  for (const [hora, h] of [...porHora].sort(([a], [b]) => a.localeCompare(b))) filas.push([hora, h.total])
-  return sheetFromRows('Ventas por hora', filas)
 }

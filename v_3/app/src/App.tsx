@@ -15,6 +15,20 @@ interface InfoBase {
   codigos: number
 }
 
+/** Producto del catálogo (núcleo: `nucleo::Producto`). */
+interface Producto {
+  id: number
+  nombre: string
+}
+
+/** Venta registrada por el comando `cobrar`. */
+interface VentaRegistrada {
+  venta_id: number
+  total: number
+  recibido: number
+  cambio: number
+}
+
 interface ProductoConPrecio {
   producto: string
   precio: number
@@ -54,7 +68,7 @@ export default function App() {
   const [producto, setProducto] = useState('')
   const [precio, setPrecio] = useState('')
   const [cantidad, setCantidad] = useState('1')
-  const [sugerencias, setSugerencias] = useState<string[]>([])
+  const [sugerencias, setSugerencias] = useState<Producto[]>([])
   const [carrito, setCarrito] = useState<FilaCarrito[]>([])
   // Prueba de NexSheets (P2): el carrito puede verse como tabla propia o como hoja editable.
   const [vistaCarrito, setVistaCarrito] = useState<'tabla' | 'hoja'>('tabla')
@@ -107,11 +121,12 @@ export default function App() {
   const consultaActual = useRef(0)
 
   const total = useMemo(() => totalDelCarrito(carrito), [carrito])
-  const opciones = useMemo(() => sugerencias.map((s) => ({ value: s, label: s })), [sugerencias])
+  const opciones = useMemo(() => sugerencias.map((p) => ({ value: String(p.id), label: p.nombre })), [sugerencias])
 
   useEffect(() => (depurarGota ? iniciarDepuracionGota() : undefined), [depurarGota])
 
-  // VENTAS REALIZADAS (solo lectura sobre la copia de la base).
+  // VENTAS REALIZADAS: hoy (desde el último corte) y los días anteriores. Se recargan al cobrar.
+  const [recargaVentas, setRecargaVentas] = useState(0)
   useEffect(() => {
     invoke<string[]>('fechas_con_ventas').then(
       (lista) => {
@@ -120,13 +135,13 @@ export default function App() {
       },
       (e) => setAviso({ tono: 'danger', texto: `No se pudieron leer las fechas de venta: ${e}` }),
     )
-  }, [])
+  }, [recargaVentas])
   useEffect(() => {
     if (!fecha) return
     invoke<LineaVenta[]>('ventas_del_dia', { fecha }).then(setLineasVenta, (e) =>
       setAviso({ tono: 'danger', texto: `No se pudieron leer las ventas: ${e}` }),
     )
-  }, [fecha])
+  }, [fecha, recargaVentas])
   const hojaVentas = useMemo(() => hojaDeVentas(lineasVenta), [lineasVenta])
 
   useEffect(() => {
@@ -151,7 +166,7 @@ export default function App() {
       setSugerencias([])
       return
     }
-    medirConsulta(serieConsultas, () => invoke<string[]>('buscar_productos', { texto })).then(
+    medirConsulta(serieConsultas, () => invoke<Producto[]>('buscar_productos', { texto })).then(
       (lista) => {
         if (numero !== consultaActual.current) return
         setSugerencias(lista)
@@ -204,19 +219,30 @@ export default function App() {
     requestAnimationFrame(() => refRecibido.current?.focus())
   }
 
-  const confirmarCobro = () => {
-    const recibido = cobro === null || cobro.trim() === '' ? total : leerNumero(cobro)
-    if (!(recibido >= total)) {
-      setAviso({ tono: 'warning', texto: `Lo recibido no alcanza: faltan ${dinero(total - (recibido || 0))}.` })
-      return
+  // El núcleo valida el cobro (mismas reglas y textos que la v2) y registra la venta en la base.
+  const [cobrando, setCobrando] = useState(false)
+  const confirmarCobro = async () => {
+    if (cobrando) return
+    setCobrando(true)
+    try {
+      const venta = await invoke<VentaRegistrada>('cobrar', {
+        items: carrito.map(({ producto, precio, cantidad }) => ({ producto, precio, cantidad })),
+        recibido: cobro ?? '',
+      })
+      setAviso({
+        tono: 'success',
+        texto: `Venta #${venta.venta_id} registrada: ${dinero(venta.total)}, recibido ${dinero(venta.recibido)}, cambio ${dinero(venta.cambio)}.`,
+      })
+      setCarrito([])
+      setCobro(null)
+      setRecargaVentas((n) => n + 1)
+      enfocarProducto()
+    } catch (e) {
+      setAviso({ tono: 'warning', texto: String(e) })
+      requestAnimationFrame(() => refRecibido.current?.select())
+    } finally {
+      setCobrando(false)
     }
-    setAviso({
-      tono: 'success',
-      texto: `Venta simulada por ${dinero(total)}, cambio ${dinero(recibido - total)}. No se guardó en ninguna base.`,
-    })
-    setCarrito([])
-    setCobro(null)
-    enfocarProducto()
   }
 
   const procesarEscaneo = useCallback(async (escaneo: Escaneo) => {
