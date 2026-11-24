@@ -1,7 +1,7 @@
 import { useCallback, useEffect, type CSSProperties, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexInput, NexProvider, NexSegmented, NexSelect } from '@nexfluid/react'
+import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexInput, NexProvider, NexSelect } from '@nexfluid/react'
 import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
 import { altoHojaCarrito, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
 import { useMarcoHoja } from './marcoHoja.ts'
@@ -23,6 +23,15 @@ interface InfoBase {
 interface Producto {
   id: number
   nombre: string
+}
+
+/** Un botón configurable (núcleo: `nucleo::botones::Boton`). */
+interface Boton {
+  id: number
+  nombre_interno: string
+  etiqueta: string
+  accion: string
+  orden: number
 }
 
 /** Estado del código de autorización (núcleo: `EstadoCodigo`). */
@@ -91,12 +100,14 @@ export default function App() {
   const [cantidad, setCantidad] = useState('1')
   const [sugerencias, setSugerencias] = useState<Producto[]>([])
   const [carrito, setCarrito] = useState<FilaCarrito[]>([])
-  // Prueba de NexSheets (P2): el carrito puede verse como tabla propia o como hoja editable.
-  const [vistaCarrito, setVistaCarrito] = useState<'tabla' | 'hoja'>('tabla')
+  // Botones configurables de la columna derecha (P1) y el panel de desarrollador.
+  const [botones, setBotones] = useState<Boton[]>([])
+  const [verDesarrollador, setVerDesarrollador] = useState(false)
+  const refDia = useRef<HTMLDivElement>(null)
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
   // ajustan al contenido y al ancho disponible (Producto ocupa lo que sobra: sin hueco a la derecha).
   const refHoja = useRef<HTMLDivElement>(null)
-  const marcoHoja = useMarcoHoja(refHoja, [vistaCarrito])
+  const marcoHoja = useMarcoHoja(refHoja, [])
   const libroCarrito = useMemo<Workbook>(() => {
     const nodo = refHoja.current
     if (!nodo || !marcoHoja.anchoUtil) return libroDeCarrito(carrito)
@@ -195,6 +206,10 @@ export default function App() {
 
   const enfocarProducto = () => requestAnimationFrame(() => refProducto.current?.focus())
 
+  useEffect(() => {
+    invoke<Boton[]>('botones').then(setBotones, () => setBotones([]))
+  }, [])
+
   const leerEstadoCaja = useCallback(() => {
     invoke<EstadoCaja>('estado_caja').then(
       (e) => {
@@ -291,17 +306,20 @@ export default function App() {
 
   // El núcleo valida el cobro (mismas reglas y textos que la v2) y registra la venta en la base.
   const [cobrando, setCobrando] = useState(false)
-  const confirmarCobro = async () => {
+  const confirmarCobro = async (sinTicket = false) => {
     if (cobrando) return
     setCobrando(true)
     try {
       const venta = await invoke<VentaRegistrada>('cobrar', {
         items: carrito.map(({ producto, precio, cantidad }) => ({ producto, precio, cantidad })),
         recibido: cobro ?? '',
+        sinTicket,
       })
       setAviso({
         tono: 'success',
-        texto: `Venta #${venta.venta_id} registrada: ${dinero(venta.total)}, recibido ${dinero(venta.recibido)}, cambio ${dinero(venta.cambio)}.`,
+        texto: sinTicket
+          ? `Venta #${venta.venta_id} registrada sin ticket: ${dinero(venta.total)}.`
+          : `Venta #${venta.venta_id} registrada: ${dinero(venta.total)}, recibido ${dinero(venta.recibido)}, cambio ${dinero(venta.cambio)}.`,
       })
       setCarrito([])
       setCobro(null)
@@ -374,10 +392,14 @@ export default function App() {
     }
   }
 
+  // D15/D17: Intro es siempre el cobro normal; sin ticket solo con su tecla (F4) o un clic.
   const teclaCobro = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      confirmarCobro()
+      void confirmarCobro(false)
+    } else if (e.key === 'F4') {
+      e.preventDefault()
+      void confirmarCobro(true)
     } else if (e.key === 'Escape') {
       setCobro(null)
       enfocarProducto()
@@ -385,6 +407,41 @@ export default function App() {
   }
 
   const recibido = cobro === null || cobro.trim() === '' ? total : leerNumero(cobro)
+
+  // Lo que hace cada acción de botón (`archivo_accion` de la v2). Las que aún no existen en la v3
+  // devuelven el motivo y el botón se muestra deshabilitado.
+  const accion = (nombre: string): (() => void) | string => {
+    switch (nombre) {
+      case 'cobrar_carrito':
+        // Como la v2: con el carrito vacío, cobrar es abrir la caja (con sus reglas, D23).
+        return () => (carrito.length ? abrirCobro() : void abrirCaja())
+      case 'limpiar_carrito':
+        return () => {
+          setCarrito([])
+          limpiarEntrada()
+          setAviso({ tono: 'neutral', texto: 'Carrito vacío.' })
+          enfocarProducto()
+        }
+      case 'abrir_caja':
+        return () => void abrirCaja()
+      case 'ver_ventas':
+        return () => refDia.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      case 'ping':
+        return () => setAviso({ tono: 'neutral', texto: 'pong' })
+      case 'corte_de_caja':
+      case 'autocompletado':
+      case 'ver_codigos_de_barras':
+        return 'Todavía no está en la v3 (fase 2, siguiente bloque).'
+      case 'imprimir_codigo_de_barras':
+      case 'imprimir_varios_codigos':
+        return 'Llega con las impresoras (fase 3).'
+      case 'ver_camaras':
+        return 'Llega con las cámaras (fase 5).'
+      default:
+        return `Acción desconocida en esta versión: ${nombre}.`
+    }
+  }
+  const esDesarrollador = estadoCaja?.permisos.includes('desarrollador') ?? false
 
   return (
     <NexProvider
@@ -404,23 +461,6 @@ export default function App() {
         } as CSSProperties
       }
     >
-      <header className="caja__cabecera">
-        <div>
-          <h1 className="caja__titulo">Caja V3</h1>
-          <p className="caja__sub">Prototipo de la fase 0 · solo lectura sobre una copia de la base</p>
-        </div>
-        {info ? (
-          <NexBadge tone="success" dot>
-            {info.usuario ? `${info.usuario} · sesión ${info.sesion_id} · ` : 'sin sesión · '}
-            {info.productos} productos · {info.codigos} códigos
-          </NexBadge>
-        ) : (
-          <NexBadge tone="danger" dot>
-            {errorBase ?? 'Abriendo la base…'}
-          </NexBadge>
-        )}
-      </header>
-
       <main className="caja__cuerpo">
         <section className="caja__venta" aria-label="Venta">
           <div className="caja__entrada">
@@ -458,74 +498,13 @@ export default function App() {
             />
           </div>
 
-          <p className="caja__ayuda">
-            Enter en Producto pasa al precio · Enter en Precio o Cantidad agrega · Enter con Producto vacío cobra ·
-            el escáner funciona en cualquier campo
-          </p>
-
           {aviso && (
             <p className={`caja__aviso caja__aviso--${aviso.tono}`} role="status">
               {aviso.texto}
             </p>
           )}
 
-          <div className="caja__vista">
-            <NexButton appearance="outlined" density="compact" onClick={() => void abrirCaja()} disabled={turnoPerdido}>
-              Abrir caja
-            </NexButton>
-            <NexSegmented
-              aria-label="Vista del carrito"
-              value={vistaCarrito}
-              onValueChange={(v) => setVistaCarrito(v as 'tabla' | 'hoja')}
-              options={[
-                { value: 'tabla', label: 'Tabla propia' },
-                { value: 'hoja', label: 'NexSheets' },
-              ]}
-            />
-          </div>
-          {vistaCarrito === 'tabla' ? (
-            <table className="caja__carrito">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th className="num">Precio</th>
-                  <th className="num">Cantidad</th>
-                  <th className="num">Subtotal</th>
-                  <th aria-label="Acciones" />
-                </tr>
-              </thead>
-              <tbody>
-                {carrito.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="caja__vacio">
-                      El carrito está vacío
-                    </td>
-                  </tr>
-                ) : (
-                  carrito.map((f, i) => (
-                    <tr key={`${f.producto}|${f.precio}`}>
-                      <td>{f.producto}</td>
-                      <td className="num">{dinero(f.precio)}</td>
-                      <td className="num">{f.cantidad}</td>
-                      <td className="num">{dinero(f.subtotal)}</td>
-                      <td className="num">
-                        <NexButton
-                          appearance="ghost"
-                          tone="danger"
-                          density="compact"
-                          tabIndex={-1}
-                          onClick={() => setCarrito((c) => c.filter((_, j) => j !== i))}
-                        >
-                          Quitar
-                        </NexButton>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          ) : (
-            <div ref={refHoja}>
+          <div ref={refHoja}>
             <NexSheets
               className="caja__hoja"
               workbook={libroCarrito}
@@ -539,8 +518,7 @@ export default function App() {
               toolbar={false}
               formulaBar={false}
             />
-            </div>
-          )}
+          </div>
 
           <div className="caja__total">
             <span>Total</span>
@@ -625,11 +603,19 @@ export default function App() {
               <p className="caja__cambio">
                 Cambio: <strong>{recibido >= total ? dinero(recibido - total) : '—'}</strong>
               </p>
+              <div className="caja__cobro-acciones">
+                <NexButton appearance="filled" onClick={() => void confirmarCobro(false)} disabled={cobrando}>
+                  Cobrar (Intro)
+                </NexButton>
+                <NexButton appearance="outlined" onClick={() => void confirmarCobro(true)} disabled={cobrando}>
+                  Sin ticket (F4)
+                </NexButton>
+              </div>
             </div>
           )}
 
           <section className="caja__ventas" aria-label="Ventas realizadas">
-            <div className="caja__ventas-cabecera">
+            <div className="caja__ventas-cabecera" ref={refDia}>
               <h2>Ventas realizadas</h2>
               <NexSelect
                 label="Día"
@@ -664,7 +650,45 @@ export default function App() {
           </section>
         </section>
 
-        <aside className="caja__medicion" aria-label="Mediciones">
+        <aside className="caja__botones" aria-label="Botones">
+          {botones.map((b) => {
+            const hacer = accion(b.accion)
+            const deshabilitado = typeof hacer === 'string' || turnoPerdido
+            return (
+              <NexButton
+                key={b.id}
+                appearance={b.accion === 'cobrar_carrito' ? 'filled' : 'default'}
+                fullWidth
+                disabled={deshabilitado}
+                title={typeof hacer === 'string' ? hacer : undefined}
+                onClick={typeof hacer === 'string' ? undefined : hacer}
+              >
+                {b.etiqueta}
+              </NexButton>
+            )
+          })}
+          {botones.length === 0 && <p className="caja__nota">Este usuario no tiene botones asignados.</p>}
+          <div className="caja__sesion">
+            {info ? (
+              <NexBadge tone="success" dot>
+                {info.usuario ? `${info.usuario} · sesión ${info.sesion_id}` : 'sin sesión'}
+              </NexBadge>
+            ) : (
+              <NexBadge tone="danger" dot>
+                {errorBase ?? 'Abriendo la base…'}
+              </NexBadge>
+            )}
+            {esDesarrollador && (
+              <NexButton appearance="ghost" density="compact" onClick={() => setVerDesarrollador((v) => !v)}>
+                {verDesarrollador ? 'Ocultar desarrollador' : 'Desarrollador'}
+              </NexButton>
+            )}
+          </div>
+        </aside>
+      </main>
+
+      {verDesarrollador && (
+        <aside className="caja__medicion" aria-label="Desarrollador">
           <h2>Mediciones</h2>
           <Medida titulo="Tecla → pantalla" resumen={resumenTeclas} nota="incluye hasta 1 cuadro (≈16 ms)" />
           <Medida titulo="Consulta a Rust" resumen={resumenConsultas} nota="autocompletado y códigos" />
@@ -758,9 +782,9 @@ export default function App() {
             cambiar={setGotaEstiramiento}
             desactivado={!gotaSimetrica}
           />
-          {info && <p className="caja__nota">Base: {info.ruta}</p>}
+          {info && <p className="caja__nota">Base: {info.ruta} · {info.productos} productos · {info.codigos} códigos</p>}
         </aside>
-      </main>
+      )}
     </NexProvider>
   )
 }

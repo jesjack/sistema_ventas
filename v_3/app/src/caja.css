@@ -256,3 +256,29 @@ body,
 .caja__hoja:not(.caja__hoja--ventas) .nx-sheet__viewport {
   overflow-y: hidden;
 }
+
+/* Fase 2: columna fija de botones configurables a la derecha (P1), como la hoja de la v2. */
+.caja__cuerpo {
+  grid-template-columns: minmax(0, 1fr) 220px;
+}
+
+.caja__botones {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.caja__sesion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.caja__cobro-acciones {
+  display: flex;
+  gap: 8px;
+}

@@ -189,9 +189,10 @@ fn ventas_del_dia(estado: tauri::State<'_, Compartido>, fecha: String) -> Result
 }
 
 /// Cobra el carrito y registra la venta. El carrito se rearma con las reglas del núcleo (las de la
-/// v2) y el total se calcula aquí, no en la vista. `recibido` vacío = pago exacto.
+/// v2) y el total se calcula aquí, no en la vista. `recibido` vacío = pago exacto. `sin_ticket`
+/// (D15): cobro rápido, recibido = total, cambio 0, no imprime ticket pero el cajón se abre igual.
 #[tauri::command]
-fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: String) -> Result<VentaRegistrada, String> {
+fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: String, sin_ticket: bool) -> Result<VentaRegistrada, String> {
     let mut carrito = Carrito::nuevo();
     for i in &items {
         if !carrito.agregar(&i.producto, i.precio, i.cantidad) {
@@ -201,14 +202,16 @@ fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: S
     if carrito.esta_vacio() {
         return Err("El carrito está vacío.".into());
     }
-    let cobro = Cobro::con_texto(carrito.total(), &recibido).map_err(|e| e.to_string())?;
+    let cobro = if sin_ticket { Cobro::exacto(carrito.total()) } else { Cobro::con_texto(carrito.total(), &recibido).map_err(|e| e.to_string())? };
     let sesion = sesion_con_turno(&estado)?;
     con_base(&estado, |b| {
         let momento = Momento::ahora();
-        let venta_id = b
-            .registrar_venta(&carrito.filas, cobro.recibido, cobro.cambio, &momento, Some(sesion.id))
-            .map_err(|e| e.to_string())?
-            .ok_or("El carrito está vacío.")?;
+        let registrada = if sin_ticket {
+            b.registrar_venta_sin_ticket(&carrito.filas, &momento, Some(sesion.id))
+        } else {
+            b.registrar_venta(&carrito.filas, cobro.recibido, cobro.cambio, &momento, Some(sesion.id))
+        };
+        let venta_id = registrada.map_err(|e| e.to_string())?.ok_or("El carrito está vacío.")?;
         // El cobro abre el cajón (con el ticket). Fase 3: abrirlo de verdad y registrar después.
         // D23: también entra al registro de aperturas.
         b.registrar_apertura(Autorizacion::Venta, Some(venta_id), &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
@@ -264,6 +267,13 @@ fn abrir_caja(estado: tauri::State<'_, Compartido>, codigo: Option<String>) -> R
         b.registrar_apertura(autorizacion, None, &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
         Ok(autorizacion.clave())
     })
+}
+
+/// Los botones de la columna derecha para el usuario de la sesión (P1: configurables, como la v2).
+#[tauri::command]
+fn botones(estado: tauri::State<'_, Compartido>) -> Result<Vec<nucleo::botones::Boton>, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    con_base(&estado, |b| b.botones_de(sesion.usuario_id).map_err(|e| e.to_string()))
 }
 
 /// Pone un código de autorización nuevo (solo con "abrir caja sin límite"; el núcleo lo comprueba).
@@ -358,7 +368,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, poner_codigo])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, poner_codigo, botones])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {

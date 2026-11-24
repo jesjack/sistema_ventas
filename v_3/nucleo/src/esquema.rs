@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::base::{Base, ErrorBase};
 
 /// Las migraciones en orden: la posición + 1 es la versión que deja la base.
-pub const MIGRACIONES: &[&str] = &[include_str!("esquema/v1.sql"), include_str!("esquema/v2.sql")];
+pub const MIGRACIONES: &[&str] = &[include_str!("esquema/v1.sql"), include_str!("esquema/v2.sql"), include_str!("esquema/v3.sql")];
 
 /// La versión más reciente del esquema.
 pub fn version_actual() -> i64 {
@@ -107,7 +107,7 @@ mod pruebas {
     }
 
     #[test]
-    fn la_version_2_sigue_la_1() {
+    fn de_la_version_1_se_llega_a_la_ultima() {
         // De una base en versión 1 (como quedaría una instalación vieja) se llega a la última.
         let mut base = Base::en_memoria().unwrap();
         base.ejecutar_sql(MIGRACIONES[0]).unwrap();

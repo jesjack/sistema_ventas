@@ -50,15 +50,42 @@ impl Base {
         momento: &Momento,
         sesion_id: Option<i64>,
     ) -> Result<Option<i64>, ErrorBase> {
+        self.registrar_venta_con(items, recibido, cambio, false, momento, sesion_id)
+    }
+
+    /// Cobro rápido sin ticket (D15): recibido = total, cambio = 0 y la marca `sin_ticket`. Solo en
+    /// una base de la v3 (la columna llega con la versión 3 del esquema).
+    pub fn registrar_venta_sin_ticket(&mut self, items: &[FilaCarrito], momento: &Momento, sesion_id: Option<i64>) -> Result<Option<i64>, ErrorBase> {
+        let total: f64 = items.iter().map(|i| i.subtotal).sum();
+        self.registrar_venta_con(items, total, 0.0, true, momento, sesion_id)
+    }
+
+    fn registrar_venta_con(
+        &mut self,
+        items: &[FilaCarrito],
+        recibido: f64,
+        cambio: f64,
+        sin_ticket: bool,
+        momento: &Momento,
+        sesion_id: Option<i64>,
+    ) -> Result<Option<i64>, ErrorBase> {
         if items.is_empty() {
             return Ok(None);
         }
         let total: f64 = items.iter().map(|i| i.subtotal).sum();
         let tx = self.con.transaction()?;
-        tx.execute(
-            "INSERT INTO ventas (fecha, hora, total, recibido, cambio, sesion_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![momento.fecha, momento.hora, total, recibido, cambio, sesion_id],
-        )?;
+        if sin_ticket {
+            tx.execute(
+                "INSERT INTO ventas (fecha, hora, total, recibido, cambio, sesion_id, sin_ticket) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
+                params![momento.fecha, momento.hora, total, recibido, cambio, sesion_id],
+            )?;
+        } else {
+            // Sin nombrar `sin_ticket`: así también funciona sobre el esquema de la v2 (pruebas).
+            tx.execute(
+                "INSERT INTO ventas (fecha, hora, total, recibido, cambio, sesion_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![momento.fecha, momento.hora, total, recibido, cambio, sesion_id],
+            )?;
+        }
         let venta_id = tx.last_insert_rowid();
         {
             let mut insertar = tx.prepare(
@@ -179,5 +206,24 @@ impl Base {
         let mut consulta = self.con.prepare("SELECT DISTINCT fecha FROM ventas ORDER BY fecha DESC LIMIT ?1")?;
         let dias = consulta.query_map(params![limite], |f| f.get(0))?.collect::<Result<_, _>>()?;
         Ok(dias)
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    #[test]
+    fn venta_sin_ticket_recibe_el_total_sin_cambio_y_queda_marcada() {
+        let mut base = Base::en_memoria_v3().unwrap();
+        let item = FilaCarrito { producto: "faja".into(), precio: 200.0, cantidad: 2, subtotal: 400.0 };
+        let m = Momento::nuevo("2026-11-25", "10:00:00");
+        let normal = base.registrar_venta(&[item.clone()], 500.0, 100.0, &m, None).unwrap().unwrap();
+        let rapida = base.registrar_venta_sin_ticket(&[item], &m, None).unwrap().unwrap();
+        let fila = |id: i64| -> (f64, f64, i64) {
+            base.con.query_row("SELECT recibido, cambio, sin_ticket FROM ventas WHERE id = ?1", params![id], |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?))).unwrap()
+        };
+        assert_eq!(fila(normal), (500.0, 100.0, 0));
+        assert_eq!(fila(rapida), (400.0, 0.0, 1));
     }
 }
