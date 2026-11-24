@@ -244,18 +244,6 @@ body,
   font-size: var(--nx-text-subhead);
 }
 
-/* Hoja del carrito: las columnas se nombran (Producto, Precio…) sin la letra (A, B…) delante.
-   NexSheets pinta las dos cuando la hoja tiene `headers`; aquí solo interesa el nombre. */
-.caja__hoja .nx-sheet__head > span:first-child:not(.nx-sheet__head-name):not(.nx-sheet__resize) {
-  display: none;
-}
-
-/* El borde de foco de NexSheets se dibuja dentro de la zona con scroll: lo tapan los encabezados y
-   lo recortan las esquinas (hallazgo de NexFluid). En una hoja de solo lectura no hace falta. */
-.caja__hoja .nx-sheet__viewport:focus-visible {
-  box-shadow: none;
-}
-
 /* Los anchos del carrito se ajustan solos y la hoja es de solo lectura: sin tiradores para
    redimensionar columnas, y sin scroll vertical (la hoja mide exactamente sus filas). */
 .caja__hoja .nx-sheet__resize {

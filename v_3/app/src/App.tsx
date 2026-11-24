@@ -431,6 +431,7 @@ export default function App() {
               extent={false}
               height={altoHojaCarrito(carrito, marcoHoja.extraAlto)}
               label="Carrito"
+              columnLabels="name"
               tabs={false}
               statusBar={false}
               toolbar={false}

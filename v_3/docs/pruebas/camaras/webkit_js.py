@@ -6,7 +6,8 @@ from gi.repository import Gtk, WebKit2, GLib
 destino, js = sys.argv[1], sys.argv[2]
 espera = int(sys.argv[3]) if len(sys.argv) > 3 else 300
 png = sys.argv[4] if len(sys.argv) > 4 else None
-win = Gtk.Window(title="Prueba (se cierra sola)")  # visible: WebKit no carga video en ventanas invisibles; v = WebKit2.WebView(); win.add(v); win.set_default_size(800, 600); win.show_all()
+# Ventana VISIBLE: en una invisible (Gtk.OffscreenWindow) WebKit no carga video.
+win = Gtk.Window(title="Prueba (se cierra sola)"); v = WebKit2.WebView(); win.add(v); win.set_default_size(800, 600); win.show_all()
 v.get_settings().set_property('media-playback-requires-user-gesture', False)
 def listo(view, ev):
     if ev == WebKit2.LoadEvent.FINISHED:
