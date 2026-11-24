@@ -1,7 +1,7 @@
 # Contexto para continuar la V3 (Rust + Tauri + NexFluid)
 
 Documento de traspaso entre sesiones de trabajo (con o sin Claude). **Léelo antes de seguir.**
-Última actualización: 2026-11-24, tarde (fase 1 casi completa: núcleo en Rust; ver §8).
+Última actualización: 2026-11-24, noche (núcleo de la fase 1 completo; base propia de la v3; ver §8).
 
 ## 1. La decisión de fondo
 
@@ -32,7 +32,7 @@ haga todo lo que hace la v2.
 | Fase | Qué | Estado |
 |---|---|---|
 | 0 | Prototipo: Tauri + NexFluid en la PC de la caja, medir | **Hecha** (2026-11-24, también en release) |
-| 1 | Núcleo: Rust lee/escribe `ventas.db` con el MISMO esquema; reglas del carrito y cobro con pruebas contra la v2 | **Casi completa** (§8): falta turno y permisos |
+| 1 | Núcleo en Rust: reglas de la v2 probadas contra ella, base propia de la v3 con importación, turno y permisos | **Núcleo completo** (§8); falta usar turno y permisos en la app |
 | 2 | Pantalla de venta completa (captura, carrito, cobro, VENTAS REALIZADAS), en paralelo con la v2 sobre una copia | |
 | 3 | Hardware: ticket, cajón (reglas D21/D23), etiquetas | |
 | 4 | Administración: usuarios, roles, turnos, botones | |
@@ -215,13 +215,26 @@ ventana (comprobado: sesión 200). Ruta de la base (D9): `CAJA_DB`, si no la car
 app; en desarrollo, `datos/ventas_copia.db`. **Se niega a abrir `v_2/share/ventas.db`** (prueba).
 Escribe SOLO en la copia; `copiar_base_real.py` la reemplaza (borra lo de prueba).
 
-**DECISIÓN PENDIENTE (propuesta del usuario, 2026-11-24, de acuerdo):** que la v3 use **una base
-propia con su propio esquema** y que los datos de la v2 se **importen una vez** al pasar a
-producción (y durante la prueba en paralelo, importar una foto). Ventajas: esquema limpio para lo
-nuevo (turno, permisos, código de caja como hash, registro de aperturas; sin `autorizaciones_codigos`
-en texto plano), migraciones propias versionadas, corte limpio. Las pruebas contra la v2 pasan a
-probar la IMPORTACIÓN. **Decidirlo antes del bloque de turno y permisos**, porque cambia dónde y
-cómo van sus tablas (antes se pensaba en tablas aparte dentro de la base de la v2).
+**DECIDIDO (2026-11-24, propuesta del usuario): la v3 tiene su PROPIA base.** `nucleo/src/esquema.rs`
+con migraciones versionadas en `PRAGMA user_version` (`esquema/v1.sql`: la estructura de producción
+de la v2 sin `autorizaciones_codigos`, más el usuario plantilla; `esquema/v2.sql`: `turno_caja`,
+`permisos_usuario`, `codigo_caja`, `aperturas_caja`). Una migración publicada no se edita: los
+cambios van en una nueva. `Base::abrir_v3` se NIEGA a migrar una base con tablas y versión 0 (la de
+la v2): esa se importa. `nucleo/src/importar.rs` + `cargo run --bin importar_v2 -- <v2> <v3 nueva>`
+copia todas las tablas conservando los ids, con la v2 en solo lectura; probado fila por fila (y que
+el archivo de la v2 no cambia ni un byte) y con la copia real (236 ventas, 200 sesiones… idénticas).
+La app abre `datos/ventas_v3.db` en desarrollo (ver `app/README.md`).
 
-**Siguiente:** decidir lo anterior; luego turno de caja (D8: una caja activa, el último que abre
-se queda, la anterior se cierra en ~3 s) y permisos/apertura de caja (D21, D23).
+**Turno y permisos (`nucleo/src/caja.rs`):** `tomar_turno` / `turno_vigente` (D8); permisos por
+usuario `desarrollador`, `abrir_caja_sin_limite`, `empleada` (D21); `como_abrir` → `Permiso`,
+`VentanaDiaria` (empleada, una vez al día antes de la primera venta) o `Codigo` (también sin
+permisos, D23); `registrar_apertura` deja el evento "APERTURA DE CAJA" y su fila en
+`aperturas_caja` (llamarla SOLO cuando el cajón ya se abrió, como la v2); código de un solo uso
+como SHA-256 con sal (`poner_codigo` solo con "sin límite"; `usar_codigo` lo bloquea).
+28 pruebas en total.
+
+**Siguiente:** usar turno y permisos en la app: tomar el turno al abrir y comprobarlo cada ~3 s
+(cerrarse si otra caja lo tomó), botón "Abrir caja" con `como_abrir` y el código (el cajón real
+llega en la fase 3; hasta entonces, simulado). Hace falta decidir con el usuario los permisos
+iniciales (D21: nancy y miriam "sin límite", emilymaya empleada, jesjack desarrollador; en la base
+existen nancy=41 y emilymaya=193, miriam no aparece) y cómo se asignan (pantalla de administración).

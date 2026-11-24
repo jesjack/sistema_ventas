@@ -9,6 +9,7 @@
 //! resultados generados ejecutando el código real de la v2 (`pruebas_v2/generar_casos.py`).
 
 pub mod base;
+pub mod caja;
 pub mod carrito;
 pub mod catalogo;
 pub mod cobro;
