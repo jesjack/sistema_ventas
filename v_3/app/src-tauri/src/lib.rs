@@ -250,6 +250,14 @@ fn abrir_caja(estado: tauri::State<'_, Compartido>, codigo: Option<String>) -> R
         let momento = Momento::ahora();
         let autorizacion = b.como_abrir(sesion.usuario_id, &momento.fecha).map_err(|e| e.to_string())?;
         if autorizacion == Autorizacion::Codigo {
+            // Si no hay código disponible, ninguno va a servir: se avisa sin pedirlo.
+            match b.estado_codigo().map_err(|e| e.to_string())? {
+                EstadoCodigo::SinCodigo => return Err(nucleo::caja::ErrorCaja::SinCodigo.to_string()),
+                EstadoCodigo::Usado { usado_en, .. } => {
+                    return Err(format!("{} (Se usó el {usado_en}.)", nucleo::caja::ErrorCaja::CodigoUsado));
+                }
+                EstadoCodigo::Disponible => {}
+            }
             let Some(codigo) = codigo.filter(|c| !c.trim().is_empty()) else { return Err(PIDE_CODIGO.into()) };
             b.usar_codigo(&codigo, &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
         }

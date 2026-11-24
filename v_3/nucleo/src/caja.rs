@@ -100,9 +100,10 @@ pub enum ErrorCaja {
     CodigoCorto(usize),
     #[error("Solo alguien con permiso para abrir la caja sin límite puede poner el código.")]
     SinPermisoParaElCodigo,
-    #[error("No hay código de autorización; pide a quien tenga permiso que abra la caja.")]
+    #[error("Todavía no hay código de autorización. Pide a quien tenga permiso para abrir la caja sin límite que la abra o ponga uno.")]
     SinCodigo,
-    #[error("Código usado; pide a quien tenga permiso que abra la caja o ponga uno nuevo.")]
+    /// No hay un código disponible porque el último ya se usó (un código sirve una sola vez).
+    #[error("Ya no hay código disponible: el último se usó. Pide a quien tenga permiso para abrir la caja sin límite que la abra o ponga uno nuevo.")]
     CodigoUsado,
     #[error("El código no es correcto.")]
     CodigoIncorrecto,
