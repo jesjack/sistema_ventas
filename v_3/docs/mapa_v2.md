@@ -151,6 +151,9 @@ soffice si UNO no arranca en 30 s). La lista completa de 68 pines está en ese a
 
 ## 4. Decisiones pendientes
 
+> **2026-11-24: la V3 dejó Calc** (Rust + Tauri + NexFluid). Qué sigue, qué cambia y qué muere de
+> cada decisión de esta sección y de la §5: [`repaso_decisiones_sin_calc.md`](repaso_decisiones_sin_calc.md).
+
 - **D1. Enter y escáner — DECIDIDO (2026-09-29): dentro de LibreOffice, sin `keyboard`.**
   Lo propuso el usuario. Enter, escáner y teclas se capturan dentro de Calc con `XKeyHandler`,
   el mismo mecanismo que ya usa el autocompletado para Tab. Solo recibe teclas cuando Calc tiene

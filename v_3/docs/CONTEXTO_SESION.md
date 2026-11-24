@@ -1,7 +1,7 @@
 # Contexto para continuar la V3 (Rust + Tauri + NexFluid)
 
 Documento de traspaso entre sesiones de trabajo (con o sin Claude). **Léelo antes de seguir.**
-Última actualización: 2026-11-23, al cerrar la fase 0.
+Última actualización: 2026-11-24 (fase 0 cerrada; prueba de cámaras hecha).
 
 ## 1. La decisión de fondo
 
@@ -13,14 +13,16 @@ decidió dejar Calc** y rehacer la caja con:
   webview (WebKitGTK en Linux, WebView2 en Windows).
 - **React 19 + NexFluid** (la librería de interfaz de Chris, `gibran564/nexfluid`, MIT) para la
   interfaz.
-- **`camera_viewer` se queda en Python** como proceso hijo (como ya decía D22): son ~22 mil líneas
-  que funcionan. YOLO no se usa (solo `cameras/test_ia.py`, un experimento).
+- **Las cámaras se integran a la app, en Rust** (decisión del 2026-11-24, P3/P4): un solo programa
+  y una sola interfaz. Mientras tanto `camera_viewer` (Python) sigue en la v2. Ver
+  `camaras_v3.md`. YOLO no se usa (solo `cameras/test_ia.py`, un experimento).
+- **Solo Linux por ahora** (P5) y se quedan las impresoras actuales (ticket ESC/POS, NIIMBOT).
 
-Consecuencia: muchas decisiones D1–D23 eran sobre Calc/UNO/Basic y **ya no aplican** (dos
+Consecuencia (detalle en `repaso_decisiones_sin_calc.md`): muchas decisiones D1–D23 eran sobre Calc/UNO/Basic y **ya no aplican** (dos
 intérpretes, socket, botones en Basic, `consumir_tab`, foco de Calc, hook global de teclado con
 root, prehorneado). Las reglas de negocio **sí siguen**: roles y permisos (D21), reglas del cajón
 y del código de un solo uso (D21/D23), App de larga vida con camera_viewer como hijo (D22), log
-único por día. Falta repasar D1–D23 y marcar cuáles siguen (tarea pendiente, ver §7).
+único por día.
 
 La v2 (`~/sistema_ventas`, rama `v2`) **sigue en producción** en la PC de la caja hasta que la v3
 haga todo lo que hace la v2.
@@ -29,14 +31,13 @@ haga todo lo que hace la v2.
 
 | Fase | Qué | Estado |
 |---|---|---|
-| 0 | Prototipo: Tauri + NexFluid en la PC de la caja, medir | **Hecha** (falta medir en release, §7) |
+| 0 | Prototipo: Tauri + NexFluid en la PC de la caja, medir | **Hecha** (2026-11-24, también en release) |
 | 1 | Núcleo: Rust lee/escribe `ventas.db` con el MISMO esquema; reglas del carrito y cobro con pruebas contra la v2 | Siguiente |
 | 2 | Pantalla de venta completa (captura, carrito, cobro, VENTAS REALIZADAS), en paralelo con la v2 sobre una copia | |
 | 3 | Hardware: ticket, cajón (reglas D21/D23), etiquetas | |
 | 4 | Administración: usuarios, roles, turnos, botones | |
-| 5 | Cámaras: lanzar `camera_viewer` (Python) como hijo, "VER EN CÁMARAS" | |
-| 6 | Instaladores de Tauri (.deb/AppImage, .msi) | |
-| 7 (opcional) | Pasar las cámaras a Rust | |
+| 5 | Cámaras en Rust dentro de la app: embudo al DVR, vivo, grabaciones, "VER EN CÁMARAS" (ver `camaras_v3.md`) | Video probado (2026-11-24) |
+| 6 | Instaladores de Tauri (.deb) con sus dependencias (`gstreamer1.0-plugins-bad`, VA-API) | `.deb` probado |
 
 ## 3. Resultados de la fase 0 (PC de la caja: 4 núcleos, 7.6 GB, Intel HD 630, Zorin OS 17, Wayland)
 
@@ -44,6 +45,15 @@ haga todo lo que hace la v2.
 - Consulta a Rust (autocompletado): mediana **2 ms**.
 - Escáner: **16 ms/tecla** contra 80–150 ms de una persona: se distingue sin hook global.
 - WebKitGTK 2.50.4 funciona; tuvo varias diferencias con Chromium que se corrigieron en NexFluid.
+- **Release** (2026-11-24): compila en 5 min 22 s (2 núcleos, prioridad mínima); `.deb` de
+  **3.95 MB**; ejecutable de 13 MB; memoria ~406 MB (app 154 + motor web 205 + red 47) contra
+  ~337 MB de la v2 (LibreOffice 290 + Python 45, que además corre con `sudo`). Consulta a Rust 2 ms;
+  escáner 16 ms/tecla. La medición "tecla → pantalla" **no es válida**: compara la hora del evento
+  con `performance.now()`, que en WebKitGTK vienen de relojes distintos (dio −3 ms); corregirla
+  midiendo con un solo reloj si se necesita el número. El ejecutable lleva la ruta de la base de
+  esta PC (viola D9, se corrige en la fase 1).
+- **Video de las cámaras** (2026-11-24): las 4 cámaras en vivo se ven en la vista web con ~18 % de
+  un núcleo (la v2 gasta 15.5 %). Detalle y pendientes en `camaras_v3.md`.
 
 ## 4. El prototipo: `v_3/app/`
 
@@ -147,14 +157,19 @@ cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.11.tgz/$N.tgz/g" package.
 
 ## 7. Pendientes (en orden sugerido)
 
-1. Cerrar la fase 0: compilar en **release** (`npm run tauri build`, fuera de horario) y medir;
-   escribir la conclusión en `v_3/docs/`.
-2. Repasar D1–D23 de `docs/mapa_v2.md`: marcar cuáles siguen sin Calc.
+1. ~~Cerrar la fase 0~~ **Hecho (2026-11-24):** release medido (§3).
+2. ~~Repasar D1–D23~~ **Hecho (2026-11-24):** `docs/repaso_decisiones_sin_calc.md`. Dejó cinco
+   preguntas nuevas (P1–P5: botones configurables, NexSheets, canal con `camera_viewer`, Python
+   para las cámaras, impresoras desde Rust) y recuerda que el código de caja de la V2 (`7410`)
+   sigue público en GitHub.
 3. Hablar con Chris: PR de la rama `jesjack/fix/nexinput-nexselect-webkit`; platicar las
    propuestas y los puntos de diseño del reporte.
 4. Valores de la gota simétrica (`--nx-liquid-thin`, `--nx-liquid-stretch`): el usuario los iba
    a elegir con el depurador; anotarlos en el reporte.
 5. Script `empaquetar.sh` (§5).
-6. Decidir NexSheets contra tabla propia para el carrito (se usó tabla propia, no se evaluó NexSheets).
+6. Probar NexSheets en el prototipo (el usuario quiere verlo, P2) y compararlo con la tabla propia.
 7. Fase 1 (núcleo en Rust con el esquema de la v2).
 8. Más adelante (fase 2): corrector ortográfico del catálogo (ver `CLAUDE.md` de la raíz).
+9. **DVR:** ninguna prueba contra el DVR fuera del embudo; leer `camaras_v3.md` §1 antes de tocarlo.
+   La contraseña del DVR quedó visible en una sesión de trabajo (2026-11-24); el usuario no puede
+   cambiarla fácil (hay que conectarle monitor y ratón al DVR).
