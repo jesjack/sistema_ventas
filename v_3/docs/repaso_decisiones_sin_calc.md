@@ -121,8 +121,13 @@ de la app (no en la hoja) y la app abre las cámaras a esa hora.
   acciones van compiladas en el programa (Rust); lo configurable es qué botones aparecen, su
   etiqueta, su orden y quién los ve, eligiendo de la lista de acciones del programa. Una acción
   nueva requiere programarla y publicar una versión.
-- **P2. NexSheets o tabla propia — A EVALUAR:** el usuario quiere ver NexSheets. Prueba pendiente
-  en el prototipo (carrito o VENTAS REALIZADAS) para comparar.
+- **P2. NexSheets o tabla propia — DECIDIDO (2026-11-24): NexSheets** para el carrito, tras
+  probarlo en el prototipo. Como la tabla de la hoja de Calc en la v2: **solo lectura**, del tamaño
+  exacto del carrito (`extent={false}`), columnas con nombre (Producto, Precio, C., Subtotal) y
+  anchos ajustados al contenido (Producto ocupa lo que sobra y nunca recorta un nombre), subtotal
+  con fórmula, un solo total (el grande, fuera de la hoja) y barra de fórmulas visible. VENTAS
+  REALIZADAS: `NexDataView` solo como tabla (la gráfica no aportaba). El usuario quiere pulir
+  detalles en la fase 2. Errores de NexFluid encontrados en la prueba: lista en `CONTEXTO_SESION.md` §7.
 - **P3/P4. Cámaras — DECIDIDO: se integran a la app, en Rust, en la misma interfaz.** Sustituye a
   "camera_viewer como proceso hijo en Python" (D22) y al canal JSON. Prueba de video y diseño del
   embudo al DVR: [`camaras_v3.md`](camaras_v3.md). Mientras tanto, `camera_viewer` sigue en la v2.

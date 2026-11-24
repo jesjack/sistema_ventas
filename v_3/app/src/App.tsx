@@ -1,6 +1,8 @@
 import { useCallback, useEffect, type CSSProperties, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexInput, NexProvider, NexSelect } from '@nexfluid/react'
+import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexInput, NexProvider, NexSegmented, NexSelect } from '@nexfluid/react'
+import { NexDataView, NexSheets, type Workbook } from '@nexfluid/react/sheets'
+import { altoHojaCarrito, anchosCarrito, hojaDeVentas, libroDeCarrito, medidorDeTexto, type LineaVenta } from './hojas.ts'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
 import { agregarAlCarrito, dinero, leerNumero, totalDelCarrito, type FilaCarrito } from './carrito.ts'
 import { DetectorEscaner, type Escaneo } from './escaner.ts'
@@ -54,6 +56,42 @@ export default function App() {
   const [cantidad, setCantidad] = useState('1')
   const [sugerencias, setSugerencias] = useState<string[]>([])
   const [carrito, setCarrito] = useState<FilaCarrito[]>([])
+  // Prueba de NexSheets (P2): el carrito puede verse como tabla propia o como hoja editable.
+  const [vistaCarrito, setVistaCarrito] = useState<'tabla' | 'hoja'>('tabla')
+  // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
+  // ajustan al contenido y al ancho disponible (Producto ocupa lo que sobra: sin hueco a la derecha).
+  const refHoja = useRef<HTMLDivElement>(null)
+  // Medidas reales de la hoja, sin estimar: el ancho útil del área de la tabla (sin la columna de
+  // números de fila) y lo que ocupa todo lo que no es la tabla (barra de fórmulas, bordes).
+  const [marcoHoja, setMarcoHoja] = useState({ anchoUtil: 0, extraAlto: 0 })
+  useEffect(() => {
+    const nodo = refHoja.current
+    if (!nodo) return
+    const medir = () => {
+      const editor = nodo.querySelector<HTMLElement>('.nx-sheets')
+      const vista = nodo.querySelector<HTMLElement>('.nx-sheet__viewport')
+      const esquina = nodo.querySelector<HTMLElement>('.nx-sheet__corner')
+      if (!editor || !vista) return
+      // Medido por FUERA de la zona con scroll (offsetWidth/offsetHeight incluyen sus barras): si
+      // se midiera por dentro, una barra que aparece cambia la medida, el ajuste la vuelve a
+      // provocar y las dos barras se sostienen solas.
+      const anchoUtil = vista.offsetWidth - (esquina?.offsetWidth ?? 0)
+      const extraAlto = editor.offsetHeight - vista.offsetHeight
+      setMarcoHoja((m) => (m.anchoUtil === anchoUtil && m.extraAlto === extraAlto ? m : { anchoUtil, extraAlto }))
+    }
+    medir()
+    const observador = new ResizeObserver(medir)
+    observador.observe(nodo)
+    return () => observador.disconnect()
+  }, [vistaCarrito])
+  const libroCarrito = useMemo<Workbook>(() => {
+    const nodo = refHoja.current
+    if (!nodo || !marcoHoja.anchoUtil) return libroDeCarrito(carrito)
+    return libroDeCarrito(carrito, anchosCarrito(carrito, marcoHoja.anchoUtil, medidorDeTexto(nodo)))
+  }, [carrito, marcoHoja.anchoUtil])
+  const [fechas, setFechas] = useState<string[]>([])
+  const [fecha, setFecha] = useState<string | null>(null)
+  const [lineasVenta, setLineasVenta] = useState<LineaVenta[]>([])
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [cobro, setCobro] = useState<string | null>(null)
 
@@ -72,6 +110,24 @@ export default function App() {
   const opciones = useMemo(() => sugerencias.map((s) => ({ value: s, label: s })), [sugerencias])
 
   useEffect(() => (depurarGota ? iniciarDepuracionGota() : undefined), [depurarGota])
+
+  // VENTAS REALIZADAS (solo lectura sobre la copia de la base).
+  useEffect(() => {
+    invoke<string[]>('fechas_con_ventas').then(
+      (lista) => {
+        setFechas(lista)
+        setFecha((f) => f ?? lista[0] ?? null)
+      },
+      (e) => setAviso({ tono: 'danger', texto: `No se pudieron leer las fechas de venta: ${e}` }),
+    )
+  }, [])
+  useEffect(() => {
+    if (!fecha) return
+    invoke<LineaVenta[]>('ventas_del_dia', { fecha }).then(setLineasVenta, (e) =>
+      setAviso({ tono: 'danger', texto: `No se pudieron leer las ventas: ${e}` }),
+    )
+  }, [fecha])
+  const hojaVentas = useMemo(() => hojaDeVentas(lineasVenta), [lineasVenta])
 
   useEffect(() => {
     invoke<InfoBase>('info_base').then(setInfo, (e) => setErrorBase(String(e)))
@@ -314,46 +370,73 @@ export default function App() {
             </p>
           )}
 
-          <table className="caja__carrito">
-            <thead>
-              <tr>
-                <th>Producto</th>
-                <th className="num">Precio</th>
-                <th className="num">Cantidad</th>
-                <th className="num">Subtotal</th>
-                <th aria-label="Acciones" />
-              </tr>
-            </thead>
-            <tbody>
-              {carrito.length === 0 ? (
+          <div className="caja__vista">
+            <NexSegmented
+              aria-label="Vista del carrito"
+              value={vistaCarrito}
+              onValueChange={(v) => setVistaCarrito(v as 'tabla' | 'hoja')}
+              options={[
+                { value: 'tabla', label: 'Tabla propia' },
+                { value: 'hoja', label: 'NexSheets' },
+              ]}
+            />
+          </div>
+          {vistaCarrito === 'tabla' ? (
+            <table className="caja__carrito">
+              <thead>
                 <tr>
-                  <td colSpan={5} className="caja__vacio">
-                    El carrito está vacío
-                  </td>
+                  <th>Producto</th>
+                  <th className="num">Precio</th>
+                  <th className="num">Cantidad</th>
+                  <th className="num">Subtotal</th>
+                  <th aria-label="Acciones" />
                 </tr>
-              ) : (
-                carrito.map((f, i) => (
-                  <tr key={`${f.producto}|${f.precio}`}>
-                    <td>{f.producto}</td>
-                    <td className="num">{dinero(f.precio)}</td>
-                    <td className="num">{f.cantidad}</td>
-                    <td className="num">{dinero(f.subtotal)}</td>
-                    <td className="num">
-                      <NexButton
-                        appearance="ghost"
-                        tone="danger"
-                        density="compact"
-                        tabIndex={-1}
-                        onClick={() => setCarrito((c) => c.filter((_, j) => j !== i))}
-                      >
-                        Quitar
-                      </NexButton>
+              </thead>
+              <tbody>
+                {carrito.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="caja__vacio">
+                      El carrito está vacío
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  carrito.map((f, i) => (
+                    <tr key={`${f.producto}|${f.precio}`}>
+                      <td>{f.producto}</td>
+                      <td className="num">{dinero(f.precio)}</td>
+                      <td className="num">{f.cantidad}</td>
+                      <td className="num">{dinero(f.subtotal)}</td>
+                      <td className="num">
+                        <NexButton
+                          appearance="ghost"
+                          tone="danger"
+                          density="compact"
+                          tabIndex={-1}
+                          onClick={() => setCarrito((c) => c.filter((_, j) => j !== i))}
+                        >
+                          Quitar
+                        </NexButton>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <div ref={refHoja}>
+            <NexSheets
+              className="caja__hoja"
+              workbook={libroCarrito}
+              readOnly
+              extent={false}
+              height={altoHojaCarrito(carrito, marcoHoja.extraAlto)}
+              label="Carrito"
+              tabs={false}
+              statusBar={false}
+              toolbar={false}
+            />
+            </div>
+          )}
 
           <div className="caja__total">
             <span>Total</span>
@@ -380,6 +463,27 @@ export default function App() {
               </p>
             </div>
           )}
+
+          <section className="caja__ventas" aria-label="Ventas realizadas">
+            <div className="caja__ventas-cabecera">
+              <h2>Ventas realizadas</h2>
+              <NexSelect
+                label="Día"
+                hideLabel
+                value={fecha}
+                onValueChange={setFecha}
+                options={fechas.map((f) => ({ value: f, label: f }))}
+                placeholder="Sin ventas"
+              />
+            </div>
+            {lineasVenta.length ? (
+              <>
+                <NexDataView sheet={hojaVentas} title={`Ventas del ${fecha}`} controls={false} view="table" />
+              </>
+            ) : (
+              <p className="caja__nota">No hay ventas ese día.</p>
+            )}
+          </section>
         </section>
 
         <aside className="caja__medicion" aria-label="Mediciones">

@@ -167,7 +167,18 @@ cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.11.tgz/$N.tgz/g" package.
 4. Valores de la gota simétrica (`--nx-liquid-thin`, `--nx-liquid-stretch`): el usuario los iba
    a elegir con el depurador; anotarlos en el reporte.
 5. Script `empaquetar.sh` (§5).
-6. Probar NexSheets en el prototipo (el usuario quiere verlo, P2) y compararlo con la tabla propia.
+6. ~~Probar NexSheets~~ **Hecho y decidido (2026-11-24): NexSheets** para el carrito (detalle en
+   `repaso_decisiones_sin_calc.md`, P2). En el prototipo: selector "Tabla propia | NexSheets" sobre
+   el carrito y VENTAS REALIZADAS debajo (`src/hojas.ts`; Rust: `fechas_con_ventas`,
+   `ventas_del_dia`). Errores de NexFluid encontrados, **por corregir en la rama de errores**:
+   barras de scroll nativas visibles en WebKit pese a los carriles de NexScroll; el arrastre de su
+   barra avanza una casilla y se traba; el borde de foco de la hoja va dentro de la zona con
+   scroll (lo tapan los encabezados y lo recortan las esquinas); el borde de foco de la barra de
+   fórmulas (1.5 px) sale desigual arriba y abajo. Propuestas: paleta de gráficas de solo 3
+   colores (en editorial-light dos son naranjas casi iguales) y opción para que el encabezado de
+   columna muestre solo el nombre, sin la letra. Trampas de la caja: medir la hoja POR FUERA de la
+   zona con scroll (si no, las barras se retroalimentan) y resolver la fuente a px antes de medir
+   con `<canvas>` (los tokens vienen en `rem`).
 7. Fase 1 (núcleo en Rust con el esquema de la v2).
 8. Más adelante (fase 2): corrector ortográfico del catálogo (ver `CLAUDE.md` de la raíz).
 9. **DVR:** ninguna prueba contra el DVR fuera del embudo; leer `camaras_v3.md` §1 antes de tocarlo.

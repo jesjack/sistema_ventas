@@ -17,6 +17,18 @@ struct ProductoConPrecio {
   precio: f64,
 }
 
+/// Una línea de VENTAS REALIZADAS: el producto vendido con los datos de su venta.
+#[derive(Serialize)]
+struct LineaVenta {
+  venta_id: i64,
+  hora: String,
+  producto: String,
+  precio: f64,
+  cantidad: i64,
+  subtotal: f64,
+  total_venta: f64,
+}
+
 #[derive(Serialize)]
 struct InfoBase {
   ruta: String,
@@ -85,6 +97,45 @@ fn buscar_codigo(base: tauri::State<'_, Base>, codigo: String) -> Result<Option<
     .map_err(texto_error)
 }
 
+/// Los últimos días que tienen ventas (más reciente primero).
+#[tauri::command]
+fn fechas_con_ventas(base: tauri::State<'_, Base>) -> Result<Vec<String>, String> {
+  let conn = base.0.lock().map_err(|e| e.to_string())?;
+  let mut consulta = conn
+    .prepare_cached("SELECT DISTINCT fecha FROM ventas ORDER BY fecha DESC LIMIT 30")
+    .map_err(texto_error)?;
+  let filas = consulta.query_map([], |fila| fila.get(0)).map_err(texto_error)?;
+  filas.collect::<Result<Vec<String>, _>>().map_err(texto_error)
+}
+
+/// Lo vendido un día (`AAAA-MM-DD`), en orden de venta.
+#[tauri::command]
+fn ventas_del_dia(base: tauri::State<'_, Base>, fecha: String) -> Result<Vec<LineaVenta>, String> {
+  let conn = base.0.lock().map_err(|e| e.to_string())?;
+  let mut consulta = conn
+    .prepare_cached(
+      "SELECT v.id, v.hora, i.producto, i.precio, i.cantidad, i.subtotal, v.total
+       FROM ventas v JOIN venta_items i ON i.venta_id = v.id
+       WHERE v.fecha = ?1
+       ORDER BY v.hora, v.id, i.id",
+    )
+    .map_err(texto_error)?;
+  let filas = consulta
+    .query_map(params![fecha], |f| {
+      Ok(LineaVenta {
+        venta_id: f.get(0)?,
+        hora: f.get(1)?,
+        producto: f.get(2)?,
+        precio: f.get(3)?,
+        cantidad: f.get(4)?,
+        subtotal: f.get(5)?,
+        total_venta: f.get(6)?,
+      })
+    })
+    .map_err(texto_error)?;
+  filas.collect::<Result<Vec<_>, _>>().map_err(texto_error)
+}
+
 #[tauri::command]
 fn info_base(base: tauri::State<'_, Base>) -> Result<InfoBase, String> {
   let conn = base.0.lock().map_err(|e| e.to_string())?;
@@ -103,7 +154,7 @@ pub fn run() {
   let conn = abrir_base().unwrap_or_else(|e| panic!("{e}"));
   tauri::Builder::default()
     .manage(Base(Mutex::new(conn)))
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

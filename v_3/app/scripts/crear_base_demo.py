@@ -29,6 +29,14 @@ CREATE TABLE codigos_barras_registrados (
     creado_en     TEXT DEFAULT CURRENT_TIMESTAMP,
     sesion_id INTEGER, actualizado_en TEXT, actualizado_sesion_id INTEGER
 );
+CREATE TABLE ventas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, hora TEXT NOT NULL,
+    total REAL NOT NULL, recibido REAL NOT NULL, cambio REAL NOT NULL, sesion_id INTEGER
+);
+CREATE TABLE venta_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, venta_id INTEGER NOT NULL REFERENCES ventas(id),
+    producto TEXT NOT NULL, precio REAL NOT NULL, cantidad INTEGER NOT NULL, subtotal REAL NOT NULL
+);
 """
 
 PRODUCTOS = [
@@ -46,6 +54,14 @@ CODIGOS = [
 ]
 
 
+# (fecha, hora, recibido, [(producto, precio, cantidad)]): ventas inventadas para VENTAS REALIZADAS.
+VENTAS = [
+    ("2026-11-20", "10:15:02", 200.0, [("blusa basica", 150.0, 1)]),
+    ("2026-11-20", "12:40:51", 500.0, [("pantalon de mezclilla", 350.0, 1), ("calcetas", 40.0, 2)]),
+    ("2026-11-21", "17:05:33", 200.0, [("faja", 200.0, 1)]),
+]
+
+
 def main() -> None:
     if DESTINO.exists() and "--forzar" not in sys.argv:
         print(f"Ya existe {DESTINO}; usa --forzar para reemplazarla.")
@@ -60,9 +76,19 @@ def main() -> None:
         "INSERT INTO codigos_barras_registrados (codigo_barras, producto_id, precio_venta) VALUES (?, ?, ?)",
         [(c, ids[p], precio) for c, p, precio in CODIGOS],
     )
+    for fecha, hora, recibido, items in VENTAS:
+        total = sum(p * c for _, p, c in items)
+        venta = con.execute(
+            "INSERT INTO ventas (fecha, hora, total, recibido, cambio) VALUES (?, ?, ?, ?, ?)",
+            (fecha, hora, total, recibido, recibido - total),
+        ).lastrowid
+        con.executemany(
+            "INSERT INTO venta_items (venta_id, producto, precio, cantidad, subtotal) VALUES (?, ?, ?, ?, ?)",
+            [(venta, prod, p, c, p * c) for prod, p, c in items],
+        )
     con.commit()
     con.close()
-    print(f"Base de prueba creada en {DESTINO} ({len(PRODUCTOS)} productos, {len(CODIGOS)} códigos).")
+    print(f"Base de prueba creada en {DESTINO} ({len(PRODUCTOS)} productos, {len(CODIGOS)} códigos, {len(VENTAS)} ventas).")
 
 
 if __name__ == "__main__":
