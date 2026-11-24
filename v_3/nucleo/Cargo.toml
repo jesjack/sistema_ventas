@@ -1,0 +1,17 @@
+[package]
+name = "nucleo"
+version = "0.1.0"
+edition = "2024"
+description = "Núcleo de la caja V3: reglas de negocio y acceso a ventas.db, sin interfaz (D18)."
+publish = false
+
+[dependencies]
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+thiserror = "2.0.21"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+# float_roundtrip: sin ella serde_json puede leer un decimal con error en el último dígito, y las
+# comparaciones exactas contra la v2 fallarían por el lector, no por el núcleo.
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
