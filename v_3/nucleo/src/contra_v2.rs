@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::base::Base;
 use crate::carrito::{Carrito, FilaCarrito};
+use crate::catalogo::{ErrorCatalogo, formatear_nombre};
 use crate::cobro::leer_monto;
 use crate::corte::PiezaCambio;
 use crate::ventas::{FilaVentas, Momento};
@@ -139,4 +140,91 @@ fn ventas_eventos_y_corte_como_la_v2() {
     for (tabla, esperado) in ventas["tablas"].as_object().unwrap() {
         assert_eq!(&volcar(&base, tabla), esperado, "tabla {tabla}");
     }
+}
+
+#[test]
+fn nombres_y_busqueda_como_la_v2() {
+    let casos = casos();
+    for caso in casos["textos"]["formatear_nombre"].as_array().unwrap() {
+        let texto = caso["texto"].as_str().unwrap();
+        assert_eq!(formatear_nombre(texto), caso["formateado"].as_str().unwrap(), "texto {texto:?}");
+    }
+    // El catálogo de la v2 en el mismo orden (ids 1..n); buscar_productos ordena alfabéticamente,
+    // así que se compara el CONJUNTO de ids que coinciden, con `coincide`.
+    let nombres = ["blusa basica", "Blusa Básica de Licra", "blusa de rayas", "mayón de faja", "mayon deportivo",
+        "pantalón de mezclilla", "calcetas y medias", "chamarra", "short", "faja", "vestido corto"];
+    for caso in casos["textos"]["buscar"].as_array().unwrap() {
+        let texto = caso["texto"].as_str().unwrap();
+        let obtenidos: Vec<i64> = nombres.iter().enumerate().filter(|(_, n)| crate::catalogo::coincide(n, texto)).map(|(i, _)| i as i64 + 1).collect();
+        let esperados: Vec<i64> = caso["ids"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap()).collect();
+        assert_eq!(obtenidos, esperados, "búsqueda {texto:?}");
+    }
+}
+
+/// Un error de la v3 en el mismo vocabulario que el generador. La v2 da un IntegrityError suelto al
+/// REGISTRAR un código repetido y CodigoDuplicado al EDITARLO: en la v3 los dos son CodigoDuplicado.
+fn error_v2(e: &ErrorCatalogo, op: &str) -> &'static str {
+    match e {
+        ErrorCatalogo::ProductoVacio | ErrorCatalogo::CodigoVacio => "vacio",
+        ErrorCatalogo::ProductoDuplicado => "producto_duplicado",
+        ErrorCatalogo::CodigoDuplicado if op == "registrar_codigo" => "integridad",
+        ErrorCatalogo::CodigoDuplicado => "codigo_duplicado",
+        ErrorCatalogo::Base(_) => "base",
+    }
+}
+
+#[test]
+fn catalogo_y_codigos_como_la_v2() {
+    let casos = casos();
+    let mut base = base_v2();
+    for paso in casos["catalogo"]["pasos"].as_array().unwrap() {
+        let op = paso["op"].as_str().unwrap();
+        let a = &paso["args"];
+        let texto = |i: usize| a[i].as_str().unwrap().to_string();
+        let resultado: Result<Value, ErrorCatalogo> = match op {
+            "agregar_producto" => base.agregar_producto(&texto(0), None).map(Value::from),
+            "editar_producto" => base.editar_producto(a[0].as_i64().unwrap(), &texto(1), None).map(Value::from),
+            "registrar_codigo" => base.registrar_codigo(&texto(0), a[1].as_i64().unwrap(), numero(&a[2]), None).map(Value::from),
+            "actualizar_codigo" => base.actualizar_codigo(a[0].as_i64().unwrap(), &texto(1), a[2].as_i64().unwrap(), numero(&a[3]), None).map(Value::from),
+            "obtener_codigo" => Ok(base.buscar_codigo(&texto(0)).unwrap().map_or(Value::Null, |c| json!([c.producto_id, c.producto, c.precio]))),
+            "listar_codigos" => Ok(json!(base.codigos(&texto(0)).unwrap().iter()
+                .map(|c| json!([c.id, c.codigo, c.producto_id, c.producto, c.precio])).collect::<Vec<_>>())),
+            "listar_productos" => Ok(json!(base.productos().unwrap().iter().map(|p| json!([p.id, p.nombre])).collect::<Vec<_>>())),
+            otra => panic!("operación desconocida {otra}"),
+        };
+        match (resultado, paso.get("error")) {
+            (Ok(v), None) => assert_eq!(&v, &paso["resultado"], "{op} {a}"),
+            (Err(e), Some(esperado)) => assert_eq!(error_v2(&e, op), esperado.as_str().unwrap(), "{op} {a}"),
+            (r, _) => panic!("{op} {a}: la v3 dio {r:?} y la v2 {paso}"),
+        }
+    }
+    let tablas = &casos["catalogo"]["tablas"];
+    let consulta = |sql: &str| -> Value {
+        let mut c = base.con.prepare(sql).unwrap();
+        let n = c.column_count();
+        json!(c.query_map([], |f| Ok((0..n).map(|i| match f.get_ref(i).unwrap() {
+            ValueRef::Null => Value::Null,
+            ValueRef::Integer(x) => json!(x),
+            ValueRef::Real(x) => json!(x),
+            ValueRef::Text(t) => json!(String::from_utf8_lossy(t)),
+            ValueRef::Blob(_) => Value::Null,
+        }).collect::<Vec<_>>())).unwrap().map(Result::unwrap).collect::<Vec<_>>())
+    };
+    assert_eq!(consulta("SELECT id, producto, sesion_id, actualizado_sesion_id FROM catalogo_autocompletado ORDER BY id"), tablas["catalogo_autocompletado"]);
+    assert_eq!(consulta("SELECT id, codigo_barras, producto_id, precio_venta, sesion_id, actualizado_sesion_id FROM codigos_barras_registrados ORDER BY id"), tablas["codigos_barras_registrados"]);
+}
+
+/// La base REAL (una copia) es compatible y se puede leer. Solo a petición, porque necesita la
+/// base: `CAJA_DB=../app/datos/ventas_copia.db cargo test -- --ignored`. No escribe nada.
+#[test]
+#[ignore]
+fn la_base_real_es_compatible() {
+    let ruta = std::env::var("CAJA_DB").expect("CAJA_DB con la ruta de una COPIA de ventas.db");
+    let base = Base::abrir_solo_lectura(&ruta).unwrap();
+    base.verificar_esquema().unwrap();
+    let productos = base.productos().unwrap();
+    let dias = base.dias_con_ventas(30).unwrap();
+    let filas = base.ventas_del_dia(&dias[0], false).unwrap();
+    println!("{} productos, {} días con ventas; el {}: {} filas", productos.len(), dias.len(), dias[0], filas.len());
+    assert!(!productos.is_empty() && !filas.is_empty());
 }

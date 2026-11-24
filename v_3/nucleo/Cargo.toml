@@ -10,6 +10,7 @@ rusqlite = { version = "0.43.0", features = ["bundled"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 thiserror = "2.0.21"
 serde = { version = "1.0", features = ["derive"] }
+unicode-normalization = "0.1.26"
 
 [dev-dependencies]
 # float_roundtrip: sin ella serde_json puede leer un decimal con error en el último dígito, y las

@@ -658,5 +658,551 @@
     ]
    ]
   }
+ },
+ "textos": {
+  "formatear_nombre": [
+   {
+    "texto": "blusa basica",
+    "formateado": "Blusa Basica"
+   },
+   {
+    "texto": "Blusa Básica de Licra",
+    "formateado": "Blusa Básica de Licra"
+   },
+   {
+    "texto": "blusa de rayas",
+    "formateado": "Blusa de Rayas"
+   },
+   {
+    "texto": "mayón de faja",
+    "formateado": "Mayón de Faja"
+   },
+   {
+    "texto": "mayon deportivo",
+    "formateado": "Mayon Deportivo"
+   },
+   {
+    "texto": "pantalón de mezclilla",
+    "formateado": "Pantalón de Mezclilla"
+   },
+   {
+    "texto": "calcetas y medias",
+    "formateado": "Calcetas y Medias"
+   },
+   {
+    "texto": "chamarra",
+    "formateado": "Chamarra"
+   },
+   {
+    "texto": "short",
+    "formateado": "Short"
+   },
+   {
+    "texto": "faja",
+    "formateado": "Faja"
+   },
+   {
+    "texto": "vestido corto",
+    "formateado": "Vestido Corto"
+   },
+   {
+    "texto": "  mayon   de faja ",
+    "formateado": "Mayon de Faja"
+   },
+   {
+    "texto": "LA BLUSA DEL PUEBLO",
+    "formateado": "la Blusa del Pueblo"
+   },
+   {
+    "texto": "ñandú",
+    "formateado": "Ñandú"
+   },
+   {
+    "texto": "",
+    "formateado": ""
+   }
+  ],
+  "buscar": [
+   {
+    "texto": "bb",
+    "ids": [
+     1,
+     2
+    ]
+   },
+   {
+    "texto": "bdl",
+    "ids": []
+   },
+   {
+    "texto": "b b",
+    "ids": [
+     1,
+     2
+    ]
+   },
+   {
+    "texto": "bbl",
+    "ids": [
+     2
+    ]
+   },
+   {
+    "texto": "faja",
+    "ids": [
+     4,
+     10
+    ]
+   },
+   {
+    "texto": "Faja",
+    "ids": [
+     4,
+     10
+    ]
+   },
+   {
+    "texto": "mayon",
+    "ids": [
+     4,
+     5
+    ]
+   },
+   {
+    "texto": "mayón",
+    "ids": [
+     4,
+     5
+    ]
+   },
+   {
+    "texto": "pdm",
+    "ids": []
+   },
+   {
+    "texto": "cym",
+    "ids": []
+   },
+   {
+    "texto": "c y m",
+    "ids": []
+   },
+   {
+    "texto": "",
+    "ids": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   },
+   {
+    "texto": "  ",
+    "ids": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   },
+   {
+    "texto": "xyz",
+    "ids": []
+   },
+   {
+    "texto": "ón",
+    "ids": [
+     4,
+     5,
+     6
+    ]
+   },
+   {
+    "texto": "dep",
+    "ids": [
+     5
+    ]
+   }
+  ]
+ },
+ "catalogo": {
+  "pasos": [
+   {
+    "op": "agregar_producto",
+    "args": [
+     "Blusa Básica"
+    ],
+    "resultado": 1
+   },
+   {
+    "op": "agregar_producto",
+    "args": [
+     "  faja  "
+    ],
+    "resultado": 2
+   },
+   {
+    "op": "agregar_producto",
+    "args": [
+     "chamarra"
+    ],
+    "resultado": 3
+   },
+   {
+    "op": "agregar_producto",
+    "args": [
+     "BLUSA BÁSICA"
+    ],
+    "error": "producto_duplicado"
+   },
+   {
+    "op": "agregar_producto",
+    "args": [
+     ""
+    ],
+    "error": "vacio"
+   },
+   {
+    "op": "agregar_producto",
+    "args": [
+     "Faja"
+    ],
+    "error": "producto_duplicado"
+   },
+   {
+    "op": "editar_producto",
+    "args": [
+     3,
+     "  Chamarra Larga "
+    ],
+    "resultado": true
+   },
+   {
+    "op": "editar_producto",
+    "args": [
+     3,
+     "FAJA"
+    ],
+    "error": "producto_duplicado"
+   },
+   {
+    "op": "editar_producto",
+    "args": [
+     99,
+     "nada"
+    ],
+    "resultado": false
+   },
+   {
+    "op": "registrar_codigo",
+    "args": [
+     " 7501000000011 ",
+     1,
+     150
+    ],
+    "resultado": 1
+   },
+   {
+    "op": "registrar_codigo",
+    "args": [
+     "mayfaj",
+     2,
+     200.5
+    ],
+    "resultado": 2
+   },
+   {
+    "op": "registrar_codigo",
+    "args": [
+     "MAYFAJ",
+     2,
+     99
+    ],
+    "error": "integridad"
+   },
+   {
+    "op": "registrar_codigo",
+    "args": [
+     "",
+     1,
+     1
+    ],
+    "error": "vacio"
+   },
+   {
+    "op": "registrar_codigo",
+    "args": [
+     "c md",
+     3,
+     180
+    ],
+    "resultado": 3
+   },
+   {
+    "op": "obtener_codigo",
+    "args": [
+     "7501000000011"
+    ],
+    "resultado": [
+     1,
+     "blusa básica",
+     150.0
+    ]
+   },
+   {
+    "op": "obtener_codigo",
+    "args": [
+     " 7501000000011"
+    ],
+    "resultado": [
+     1,
+     "blusa básica",
+     150.0
+    ]
+   },
+   {
+    "op": "obtener_codigo",
+    "args": [
+     "MAYFAJ"
+    ],
+    "resultado": [
+     2,
+     "faja",
+     200.5
+    ]
+   },
+   {
+    "op": "obtener_codigo",
+    "args": [
+     "mayfaj"
+    ],
+    "resultado": [
+     2,
+     "faja",
+     200.5
+    ]
+   },
+   {
+    "op": "obtener_codigo",
+    "args": [
+     "C MD"
+    ],
+    "resultado": [
+     3,
+     "chamarra larga",
+     180.0
+    ]
+   },
+   {
+    "op": "obtener_codigo",
+    "args": [
+     "nada"
+    ],
+    "resultado": null
+   },
+   {
+    "op": "obtener_codigo",
+    "args": [
+     ""
+    ],
+    "resultado": null
+   },
+   {
+    "op": "actualizar_codigo",
+    "args": [
+     2,
+     "c md",
+     2,
+     210
+    ],
+    "error": "codigo_duplicado"
+   },
+   {
+    "op": "actualizar_codigo",
+    "args": [
+     2,
+     "mayfaj2",
+     2,
+     210
+    ],
+    "resultado": true
+   },
+   {
+    "op": "listar_codigos",
+    "args": [
+     ""
+    ],
+    "resultado": [
+     [
+      1,
+      "7501000000011",
+      1,
+      "blusa básica",
+      150.0
+     ],
+     [
+      3,
+      "c md",
+      3,
+      "chamarra larga",
+      180.0
+     ],
+     [
+      2,
+      "mayfaj2",
+      2,
+      "faja",
+      210.0
+     ]
+    ]
+   },
+   {
+    "op": "listar_codigos",
+    "args": [
+     "faja"
+    ],
+    "resultado": [
+     [
+      2,
+      "mayfaj2",
+      2,
+      "faja",
+      210.0
+     ]
+    ]
+   },
+   {
+    "op": "listar_codigos",
+    "args": [
+     "MAY"
+    ],
+    "resultado": [
+     [
+      2,
+      "mayfaj2",
+      2,
+      "faja",
+      210.0
+     ]
+    ]
+   },
+   {
+    "op": "listar_codigos",
+    "args": [
+     "básica"
+    ],
+    "resultado": [
+     [
+      1,
+      "7501000000011",
+      1,
+      "blusa básica",
+      150.0
+     ]
+    ]
+   },
+   {
+    "op": "listar_codigos",
+    "args": [
+     "750"
+    ],
+    "resultado": [
+     [
+      1,
+      "7501000000011",
+      1,
+      "blusa básica",
+      150.0
+     ]
+    ]
+   },
+   {
+    "op": "listar_codigos",
+    "args": [
+     "nada"
+    ],
+    "resultado": []
+   },
+   {
+    "op": "listar_productos",
+    "args": [],
+    "resultado": [
+     [
+      1,
+      "blusa básica"
+     ],
+     [
+      3,
+      "chamarra larga"
+     ],
+     [
+      2,
+      "faja"
+     ]
+    ]
+   }
+  ],
+  "tablas": {
+   "catalogo_autocompletado": [
+    [
+     1,
+     "blusa básica",
+     null,
+     null
+    ],
+    [
+     2,
+     "faja",
+     null,
+     null
+    ],
+    [
+     3,
+     "chamarra larga",
+     null,
+     null
+    ]
+   ],
+   "codigos_barras_registrados": [
+    [
+     1,
+     "7501000000011",
+     1,
+     150.0,
+     null,
+     null
+    ],
+    [
+     2,
+     "mayfaj2",
+     2,
+     210.0,
+     null,
+     null
+    ],
+    [
+     3,
+     "c md",
+     3,
+     180.0,
+     null,
+     null
+    ]
+   ]
+  }
  }
 }

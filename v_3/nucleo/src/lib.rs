@@ -10,6 +10,7 @@
 
 pub mod base;
 pub mod carrito;
+pub mod catalogo;
 pub mod cobro;
 pub mod corte;
 pub mod ventas;
@@ -19,5 +20,6 @@ mod contra_v2;
 
 pub use base::{Base, ErrorBase};
 pub use carrito::{Carrito, FilaCarrito};
+pub use catalogo::{CodigoBarras, ErrorCatalogo, Producto};
 pub use cobro::{Cobro, ErrorCobro, leer_monto};
 pub use ventas::{FilaVentas, Momento};

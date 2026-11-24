@@ -41,6 +41,11 @@ impl Base {
         Self::configurar(Connection::open(ruta)?)
     }
 
+    /// Abre la base sin poder escribir en ella (para leer la base real sin riesgo).
+    pub fn abrir_solo_lectura(ruta: impl AsRef<Path>) -> Result<Self, ErrorBase> {
+        Self::configurar(Connection::open_with_flags(ruta, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?)
+    }
+
     /// Una base en memoria (pruebas): sin tablas; se crean con `ejecutar_sql`.
     pub fn en_memoria() -> Result<Self, ErrorBase> {
         Self::configurar(Connection::open_in_memory()?)
