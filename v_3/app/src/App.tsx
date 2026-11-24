@@ -1,5 +1,6 @@
 import { useCallback, useEffect, type CSSProperties, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexInput, NexProvider, NexSegmented, NexSelect } from '@nexfluid/react'
 import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
 import { altoHojaCarrito, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
@@ -22,6 +23,23 @@ interface InfoBase {
 interface Producto {
   id: number
   nombre: string
+}
+
+/** Estado del código de autorización (núcleo: `EstadoCodigo`). */
+type EstadoCodigo = 'SinCodigo' | 'Disponible' | { Usado: { usado_en: string; usado_sesion_id: number | null } }
+
+/** Lo que devuelve `estado_caja` (D21, D23). */
+interface EstadoCaja {
+  permisos: string[]
+  como_abrir: 'permiso' | 'ventana_diaria' | 'codigo'
+  codigo: EstadoCodigo
+  puede_poner_codigo: boolean
+}
+
+const TEXTO_AUTORIZACION: Record<string, string> = {
+  permiso: 'con tu permiso sin límite',
+  ventana_diaria: 'para contar el cambio (una vez al día, antes de la primera venta)',
+  codigo: 'con el código autorizado',
 }
 
 /** Venta registrada por el comando `cobrar`. */
@@ -89,6 +107,13 @@ export default function App() {
   const [lineasVenta, setLineasVenta] = useState<LineaVenta[]>([])
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [cobro, setCobro] = useState<string | null>(null)
+  // Apertura del cajón y código de autorización (D21, D23).
+  const [estadoCaja, setEstadoCaja] = useState<EstadoCaja | null>(null)
+  const [pideCodigo, setPideCodigo] = useState<string | null>(null)
+  const [codigoNuevo, setCodigoNuevo] = useState<string | null>(null)
+  const [turnoPerdido, setTurnoPerdido] = useState(false)
+  const refCodigo = useRef<HTMLInputElement>(null)
+  const refCodigoNuevo = useRef<HTMLInputElement>(null)
 
   const [info, setInfo] = useState<InfoBase | null>(null)
   const [errorBase, setErrorBase] = useState<string | null>(null)
@@ -170,6 +195,58 @@ export default function App() {
 
   const enfocarProducto = () => requestAnimationFrame(() => refProducto.current?.focus())
 
+  const leerEstadoCaja = useCallback(() => {
+    invoke<EstadoCaja>('estado_caja').then(
+      (e) => {
+        setEstadoCaja(e)
+        // D21/D23: si puede ponerlo y no hay código (o el último ya se usó), se le pide uno nuevo.
+        if (e.puede_poner_codigo && e.codigo !== 'Disponible') setCodigoNuevo((c) => c ?? '')
+      },
+      () => setEstadoCaja(null),
+    )
+  }, [])
+  useEffect(() => leerEstadoCaja(), [leerEstadoCaja])
+
+  // D8: otra caja tomó el turno. Rust cierra la sesión y la app en unos segundos.
+  useEffect(() => {
+    const quitar = listen('turno-perdido', () => setTurnoPerdido(true))
+    return () => void quitar.then((f) => f())
+  }, [])
+
+  // Abrir caja (y Intro con el carrito vacío, D23). Fase 3: el cajón real; hoy, simulado.
+  const abrirCaja = async (codigo?: string) => {
+    try {
+      const autorizacion = await invoke<string>('abrir_caja', { codigo: codigo ?? null })
+      setPideCodigo(null)
+      setAviso({ tono: 'success', texto: `Caja abierta ${TEXTO_AUTORIZACION[autorizacion] ?? autorizacion} (cajón simulado).` })
+      setRecargaVentas((n) => n + 1)
+      leerEstadoCaja()
+      enfocarProducto()
+    } catch (e) {
+      if (String(e) === 'PIDE_CODIGO') {
+        setPideCodigo('')
+        requestAnimationFrame(() => refCodigo.current?.focus())
+        return
+      }
+      setAviso({ tono: 'warning', texto: String(e) })
+      setPideCodigo(null)
+      leerEstadoCaja()
+      enfocarProducto()
+    }
+  }
+
+  const guardarCodigoNuevo = async () => {
+    try {
+      await invoke('poner_codigo', { codigo: codigoNuevo ?? '' })
+      setCodigoNuevo(null)
+      setAviso({ tono: 'success', texto: 'Código de autorización guardado. Sirve para una sola apertura.' })
+      leerEstadoCaja()
+      enfocarProducto()
+    } catch (e) {
+      setAviso({ tono: 'warning', texto: String(e) })
+    }
+  }
+
   const limpiarEntrada = () => {
     setProducto('')
     setPrecio('')
@@ -229,6 +306,7 @@ export default function App() {
       setCarrito([])
       setCobro(null)
       setRecargaVentas((n) => n + 1)
+      leerEstadoCaja()
       enfocarProducto()
     } catch (e) {
       setAviso({ tono: 'warning', texto: String(e) })
@@ -285,6 +363,7 @@ export default function App() {
       e.preventDefault()
       if (producto.trim()) refPrecio.current?.focus()
       else if (carrito.length) abrirCobro()
+      else void abrirCaja() // D23: Intro con el carrito vacío sigue las reglas del botón Abrir caja
     }
   }
 
@@ -391,6 +470,9 @@ export default function App() {
           )}
 
           <div className="caja__vista">
+            <NexButton appearance="outlined" density="compact" onClick={() => void abrirCaja()} disabled={turnoPerdido}>
+              Abrir caja
+            </NexButton>
             <NexSegmented
               aria-label="Vista del carrito"
               value={vistaCarrito}
@@ -464,6 +546,66 @@ export default function App() {
             <span>Total</span>
             <strong>{dinero(total)}</strong>
           </div>
+
+          {turnoPerdido && (
+            <p className="caja__aviso caja__aviso--danger" role="alert">
+              Otra caja tomó el turno. Esta caja se cierra en unos segundos (las ventas ya registradas quedan guardadas).
+            </p>
+          )}
+
+          {pideCodigo !== null && (
+            <div className="caja__cobro" role="dialog" aria-label="Código de autorización">
+              <p className="caja__cobro-total">Abrir caja con código</p>
+              <NexInput
+                ref={refCodigo}
+                label="Código de autorización"
+                description="Lo da quien tiene permiso para abrir la caja. Sirve una sola vez · Escape cancela"
+                type="password"
+                autoComplete="off"
+                value={pideCodigo}
+                onChange={(e) => setPideCodigo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void abrirCaja(pideCodigo)
+                  } else if (e.key === 'Escape') {
+                    setPideCodigo(null)
+                    enfocarProducto()
+                  }
+                }}
+              />
+            </div>
+          )}
+
+          {codigoNuevo !== null && estadoCaja?.puede_poner_codigo && (
+            <div className="caja__cobro" role="dialog" aria-label="Código nuevo">
+              <p className="caja__cobro-total">
+                {estadoCaja.codigo === 'SinCodigo'
+                  ? 'Todavía no hay código de autorización'
+                  : typeof estadoCaja.codigo === 'object'
+                    ? `El código se usó el ${estadoCaja.codigo.Usado.usado_en}${estadoCaja.codigo.Usado.usado_sesion_id ? ` (sesión ${estadoCaja.codigo.Usado.usado_sesion_id})` : ''}`
+                    : 'Código nuevo'}
+              </p>
+              <NexInput
+                ref={refCodigoNuevo}
+                label="Pon un código nuevo"
+                description="Al menos 4 caracteres. Se guarda cifrado y sirve para una sola apertura · Escape: más tarde"
+                type="password"
+                autoComplete="new-password"
+                value={codigoNuevo}
+                onChange={(e) => setCodigoNuevo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void guardarCodigoNuevo()
+                  } else if (e.key === 'Escape') {
+                    setCodigoNuevo(null)
+                    enfocarProducto()
+                  }
+                }}
+              />
+            </div>
+          )}
 
           {cobro !== null && (
             <div className="caja__cobro" role="dialog" aria-label="Cobrar">

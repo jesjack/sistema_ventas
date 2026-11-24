@@ -95,6 +95,15 @@ impl Base {
         Ok(resultado)
     }
 
+    /// El id de un usuario de ESTE equipo por su nombre de usuario del sistema; si todavía no
+    /// existe (nunca abrió la caja aquí), se registra con los datos de este equipo, así que cuando
+    /// abra la caja por primera vez `asegurar_usuario` lo reconoce. Para dar permisos de antemano.
+    pub fn usuario_de_este_equipo(&mut self, nombre_usuario: &str) -> Result<(i64, bool), ErrorBase> {
+        let equipo = DatosUsuario::del_sistema();
+        let datos = DatosUsuario { nombre_usuario: nombre_usuario.trim().to_lowercase(), ..equipo };
+        self.asegurar_usuario(&datos)
+    }
+
     /// Abre una sesión del usuario. Devuelve su id.
     pub fn iniciar_sesion(&mut self, usuario_id: i64, momento: &Momento, pid: Option<i64>, detalle: Option<&str>) -> Result<i64, ErrorBase> {
         let instante = instante(momento);

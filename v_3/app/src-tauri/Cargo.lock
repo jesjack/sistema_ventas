@@ -2074,8 +2074,10 @@ name = "nucleo"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "getrandom 0.4.3",
  "rusqlite",
  "serde",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "unicode-normalization",
 ]

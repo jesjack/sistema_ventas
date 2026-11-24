@@ -167,6 +167,15 @@ impl Base {
         Ok(claves.iter().filter_map(|c| Permiso::de_clave(c)).collect())
     }
 
+    /// Los usuarios activos (sin la plantilla) con sus permisos, para administrarlos.
+    pub fn usuarios_con_permisos(&self) -> Result<Vec<(i64, String, Vec<Permiso>)>, ErrorBase> {
+        let mut consulta = self.con.prepare(
+            "SELECT id, nombre_usuario FROM usuarios_sistema WHERE activo = 1 AND nombre_usuario <> '__default__' ORDER BY nombre_usuario",
+        )?;
+        let usuarios: Vec<(i64, String)> = consulta.query_map([], |f| Ok((f.get(0)?, f.get(1)?)))?.collect::<Result<_, _>>()?;
+        usuarios.into_iter().map(|(id, nombre)| Ok((id, nombre, self.permisos(id)?))).collect()
+    }
+
     pub fn tiene_permiso(&self, usuario_id: i64, permiso: Permiso) -> Result<bool, ErrorBase> {
         Ok(self.permisos(usuario_id)?.contains(&permiso))
     }

@@ -13,7 +13,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use nucleo::caja::{Autorizacion, EstadoCodigo};
 use nucleo::{Base, Carrito, Cobro, DatosUsuario, FilaVentas, Momento, Producto};
+use tauri::Emitter;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
@@ -28,8 +30,16 @@ struct Estado {
 #[derive(Clone)]
 struct Sesion {
     id: i64,
+    usuario_id: i64,
     usuario: String,
+    /// El turno de caja que tomó esta ejecución (D8). Si deja de ser el vigente, otra caja lo tomó.
+    turno: i64,
 }
+
+/// Cada cuánto se comprueba que esta caja sigue teniendo el turno (D8, D20).
+const VIGILANCIA_TURNO: std::time::Duration = std::time::Duration::from_secs(3);
+/// Texto con el que la vista reconoce que falta el código de autorización.
+const PIDE_CODIGO: &str = "PIDE_CODIGO";
 
 /// Cada cuánto se registra el latido de la sesión (como la v2).
 const LATIDO: std::time::Duration = std::time::Duration::from_secs(60);
@@ -113,6 +123,17 @@ fn con_base<T>(estado: &tauri::State<'_, Compartido>, f: impl FnOnce(&mut Base) 
     }
 }
 
+/// La sesión de esta caja, solo si su turno sigue vigente (D8: antes de cada acción con efecto).
+fn sesion_con_turno(estado: &tauri::State<'_, Compartido>) -> Result<Sesion, String> {
+    let e = estado.lock().map_err(|e| e.to_string())?;
+    let sesion = e.sesion.clone().ok_or("No hay sesión abierta; vuelve a abrir la caja.")?;
+    match &e.base {
+        Ok(b) if b.turno_vigente(sesion.turno).map_err(|e| e.to_string())? => Ok(sesion),
+        Ok(_) => Err("Otra caja tomó el turno: esta caja ya no puede registrar nada.".into()),
+        Err(motivo) => Err(motivo.clone()),
+    }
+}
+
 /// Productos que coinciden con lo escrito: contienen el texto o empiezan con esas iniciales.
 #[tauri::command]
 fn buscar_productos(estado: tauri::State<'_, Compartido>, texto: String) -> Result<Vec<Producto>, String> {
@@ -181,24 +202,112 @@ fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: S
         return Err("El carrito está vacío.".into());
     }
     let cobro = Cobro::con_texto(carrito.total(), &recibido).map_err(|e| e.to_string())?;
-    let sesion_id = estado.lock().map_err(|e| e.to_string())?.sesion.as_ref().map(|s| s.id);
+    let sesion = sesion_con_turno(&estado)?;
     con_base(&estado, |b| {
+        let momento = Momento::ahora();
         let venta_id = b
-            .registrar_venta(&carrito.filas, cobro.recibido, cobro.cambio, &Momento::ahora(), sesion_id)
+            .registrar_venta(&carrito.filas, cobro.recibido, cobro.cambio, &momento, Some(sesion.id))
             .map_err(|e| e.to_string())?
             .ok_or("El carrito está vacío.")?;
+        // El cobro abre el cajón (con el ticket). Fase 3: abrirlo de verdad y registrar después.
+        // D23: también entra al registro de aperturas.
+        b.registrar_apertura(Autorizacion::Venta, Some(venta_id), &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
         Ok(VentaRegistrada { venta_id, total: cobro.total, recibido: cobro.recibido, cambio: cobro.cambio })
     })
+}
+
+#[derive(Serialize)]
+struct EstadoCaja {
+    permisos: Vec<&'static str>,
+    /// Cómo se abriría el cajón ahora: permiso, ventana_diaria o codigo.
+    como_abrir: &'static str,
+    codigo: EstadoCodigo,
+    /// Tiene "abrir caja sin límite": puede (y debe, si falta) poner el código.
+    puede_poner_codigo: bool,
+}
+
+/// Lo que la vista necesita para el botón "Abrir caja" y el código (D21, D23).
+#[tauri::command]
+fn estado_caja(estado: tauri::State<'_, Compartido>) -> Result<EstadoCaja, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    con_base(&estado, |b| {
+        let permisos = b.permisos(sesion.usuario_id).map_err(|e| e.to_string())?;
+        Ok(EstadoCaja {
+            puede_poner_codigo: permisos.contains(&nucleo::caja::Permiso::AbrirCajaSinLimite),
+            permisos: permisos.iter().map(|p| p.clave()).collect(),
+            como_abrir: b.como_abrir(sesion.usuario_id, &Momento::ahora().fecha).map_err(|e| e.to_string())?.clave(),
+            codigo: b.estado_codigo().map_err(|e| e.to_string())?,
+        })
+    })
+}
+
+/// "Abrir caja" (y Intro con el carrito vacío, D23). Si hace falta código y no viene, responde
+/// `PIDE_CODIGO`. Fase 3: el cajón se abre de verdad antes de registrar; hoy se simula.
+#[tauri::command]
+fn abrir_caja(estado: tauri::State<'_, Compartido>, codigo: Option<String>) -> Result<&'static str, String> {
+    let sesion = sesion_con_turno(&estado)?;
+    con_base(&estado, |b| {
+        let momento = Momento::ahora();
+        let autorizacion = b.como_abrir(sesion.usuario_id, &momento.fecha).map_err(|e| e.to_string())?;
+        if autorizacion == Autorizacion::Codigo {
+            let Some(codigo) = codigo.filter(|c| !c.trim().is_empty()) else { return Err(PIDE_CODIGO.into()) };
+            b.usar_codigo(&codigo, &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
+        }
+        b.registrar_apertura(autorizacion, None, &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
+        Ok(autorizacion.clave())
+    })
+}
+
+/// Pone un código de autorización nuevo (solo con "abrir caja sin límite"; el núcleo lo comprueba).
+#[tauri::command]
+fn poner_codigo(estado: tauri::State<'_, Compartido>, codigo: String) -> Result<(), String> {
+    let sesion = sesion_con_turno(&estado)?;
+    con_base(&estado, |b| b.poner_codigo(sesion.usuario_id, &codigo, &Momento::ahora(), Some(sesion.id)).map_err(|e| e.to_string()))
 }
 
 /// Abre la sesión de esta ejecución con el usuario del sistema (el mismo que reconoce la v2).
 fn abrir_sesion(base: &mut Base) -> Result<Sesion, String> {
     let datos = DatosUsuario::del_sistema();
     let (usuario_id, _nuevo) = base.asegurar_usuario(&datos).map_err(|e| e.to_string())?;
+    let momento = Momento::ahora();
     let id = base
-        .iniciar_sesion(usuario_id, &Momento::ahora(), Some(std::process::id() as i64), Some("caja v3 (prototipo)"))
+        .iniciar_sesion(usuario_id, &momento, Some(std::process::id() as i64), Some("caja v3 (prototipo)"))
         .map_err(|e| e.to_string())?;
-    Ok(Sesion { id, usuario: datos.nombre_usuario })
+    // D8: el último que abre se queda con la caja.
+    let turno = base.tomar_turno(Some(id), &momento).map_err(|e| e.to_string())?;
+    Ok(Sesion { id, usuario_id, usuario: datos.nombre_usuario, turno })
+}
+
+/// D8/D20/D23: cada `VIGILANCIA_TURNO` comprueba que esta caja sigue teniendo el turno. Si otra lo
+/// tomó, cierra la sesión como "desplazada", avisa a la vista y cierra la app entera.
+fn vigilar_turno(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(VIGILANCIA_TURNO);
+        let estado = app.state::<Compartido>();
+        let perdida = {
+            let Ok(mut e) = estado.lock() else { return };
+            let Some(sesion) = e.sesion.clone() else { return };
+            let Ok(base) = &mut e.base else { return };
+            match base.turno_vigente(sesion.turno) {
+                Ok(true) | Err(_) => None,
+                Ok(false) => {
+                    let detalle = "desplazada: otra caja tomó el turno";
+                    if let Err(error) = base.cerrar_sesion(sesion.id, &Momento::ahora(), Some(detalle), true) {
+                        log::warn!("No se pudo cerrar la sesión desplazada {}: {error}", sesion.id);
+                    }
+                    e.sesion = None;
+                    Some(sesion)
+                }
+            }
+        };
+        if let Some(sesion) = perdida {
+            log::warn!("La sesión {} perdió el turno {}: se cierra la caja.", sesion.id, sesion.turno);
+            let _ = app.emit("turno-perdido", ());
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            app.exit(0);
+            return;
+        }
+    });
 }
 
 /// Latido cada `LATIDO` mientras viva la app (hilo de fondo; un fallo solo se anota).
@@ -231,6 +340,7 @@ pub fn run() {
       };
       app.manage(Mutex::new(Estado { ruta, base, sesion }));
       iniciar_latido(app.handle().clone());
+      vigilar_turno(app.handle().clone());
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -240,7 +350,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, poner_codigo])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {
