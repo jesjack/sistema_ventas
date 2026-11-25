@@ -47,8 +47,12 @@ interface EstadoCaja {
   ve_otros_dias: boolean
 }
 
-/** Los modales miden su contenido (NexMorph usa 760 × 680 px por defecto). */
-const ESTILO_MODAL: CSSProperties = { width: 'min(460px, calc(100vw - 32px))', height: 'fit-content' }
+/**
+ * Tamaño de los modales. NexMorph mide el panel una sola vez al abrir y su contenido va posicionado
+ * por dentro, así que no puede tomar el alto del contenido (con `fit-content` queda en 0): cada
+ * modal tiene un alto fijo que alcanza para lo más largo que muestra (los botones van abajo).
+ */
+const modal = (alto: number): CSSProperties => ({ width: 'min(460px, calc(100vw - 32px))', height: `min(${alto}px, calc(100vh - 32px))` })
 
 /** Las pantallas de la caja (arriba de todo): la venta, las ventas realizadas y el desarrollador. */
 type Vista = 'carrito' | 'ventas' | 'desarrollador'
@@ -485,7 +489,7 @@ export default function App() {
   // crece desde él). Si el usuario no tiene ese botón, el modal aparece igual, sin origen.
   const tieneBoton = (nombre: string) => botones.some((b) => b.accion === nombre)
   const modalCobro = (
-              <NexMorph.Target label="Cobrar" className="caja__modal" panelStyle={ESTILO_MODAL}>
+              <NexMorph.Target label="Cobrar" className="caja__modal" panelStyle={modal(420)}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
                   <div className="caja__cobro">
@@ -530,7 +534,7 @@ export default function App() {
               </NexMorph.Target>
   )
   const modalCodigo = (
-              <NexMorph.Target label="Código de autorización" className="caja__modal" panelStyle={ESTILO_MODAL}>
+              <NexMorph.Target label="Código de autorización" className="caja__modal" panelStyle={modal(290)}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
                   <div className="caja__cobro">
@@ -871,7 +875,7 @@ export default function App() {
             open={codigoNuevo !== null && !!estadoCaja?.puede_poner_codigo}
             onOpenChange={(abierto) => !abierto && (setCodigoNuevo(null), enfocarProducto())}
           >
-            <NexMorph.Target label="Código nuevo" className="caja__modal" panelStyle={ESTILO_MODAL}>
+            <NexMorph.Target label="Código nuevo" className="caja__modal" panelStyle={modal(330)}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
                   <div className="caja__cobro">
