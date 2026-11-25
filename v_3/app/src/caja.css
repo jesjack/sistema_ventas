@@ -417,3 +417,15 @@ body,
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
+
+/* Aviso del corte sin verificar, arriba de la venta. */
+.caja__verificar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--nx-control-radius);
+  background: color-mix(in srgb, var(--nx-warning, #c58a00) 12%, var(--nx-surface));
+  font-size: var(--nx-text-small);
+}

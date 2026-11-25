@@ -257,6 +257,8 @@ struct EstadoCaja {
     ve_otros_dias: bool,
     /// El último corte, si nadie ha vendido después (badge de CORTE DE CAJA: "Listo $…").
     corte_listo: Option<nucleo::ventas::CorteListo>,
+    /// El corte con el que empieza hoy (de hoy o del día anterior) y su verificación.
+    corte_de_hoy: Option<nucleo::ventas::CorteDelDia>,
 }
 
 /// Lo que la vista necesita para el botón "Abrir caja" y el código (D21, D23).
@@ -270,6 +272,7 @@ fn estado_caja(estado: tauri::State<'_, Compartido>) -> Result<EstadoCaja, Strin
             pocos_codigos: POCOS_CODIGOS,
             ve_otros_dias: ve_otros_dias(b, sesion.usuario_id)?,
             corte_listo: b.corte_listo().map_err(|e| e.to_string())?,
+            corte_de_hoy: b.corte_de_hoy(&Momento::ahora().fecha).map_err(|e| e.to_string())?,
             permisos: permisos.iter().map(|p| p.clave()).collect(),
             como_abrir: b.como_abrir(sesion.usuario_id, &Momento::ahora().fecha).map_err(|e| e.to_string())?.clave(),
             codigos: b.estado_codigos().map_err(|e| e.to_string())?,
@@ -430,6 +433,23 @@ fn hacer_corte(estado: tauri::State<'_, Compartido>, cantidades: Vec<String>) ->
     })
 }
 
+/// La empleada verifica el corte con el que empieza el día: `contado` vacío = cuadra (contó lo
+/// esperado). Devuelve el evento que quedó en VENTAS REALIZADAS.
+#[tauri::command]
+fn verificar_corte(estado: tauri::State<'_, Compartido>, corte_id: i64, contado: String) -> Result<String, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    con_base(&estado, |b| {
+        let hoy = Momento::ahora();
+        let corte = b.corte_de_hoy(&hoy.fecha).map_err(|e| e.to_string())?.filter(|c| c.id == corte_id).ok_or("Ese corte ya no es el de hoy.")?;
+        let contado = if contado.trim().is_empty() {
+            corte.total
+        } else {
+            nucleo::leer_monto(&contado).ok_or("Escribe cuánto hay de cambio en la caja, por ejemplo 1030 o 1,030.50.")?
+        };
+        b.verificar_corte(corte_id, contado, &hoy, Some(sesion.id)).map_err(|e| e.to_string())
+    })
+}
+
 /// Estado de la lectura directa del escáner (para Desarrollador).
 #[tauri::command]
 fn estado_escaner(escaner: tauri::State<'_, Arc<escaner::Escaner>>) -> escaner::EstadoEscaner {
@@ -471,7 +491,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {

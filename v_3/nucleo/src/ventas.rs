@@ -28,6 +28,24 @@ impl Momento {
     }
 }
 
+/// El corte con el que empieza un día, quién lo hizo y su última verificación.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CorteDelDia {
+    pub id: i64,
+    pub fecha: String,
+    pub hora: String,
+    pub total: f64,
+    pub usuario: Option<String>,
+    pub verificacion: Option<Verificacion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Verificacion {
+    pub en: String,
+    pub contado: f64,
+    pub usuario: Option<String>,
+}
+
 /// Un corte que sigue valiendo: nadie ha vendido después de él.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CorteListo {
@@ -270,6 +288,67 @@ impl Base {
         Ok(filas.collect::<Result<_, _>>()?)
     }
 
+    /// El corte con el que empieza el día `hoy`: el último de hoy o, si hoy no hay, el de un día
+    /// anterior que pasó a hoy (`ventas_de_hoy`). Con quién lo hizo y su verificación, si la hay.
+    pub fn corte_de_hoy(&self, hoy: &str) -> Result<Option<CorteDelDia>, ErrorBase> {
+        let de_hoy: Option<i64> = self
+            .con
+            .query_row("SELECT id FROM cortes_caja WHERE fecha = ?1 ORDER BY id DESC LIMIT 1", params![hoy], |f| f.get(0))
+            .optional()?;
+        let id = match de_hoy {
+            Some(id) => id,
+            None => match self.corte_que_pasa_a(hoy)? {
+                Some(c) => c.id,
+                None => return Ok(None),
+            },
+        };
+        let (fecha, hora, usuario): (String, String, Option<String>) = self.con.query_row(
+            "SELECT c.fecha, c.hora, u.nombre_usuario FROM cortes_caja c
+             LEFT JOIN sesiones_sistema s ON s.id = c.sesion_id LEFT JOIN usuarios_sistema u ON u.id = s.usuario_id
+             WHERE c.id = ?1",
+            params![id],
+            |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?)),
+        )?;
+        let verificacion = self
+            .con
+            .query_row(
+                "SELECT v.fecha || ' ' || v.hora, v.contado, u.nombre_usuario FROM verificaciones_corte v
+                 LEFT JOIN sesiones_sistema s ON s.id = v.sesion_id LEFT JOIN usuarios_sistema u ON u.id = s.usuario_id
+                 WHERE v.corte_id = ?1 ORDER BY v.id DESC LIMIT 1",
+                params![id],
+                |f| Ok(Verificacion { en: f.get(0)?, contado: f.get(1)?, usuario: f.get(2)? }),
+            )
+            .optional()?;
+        Ok(Some(CorteDelDia { id, fecha, hora, total: self.total_del_corte(id)?, usuario, verificacion }))
+    }
+
+    /// La empleada verifica el corte: cuánto contó de cambio. Queda registrado y como evento en
+    /// VENTAS REALIZADAS ("CORTE VERIFICADO: CUADRA", "…: FALTAN $30.00", "…: SOBRAN $20.00").
+    pub fn verificar_corte(&mut self, corte_id: i64, contado: f64, momento: &Momento, sesion_id: Option<i64>) -> Result<String, ErrorBase> {
+        let esperado = self.total_del_corte(corte_id)?;
+        let diferencia = contado - esperado;
+        let evento = if diferencia.abs() < 0.005 {
+            "CORTE VERIFICADO: CUADRA".to_string()
+        } else if diferencia < 0.0 {
+            format!("CORTE VERIFICADO: FALTAN {}", crate::corte::dinero(-diferencia))
+        } else {
+            format!("CORTE VERIFICADO: SOBRAN {}", crate::corte::dinero(diferencia))
+        };
+        let detalle = format!("Esperado {}, contado {}.", crate::corte::dinero(esperado), crate::corte::dinero(contado));
+        let tx = self.con.transaction()?;
+        tx.execute(
+            "INSERT INTO eventos_especiales (fecha, hora, evento, detalle, sesion_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![momento.fecha, momento.hora, evento, detalle, sesion_id],
+        )?;
+        let evento_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO verificaciones_corte (corte_id, fecha, hora, sesion_id, esperado, contado, evento_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![corte_id, momento.fecha, momento.hora, sesion_id, esperado, contado, evento_id],
+        )?;
+        tx.commit()?;
+        Ok(evento)
+    }
+
     /// El estado del corte para el botón CORTE DE CAJA: "listo" mientras nadie haya vendido después
     /// del último corte (una venta lo invalida y hay que volver a hacerlo).
     pub fn corte_listo(&self) -> Result<Option<CorteListo>, ErrorBase> {
@@ -321,6 +400,26 @@ mod pruebas {
         base.registrar_venta(&[item], 200.0, 0.0, &Momento::nuevo("2026-11-25", "20:30:00"), None).unwrap();
         let siguiente = base.ventas_de_hoy("2026-11-26").unwrap();
         assert!(siguiente.is_empty(), "el corte quedó invalidado por la venta de las 20:30");
+        assert_eq!(base.corte_de_hoy("2026-11-26").unwrap(), None);
+        // Pero el mismo día sigue siendo el punto de partida, aunque se venda después.
+        let mismo_dia = base.corte_de_hoy("2026-11-25").unwrap().unwrap();
+        assert_eq!(mismo_dia.total, 340.0);
+    }
+
+    #[test]
+    fn la_empleada_verifica_el_corte_y_queda_en_ventas_realizadas() {
+        use crate::corte::PiezaCambio;
+        let mut base = Base::en_memoria_v3().unwrap();
+        let cambio = [PiezaCambio { tipo: "BILLETE".into(), denominacion: 500.0, cantidad: 2 }];
+        base.registrar_corte(&cambio, &Momento::nuevo("2026-11-24", "20:00:00"), None).unwrap();
+        let corte = base.corte_de_hoy("2026-11-25").unwrap().expect("pasa al día siguiente");
+        assert_eq!((corte.total, corte.verificacion.clone()), (1000.0, None));
+        let evento = base.verificar_corte(corte.id, 970.0, &Momento::nuevo("2026-11-25", "09:00:00"), None).unwrap();
+        assert_eq!(evento, "CORTE VERIFICADO: FALTAN $30.00");
+        assert_eq!(base.corte_de_hoy("2026-11-25").unwrap().unwrap().verificacion.unwrap().contado, 970.0);
+        let hoy: Vec<_> = base.ventas_de_hoy("2026-11-25").unwrap().into_iter().map(|f| f.producto).collect();
+        assert_eq!(hoy, ["CAMBIO: BILLETE", "CORTE VERIFICADO: FALTAN $30.00"]);
+        assert_eq!(base.verificar_corte(corte.id, 1000.0, &Momento::nuevo("2026-11-25", "09:05:00"), None).unwrap(), "CORTE VERIFICADO: CUADRA");
     }
 
     #[test]

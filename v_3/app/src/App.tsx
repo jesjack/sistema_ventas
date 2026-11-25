@@ -67,6 +67,15 @@ interface EstadoCaja {
   ve_otros_dias: boolean
   /** El último corte, si nadie ha vendido después (badge de CORTE DE CAJA). */
   corte_listo: { id: number; fecha: string; hora: string; total: number } | null
+  /** El corte con el que empieza hoy y su verificación (la empleada cuenta el cambio). */
+  corte_de_hoy: {
+    id: number
+    fecha: string
+    hora: string
+    total: number
+    usuario: string | null
+    verificacion: { en: string; contado: number; usuario: string | null } | null
+  } | null
 }
 
 /** Ancho de los modales; el alto es el de su contenido (NexMorph `size="content"`). */
@@ -551,6 +560,106 @@ export default function App() {
     setCorte({ ...corte, confirmar: true, error: null })
     requestAnimationFrame(() => refRegresar.current?.focus())
   }
+  // ---- Verificar el corte con el que empieza el día: la empleada cuenta el cambio y dice si cuadra.
+  const [verificando, setVerificando] = useState<{ noCuadra: boolean; contado: string; error: string | null } | null>(null)
+  const refContado = useRef<HTMLInputElement>(null)
+  const corteHoy = estadoCaja?.corte_de_hoy ?? null
+  const cerrarVerificacion = () => {
+    setVerificando(null)
+    enfocarProducto()
+  }
+  const guardarVerificacion = async (contado: string) => {
+    if (!corteHoy || !verificando) return
+    try {
+      const evento = await invoke<string>('verificar_corte', { corteId: corteHoy.id, contado })
+      setVerificando(null)
+      setAviso({ tono: evento.endsWith('CUADRA') ? 'success' : 'warning', texto: `Quedó registrado: ${evento}.` })
+      setRecargaVentas((n) => n + 1)
+      leerEstadoCaja()
+      enfocarProducto()
+    } catch (e) {
+      setVerificando({ ...verificando, error: String(e) })
+    }
+  }
+  const contadoVerificacion = verificando?.contado.trim() ? leerNumero(verificando.contado) : NaN
+  const modalVerificacion = corteHoy && (
+              <NexMorph.Target label="Verificar corte" className="caja__modal" size="content" panelStyle={ESTILO_MODAL}>
+                {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
+                <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+                  <div className="caja__cobro">
+                    <p className="caja__cobro-total">Cambio esperado: {dinero(corteHoy.total)}</p>
+                    <p className="caja__nota">
+                      Corte {corteHoy.usuario ? `de ${corteHoy.usuario}, ` : ''}del {corteHoy.fecha} a las {corteHoy.hora.slice(0, 5)}. Cuenta el
+                      cambio de la caja (puedes abrirla con tu apertura del día) y di si cuadra. El desglose está al inicio de VENTAS REALIZADAS.
+                    </p>
+                    {verificando?.noCuadra ? (
+                      <>
+                        <NexInput
+                          ref={refContado}
+                          label="¿Cuánto hay de cambio en la caja?"
+                          description={
+                            Number.isFinite(contadoVerificacion)
+                              ? contadoVerificacion < corteHoy.total
+                                ? `Faltan ${dinero(corteHoy.total - contadoVerificacion)}`
+                                : contadoVerificacion > corteHoy.total
+                                  ? `Sobran ${dinero(contadoVerificacion - corteHoy.total)}`
+                                  : 'Cuadra'
+                              : 'Intro guarda · Escape cierra'
+                          }
+                          error={verificando.error ?? undefined}
+                          inputMode="decimal"
+                          leading="$"
+                          autoComplete="off"
+                          value={verificando.contado}
+                          onChange={(e) => setVerificando({ ...verificando, contado: e.target.value, error: null })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              void guardarVerificacion(verificando.contado)
+                            }
+                          }}
+                        />
+                        <div className="caja__cobro-acciones">
+                          <NexButton appearance="filled" onClick={() => void guardarVerificacion(verificando.contado)}>
+                            Guardar (Intro)
+                          </NexButton>
+                          <NexButton appearance="ghost" onClick={() => setVerificando({ noCuadra: false, contado: '', error: null })}>
+                            Regresar
+                          </NexButton>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {verificando?.error && (
+                          <p className="caja__aviso caja__aviso--danger" role="alert">
+                            {verificando.error}
+                          </p>
+                        )}
+                        <div className="caja__cobro-acciones">
+                          <NexButton appearance="filled" onClick={() => void guardarVerificacion('')}>
+                            Cuadra
+                          </NexButton>
+                          <NexButton
+                            appearance="outlined"
+                            tone="danger"
+                            onClick={() => {
+                              setVerificando({ noCuadra: true, contado: '', error: null })
+                              requestAnimationFrame(() => refContado.current?.focus())
+                            }}
+                          >
+                            No cuadra
+                          </NexButton>
+                          <NexButton appearance="ghost" onClick={() => void abrirCaja()}>
+                            Abrir caja para contar
+                          </NexButton>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </NexProvider>
+              </NexMorph.Target>
+  )
+
   const hacerCorte = async () => {
     if (!corte) return
     try {
@@ -860,6 +969,31 @@ export default function App() {
           {aviso && (
             <p className={`caja__aviso caja__aviso--${aviso.tono}`} role="status">
               {aviso.texto}
+            </p>
+          )}
+
+          {/* El corte con el que empieza el día: mientras nadie lo verifique, se avisa con su botón. */}
+          {corteHoy && !corteHoy.verificacion && (
+            <div className="caja__verificar">
+              <span>
+                Cambio esperado en la caja: <strong>{dinero(corteHoy.total)}</strong> · corte
+                {corteHoy.usuario ? ` de ${corteHoy.usuario}` : ''} del {corteHoy.fecha} a las {corteHoy.hora.slice(0, 5)}, sin verificar
+              </span>
+              <NexMorph open={verificando !== null} onOpenChange={(abierto) => !abierto && cerrarVerificacion()}>
+                <NexMorph.Source>
+                  <NexButton appearance="outlined" density="compact" onClick={() => setVerificando({ noCuadra: false, contado: '', error: null })}>
+                    Verificar corte
+                  </NexButton>
+                </NexMorph.Source>
+                {modalVerificacion}
+              </NexMorph>
+            </div>
+          )}
+          {corteHoy?.verificacion && (
+            <p className="caja__nota">
+              Corte del {corteHoy.fecha} verificado
+              {corteHoy.verificacion.usuario ? ` por ${corteHoy.verificacion.usuario}` : ''} el {corteHoy.verificacion.en}: se contaron{' '}
+              {dinero(corteHoy.verificacion.contado)} de {dinero(corteHoy.total)}.
             </p>
           )}
 
