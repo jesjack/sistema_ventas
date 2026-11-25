@@ -402,3 +402,47 @@ body,
   transform: translate(30%, -40%);
   pointer-events: none;
 }
+
+/* Corte de caja: billetes y monedas en dos columnas, una fila por denominación con su subtotal. */
+.caja__corte {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.caja__corte-columna {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.caja__corte-titulo {
+  margin: 0;
+  font-weight: 650;
+}
+.caja__corte-fila {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  align-items: end;
+  gap: 8px;
+}
+.caja__corte-fila .nx-field {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.caja__corte-fila .nx-field__label {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.caja__corte-subtotal {
+  padding-bottom: 8px;
+  color: var(--nx-fg-muted);
+  font-size: var(--nx-text-small);
+  font-variant-numeric: tabular-nums;
+}
+.caja__corte-total {
+  margin: 0;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}

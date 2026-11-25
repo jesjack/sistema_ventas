@@ -68,9 +68,57 @@ pub fn dinero(valor: f64) -> String {
     format!("{}${con_comas}.{decimales}", if valor < 0.0 { "-" } else { "" })
 }
 
+/// Cuántas piezas de una denominación se escribieron: vacío es 0; si no es un entero >= 0, `None`
+/// (como `leer_cantidad` de la v2).
+pub fn leer_cantidad(texto: &str) -> Option<i64> {
+    let limpio = texto.trim();
+    if limpio.is_empty() {
+        return Some(0);
+    }
+    limpio.parse::<i64>().ok().filter(|c| *c >= 0)
+}
+
+/// Lo escrito para cada denominación, en el orden de `DENOMINACIONES`, convertido en el cambio. Si
+/// algo no es válido, el mensaje para el usuario (los mismos textos que la v2).
+pub fn leer_cambio(textos: &[String]) -> Result<Vec<PiezaCambio>, String> {
+    if textos.len() != DENOMINACIONES.len() {
+        return Err(format!("Se esperaban {} cantidades y llegaron {}.", DENOMINACIONES.len(), textos.len()));
+    }
+    DENOMINACIONES
+        .iter()
+        .zip(textos)
+        .map(|(&(tipo, denominacion), texto)| match leer_cantidad(texto) {
+            Some(cantidad) => Ok(PiezaCambio { tipo: tipo.to_string(), denominacion, cantidad }),
+            None => Err(format!(
+                "La cantidad de {}s de {} no es válida: escriba cuántas piezas hay (un número entero) o déjelo vacío.",
+                tipo.to_lowercase(),
+                texto_denominacion(denominacion)
+            )),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn leer_el_cambio_como_la_v2() {
+        let mut textos = vec![String::new(); DENOMINACIONES.len()];
+        textos[0] = " 2 ".into();
+        textos[6] = "3".into();
+        let cambio = leer_cambio(&textos).unwrap();
+        assert_eq!(total_del_cambio(&cambio), 1030.0);
+        assert_eq!(resumen_del_cambio(&cambio), "2 x BILLETE $500, 3 x MONEDA $10 = $1,030.00");
+        textos[10] = "-1".into();
+        assert_eq!(
+            leer_cambio(&textos).unwrap_err(),
+            "La cantidad de monedas de $0.50 no es válida: escriba cuántas piezas hay (un número entero) o déjelo vacío."
+        );
+        textos[10] = "1.5".into();
+        assert!(leer_cambio(&textos).is_err());
+        assert_eq!(leer_cantidad(""), Some(0));
+    }
 
     #[test]
     fn textos() {

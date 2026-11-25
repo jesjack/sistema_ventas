@@ -388,6 +388,44 @@ fn iniciar_latido(app: tauri::AppHandle) {
     });
 }
 
+#[derive(Serialize)]
+struct Denominacion {
+    tipo: &'static str,
+    valor: f64,
+    texto: String,
+}
+
+/// Las denominaciones del corte de caja, en orden (billetes y monedas).
+#[tauri::command]
+fn denominaciones() -> Vec<Denominacion> {
+    nucleo::corte::DENOMINACIONES
+        .iter()
+        .map(|&(tipo, valor)| Denominacion { tipo, valor, texto: nucleo::corte::texto_denominacion(valor) })
+        .collect()
+}
+
+/// Corte de caja, paso 1 (como la v2): se abre el cajón para contar el cambio. La apertura entra al
+/// registro como "corte" aunque luego se cancele. Fase 3: el cajón real; hoy, simulado.
+#[tauri::command]
+fn abrir_caja_para_corte(estado: tauri::State<'_, Compartido>) -> Result<(), String> {
+    let sesion = sesion_con_turno(&estado)?;
+    con_base(&estado, |b| {
+        b.registrar_apertura(Autorizacion::Corte, None, &Momento::ahora(), Some(sesion.id)).map(|_| ()).map_err(|e| e.to_string())
+    })
+}
+
+/// Corte de caja, paso 2: con lo que se deja de cambio (lo escrito para cada denominación, vacío =
+/// 0). Desde aquí VENTAS REALIZADAS de hoy empieza con ese cambio. Devuelve el resumen.
+#[tauri::command]
+fn hacer_corte(estado: tauri::State<'_, Compartido>, cantidades: Vec<String>) -> Result<String, String> {
+    let cambio = nucleo::corte::leer_cambio(&cantidades)?;
+    let sesion = sesion_con_turno(&estado)?;
+    con_base(&estado, |b| {
+        b.registrar_corte(&cambio, &Momento::ahora(), Some(sesion.id)).map_err(|e| e.to_string())?;
+        Ok(nucleo::corte::resumen_del_cambio(&cambio))
+    })
+}
+
 /// Estado de la lectura directa del escáner (para Desarrollador).
 #[tauri::command]
 fn estado_escaner(escaner: tauri::State<'_, Arc<escaner::Escaner>>) -> escaner::EstadoEscaner {
@@ -429,7 +467,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {

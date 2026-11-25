@@ -26,6 +26,13 @@ interface Producto {
   nombre: string
 }
 
+/** Una denominación del corte de caja (comando `denominaciones`). */
+interface Denominacion {
+  tipo: 'BILLETE' | 'MONEDA'
+  valor: number
+  texto: string
+}
+
 /** Un botón configurable (núcleo: `nucleo::botones::Boton`). */
 interface Boton {
   id: number
@@ -496,7 +503,66 @@ export default function App() {
     enfocarProducto()
   }
 
+  const hoy = toIsoDate(new Date())
   const recibido = cobro === null || cobro.trim() === '' ? total : leerNumero(cobro)
+
+  // ---- Corte de caja (como la v2): se abre el cajón, se escribe el cambio que se queda en la caja
+  // (piezas de cada billete y moneda), se confirma (Intro = Regresar) y VENTAS REALIZADAS de hoy
+  // empieza con ese cambio. El ticket del corte llega con las impresoras (fase 3).
+  const [denominaciones, setDenominaciones] = useState<Denominacion[]>([])
+  useEffect(() => {
+    invoke<Denominacion[]>('denominaciones').then(setDenominaciones, () => {})
+  }, [])
+  const [corte, setCorte] = useState<{ cantidades: string[]; confirmar: boolean; error: string | null } | null>(null)
+  const refPrimeraPieza = useRef<HTMLInputElement>(null)
+  const refRegresar = useRef<HTMLButtonElement>(null)
+  const piezas = (texto: string): number | null => (texto.trim() === '' ? 0 : /^\d+$/.test(texto.trim()) ? Number(texto.trim()) : null)
+  const totalCorte = corte
+    ? denominaciones.reduce((suma, d, i) => suma + d.valor * (piezas(corte.cantidades[i] ?? '') ?? 0), 0)
+    : 0
+  const abrirCorte = async () => {
+    try {
+      await invoke('abrir_caja_para_corte')
+      setRecargaVentas((n) => n + 1)
+      setCorte({ cantidades: denominaciones.map(() => ''), confirmar: false, error: null })
+      requestAnimationFrame(() => refPrimeraPieza.current?.focus())
+    } catch (e) {
+      setAviso({ tono: 'warning', texto: String(e) })
+    }
+  }
+  const cerrarCorte = () => {
+    setCorte(null)
+    enfocarProducto()
+  }
+  // Paso 1 → 2: se revisa lo escrito (mismos textos que la v2) y se pide confirmar.
+  const pedirConfirmacionCorte = () => {
+    if (!corte) return
+    const mala = denominaciones.findIndex((_, i) => piezas(corte.cantidades[i] ?? '') === null)
+    if (mala >= 0) {
+      const d = denominaciones[mala]!
+      setCorte({
+        ...corte,
+        error: `La cantidad de ${d.tipo.toLowerCase()}s de ${d.texto} no es válida: escriba cuántas piezas hay (un número entero) o déjelo vacío.`,
+      })
+      return
+    }
+    setCorte({ ...corte, confirmar: true, error: null })
+    requestAnimationFrame(() => refRegresar.current?.focus())
+  }
+  const hacerCorte = async () => {
+    if (!corte) return
+    try {
+      const resumen = await invoke<string>('hacer_corte', { cantidades: corte.cantidades })
+      setCorte(null)
+      setAviso({ tono: 'success', texto: `Corte de caja hecho. Cambio en caja: ${resumen}. (Ticket del corte: fase 3.)` })
+      setFecha(hoy)
+      setVista('ventas')
+      setRecargaVentas((n) => n + 1)
+      enfocarProducto()
+    } catch (e) {
+      setCorte({ ...corte, confirmar: false, error: String(e) })
+    }
+  }
 
   // Lo que hace cada acción de botón (`archivo_accion` de la v2). Las que aún no existen en la v3
   // devuelven el motivo y el botón se muestra deshabilitado.
@@ -519,6 +585,7 @@ export default function App() {
       case 'ping':
         return () => setAviso({ tono: 'neutral', texto: 'pong' })
       case 'corte_de_caja':
+        return () => void abrirCorte()
       case 'autocompletado':
       case 'ver_codigos_de_barras':
         return 'Todavía no está en la v3 (fase 2, siguiente bloque).'
@@ -612,6 +679,90 @@ export default function App() {
                 </NexProvider>
               </NexMorph.Target>
   )
+  const columnaCorte = (tipo: string) => (
+    <div className="caja__corte-columna">
+      <p className="caja__corte-titulo">{tipo === 'BILLETE' ? 'Billetes' : 'Monedas'}</p>
+      {denominaciones.map((d, i) =>
+        d.tipo !== tipo ? null : (
+          <div key={i} className="caja__corte-fila">
+            <NexInput
+              ref={i === 0 ? refPrimeraPieza : undefined}
+              label={d.texto}
+              density="compact"
+              inputMode="numeric"
+              autoComplete="off"
+              value={corte?.cantidades[i] ?? ''}
+              disabled={corte?.confirmar}
+              onChange={(e) =>
+                corte && setCorte({ ...corte, error: null, cantidades: corte.cantidades.map((c, j) => (j === i ? e.target.value : c)) })
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  pedirConfirmacionCorte()
+                }
+              }}
+            />
+            <span className="caja__corte-subtotal">
+              {(() => {
+                const n = piezas(corte?.cantidades[i] ?? '')
+                return n === null ? '¿?' : n ? `= ${dinero(d.valor * n)}` : ''
+              })()}
+            </span>
+          </div>
+        ),
+      )}
+    </div>
+  )
+  const modalCorte = (
+              <NexMorph.Target label="Corte de caja" className="caja__modal" size="content" panelStyle={{ width: 'min(560px, calc(100vw - 32px))' }}>
+                {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
+                <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+                  <div className="caja__cobro">
+                    <p className="caja__cobro-total">Corte de caja</p>
+                    <p className="caja__nota">
+                      Escriba cuántas piezas de cada billete y moneda se quedan en la caja como cambio. Lo que no haya, déjelo vacío.
+                      Intro sigue.
+                    </p>
+                    <div className="caja__corte">
+                      {columnaCorte('BILLETE')}
+                      {columnaCorte('MONEDA')}
+                    </div>
+                    <p className="caja__corte-total">Total de cambio: {dinero(totalCorte)}</p>
+                    {corte?.error && (
+                      <p className="caja__aviso caja__aviso--danger" role="alert">
+                        {corte.error}
+                      </p>
+                    )}
+                    {corte?.confirmar ? (
+                      <>
+                        <p className="caja__aviso caja__aviso--warning" role="alert">
+                          Se hará el corte con {dinero(totalCorte)} de cambio en la caja. Las ventas de hoy hechas hasta ahora
+                          dejarán de verse en la tabla (siguen guardadas y se pueden revisar eligiendo el día).
+                        </p>
+                        <div className="caja__cobro-acciones">
+                          <NexButton ref={refRegresar} appearance="filled" onClick={() => corte && setCorte({ ...corte, confirmar: false })}>
+                            Regresar (Intro)
+                          </NexButton>
+                          <NexButton appearance="outlined" tone="danger" onClick={() => void hacerCorte()}>
+                            Hacer el corte
+                          </NexButton>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="caja__cobro-acciones">
+                        <NexButton appearance="filled" onClick={pedirConfirmacionCorte}>
+                          Hacer corte (Intro)
+                        </NexButton>
+                        <NexButton appearance="ghost" onClick={cerrarCorte}>
+                          Cancelar
+                        </NexButton>
+                      </div>
+                    )}
+                  </div>
+                </NexProvider>
+              </NexMorph.Target>
+  )
   const botonDe = (b: Boton) => {
     const hacer = accion(b.accion)
     const deshabilitado = typeof hacer === 'string' || turnoPerdido
@@ -643,10 +794,16 @@ export default function App() {
           {modalCodigo}
         </NexMorph>
       )
+    if (b.accion === 'corte_de_caja')
+      return (
+        <NexMorph key={b.id} open={corte !== null} onOpenChange={(abierto) => !abierto && cerrarCorte()}>
+          <NexMorph.Source>{boton}</NexMorph.Source>
+          {modalCorte}
+        </NexMorph>
+      )
     return boton
   }
 
-  const hoy = toIsoDate(new Date())
   const conVentas = useMemo(() => new Set(fechas), [fechas])
 
   return (

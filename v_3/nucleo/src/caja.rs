@@ -61,6 +61,8 @@ pub enum Autorizacion {
     Codigo,
     /// Al cobrar una venta (D23: también entra al registro).
     Venta,
+    /// Al hacer el corte de caja (para contar el cambio), como la v2. Desde el esquema 5.
+    Corte,
 }
 
 impl Autorizacion {
@@ -70,6 +72,7 @@ impl Autorizacion {
             Autorizacion::VentanaDiaria => "ventana_diaria",
             Autorizacion::Codigo => "codigo",
             Autorizacion::Venta => "venta",
+            Autorizacion::Corte => "corte",
         }
     }
 
@@ -79,6 +82,7 @@ impl Autorizacion {
             Autorizacion::VentanaDiaria => "Se abrió la caja para contar el cambio (una vez al día, antes de la primera venta).",
             Autorizacion::Codigo => "Se abrió la caja con el código autorizado.",
             Autorizacion::Venta => "Se abrió la caja al cobrar una venta.",
+            Autorizacion::Corte => "Se abrió la caja para hacer un corte de caja.",
         }
     }
 }
