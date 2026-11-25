@@ -28,7 +28,10 @@ export function useMarcoHoja(ref: RefObject<HTMLElement | null>, deps: Dependenc
     let vistaObservada: HTMLElement | null = null
     const medir = () => {
       const editor = nodo.querySelector<HTMLElement>('.nx-sheets')
-      const vista = nodo.querySelector<HTMLElement>('.nx-sheet__viewport')
+      // `.nx-sheet` contiene el área con scroll Y sus carriles: su tamaño no cambia cuando un carril
+      // aparece o desaparece. Medir el área (que sí cambia) provocaba un ciclo: carril vertical →
+      // menos ancho → carril horizontal → menos alto → otras filas visibles → sin carril vertical…
+      const vista = nodo.querySelector<HTMLElement>('.nx-sheet')
       const esquina = nodo.querySelector<HTMLElement>('.nx-sheet__corner')
       if (!editor || !vista) return
       // La hoja puede montarse después (o volver a montarse): se observa su área en cuanto exista.

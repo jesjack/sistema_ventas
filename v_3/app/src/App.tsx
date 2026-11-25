@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexDatePicker, NexInput, NexMorph, NexProvider, NexSegmented, NexSelect, toIsoDate } from '@nexfluid/react'
 import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
-import { ALTO_FILA_HOJA, altoHojaCarrito, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
+import { ALTO_FILA_HOJA, CARRIL_HOJA, altoHojaCarrito, filasVentasQueCaben, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
 import { useAltoDisponible, useMarcoHoja } from './marcoHoja.ts'
 import { Icono } from './iconos.tsx'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
@@ -179,8 +179,12 @@ export default function App() {
   const libroVentas = useMemo<Workbook>(() => {
     const nodo = refVentas.current
     if (!nodo || !marcoVentas.anchoUtil) return libroDeVentas(lineasVenta)
-    return libroDeVentas(lineasVenta, anchosVentas(lineasVenta, marcoVentas.anchoUtil, medidorDeTexto(nodo)))
-  }, [lineasVenta, marcoVentas.anchoUtil, marcoVentas.fuentes])
+    // Si no caben todas las filas habrá carril vertical: se le reserva su ancho desde ya, para que
+    // las columnas no se desborden a lo ancho cuando aparezca.
+    const desborda = lineasVenta.length > filasVentasQueCaben(marcoVentas.extraAlto, altoVentas)
+    const ancho = marcoVentas.anchoUtil - (desborda ? CARRIL_HOJA : 0)
+    return libroDeVentas(lineasVenta, anchosVentas(lineasVenta, ancho, medidorDeTexto(nodo)))
+  }, [lineasVenta, marcoVentas.anchoUtil, marcoVentas.extraAlto, marcoVentas.fuentes, altoVentas])
   // Lo más reciente abajo, como en la hoja de la v2: al cargar o al cobrar, se baja al final.
   useEffect(() => {
     const vista = refVentas.current?.querySelector<HTMLElement>('.nx-sheet__viewport')

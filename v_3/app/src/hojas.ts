@@ -168,6 +168,13 @@ export function anchosVentas(
  * puede ocupar la hoja); con más, se desplaza. Sin medida todavía, FILAS_VISIBLES_VENTAS.
  */
 export function altoHojaVentas(lineas: readonly LineaVenta[], extra: number, disponible = 0): number {
-  const caben = disponible > 0 ? Math.max(1, Math.floor((disponible - extra) / ALTO_FILA_HOJA) - 1) : FILAS_VISIBLES_VENTAS
-  return (Math.min(Math.max(lineas.length, 1), caben) + 1) * ALTO_FILA_HOJA + extra
+  return (Math.min(Math.max(lineas.length, 1), filasVentasQueCaben(extra, disponible)) + 1) * ALTO_FILA_HOJA + extra
 }
+
+/** Cuántas filas de VENTAS REALIZADAS caben sin desplazarse. */
+export function filasVentasQueCaben(extra: number, disponible: number): number {
+  return disponible > 0 ? Math.max(1, Math.floor((disponible - extra) / ALTO_FILA_HOJA) - 1) : FILAS_VISIBLES_VENTAS
+}
+
+/** Ancho del carril de la barra vertical de NexSheets (`.nx-sheet[data-nx-rails]`, 14 px). */
+export const CARRIL_HOJA = 14
