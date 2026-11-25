@@ -1,7 +1,7 @@
 # Contexto para continuar la V3 (Rust + Tauri + NexFluid)
 
 Documento de traspaso entre sesiones de trabajo (con o sin Claude). **Léelo antes de seguir.**
-Última actualización: 2026-11-24, noche (fase 1 completa; **fase 2: bloque 1 hecho**, ver §9).
+Última actualización: 2026-11-24, noche (fase 1 completa; **fase 2: pantalla, corte y códigos de barras hechos**, ver §9).
 
 ## 1. La decisión de fondo
 
@@ -315,12 +315,19 @@ otro NexProvider dentro).
   queda como evento en VENTAS REALIZADAS ("CORTE VERIFICADO: FALTAN $30.00").
 - `$` en las columnas de dinero de las hojas (NexSheets `columnFormats`, caja.18).
 
+**Códigos de barras (hecho):** escanear uno no registrado abre "Código nuevo" (producto con
+autocompletado, Tab elige; si no está en el catálogo se agrega con `formatear_nombre`; precio de
+venta) y lo registra; **a diferencia de la v2, además lo agrega al carrito** (el usuario puede pedir
+que no). VER CÓDIGOS: buscar por código o producto, conteo, tabla (código, producto, precio,
+registro) y Editar con las reglas de la v2 (precio >= 0; código escrito a mano hasta 6 caracteres,
+uno viejo más largo se puede dejar; sin duplicados; aviso de etiquetas impresas). Vista en
+`src/codigos.tsx`; comandos `codigos_barras`, `registrar_codigo`, `actualizar_codigo`.
+
 **Pendiente del escáner directo:** lee bien y no escribe en la app de enfrente (probado), pero la
 ventana NO pasa al frente en Wayland; se verá después.
 
 **Siguiente (fase 2, bloques 2–4):**
 - **Autocompletado:** editor del catálogo + el **corrector ortográfico** (pendiente de `CLAUDE.md`).
-- **Ver códigos de barras** y registrar un código no registrado al escanearlo.
 - **Administración de botones** (decidido): **por usuario + plantilla `__default__`** como la v2,
   **solo desarrollador**, como **pantalla en el selector**; matriz con una fila por botón y una
   columna por usuario, activo, orden, etiqueta y acción elegida de una lista. **Ojo:** la v3 aún NO
