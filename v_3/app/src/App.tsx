@@ -6,6 +6,7 @@ import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
 import { ALTO_FILA_HOJA, CARRIL_HOJA, FORMATOS_CARRITO, FORMATOS_VENTAS, IDIOMA_HOJAS, altoHojaCarrito, filasVentasQueCaben, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
 import { useAltoDisponible, useMarcoHoja } from './marcoHoja.ts'
 import { Icono } from './iconos.tsx'
+import { PanelCodigos, PanelRegistro } from './codigos.tsx'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
 import { agregarAlCarrito, dinero, leerNumero, totalDelCarrito, type FilaCarrito } from './carrito.ts'
 import { DetectorEscaner, type Escaneo } from './escaner.ts'
@@ -142,6 +143,9 @@ export default function App() {
   // Botones configurables de la columna derecha (P1) y el panel de desarrollador.
   const [botones, setBotones] = useState<Boton[]>([])
   const [vista, setVista] = useState<Vista>('carrito')
+  // Códigos de barras: el escaneado que no estaba (se registra) y VER CÓDIGOS.
+  const [registroCodigo, setRegistroCodigo] = useState<string | null>(null)
+  const [verCodigosBarras, setVerCodigosBarras] = useState(false)
   // Pago exacto: se pide una segunda confirmación (Intro otra vez).
   const [confirmarExacto, setConfirmarExacto] = useState<null | 'normal' | 'sinTicket'>(null)
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
@@ -423,10 +427,8 @@ export default function App() {
         setCarrito((c) => agregarAlCarrito(c, registro.producto, registro.precio, 1) ?? c)
         setAviso({ tono: 'success', texto: `Escaneado: ${registro.producto} (${dinero(registro.precio)})` })
       } else {
-        setAviso({
-          tono: 'warning',
-          texto: `El código ${escaneo.codigo} no está registrado. En la v3 aquí se abriría el registro del código.`,
-        })
+        // Como la v2: se registra (producto y precio). Además, la v3 lo agrega al carrito.
+        setRegistroCodigo(escaneo.codigo)
       }
     } catch (e) {
       setAviso({ tono: 'danger', texto: `Error al buscar el código: ${e}` })
@@ -698,8 +700,9 @@ export default function App() {
         return () => setAviso({ tono: 'neutral', texto: 'pong' })
       case 'corte_de_caja':
         return () => void abrirCorte()
-      case 'autocompletado':
       case 'ver_codigos_de_barras':
+        return () => setVerCodigosBarras(true)
+      case 'autocompletado':
         return 'Todavía no está en la v3 (fase 2, siguiente bloque).'
       case 'imprimir_codigo_de_barras':
       case 'imprimir_varios_codigos':
@@ -892,6 +895,17 @@ export default function App() {
         <NexMorph key={b.id} open={pideCodigo !== null} onOpenChange={(abierto) => !abierto && (setPideCodigo(null), enfocarProducto())}>
           <NexMorph.Source>{boton}</NexMorph.Source>
           {modalCodigo}
+        </NexMorph>
+      )
+    if (b.accion === 'ver_codigos_de_barras')
+      return (
+        <NexMorph key={b.id} open={verCodigosBarras} onOpenChange={(abierto) => !abierto && (setVerCodigosBarras(false), enfocarProducto())}>
+          <NexMorph.Source>{boton}</NexMorph.Source>
+          <NexMorph.Target label="Códigos de barras" className="caja__modal" size="content" panelStyle={{ width: 'min(760px, calc(100vw - 32px))' }}>
+            <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+              <PanelCodigos cerrar={() => (setVerCodigosBarras(false), enfocarProducto())} />
+            </NexProvider>
+          </NexMorph.Target>
         </NexMorph>
       )
     if (b.accion === 'corte_de_caja')
@@ -1225,6 +1239,26 @@ export default function App() {
         <aside className="caja__botones" aria-label="Botones">
           {botones.map(botonDe)}
           {botones.length === 0 && <p className="caja__nota">Este usuario no tiene botones asignados.</p>}
+          {/* Código escaneado que no estaba registrado: producto y precio (como la v2). */}
+          <NexMorph open={registroCodigo !== null} onOpenChange={(abierto) => !abierto && (setRegistroCodigo(null), enfocarProducto())}>
+            {registroCodigo !== null && (
+              <NexMorph.Target label="Registrar código" className="caja__modal" size="content" panelStyle={ESTILO_MODAL}>
+                <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+                  <PanelRegistro
+                    key={registroCodigo}
+                    codigo={registroCodigo}
+                    cancelar={() => (setRegistroCodigo(null), enfocarProducto())}
+                    registrado={(c) => {
+                      setRegistroCodigo(null)
+                      setCarrito((actual) => agregarAlCarrito(actual, c.producto, c.precio, 1) ?? actual)
+                      setAviso({ tono: 'success', texto: `Código ${c.codigo} registrado: ${c.producto} (${dinero(c.precio)}). Se agregó al carrito.` })
+                      enfocarProducto()
+                    }}
+                  />
+                </NexProvider>
+              </NexMorph.Target>
+            )}
+          </NexMorph>
           {!tieneBoton('cobrar_carrito') && (
             <NexMorph open={cobro !== null} onOpenChange={(abierto) => !abierto && cerrarCobro()}>
               {modalCobro}

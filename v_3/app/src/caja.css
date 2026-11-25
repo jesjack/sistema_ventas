@@ -429,3 +429,36 @@ body,
   background: color-mix(in srgb, var(--nx-warning, #c58a00) 12%, var(--nx-surface));
   font-size: var(--nx-text-small);
 }
+
+/* VER CÓDIGOS: la tabla con su propio scroll dentro del modal. */
+.caja__tabla-codigos {
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  border-radius: var(--nx-control-radius);
+  box-shadow: inset 0 0 0 1px var(--nx-border);
+}
+.caja__tabla-codigos table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--nx-text-small);
+}
+.caja__tabla-codigos th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px;
+  background: var(--nx-surface-sunken);
+  text-align: left;
+  font-weight: 600;
+}
+.caja__tabla-codigos td {
+  padding: 4px 10px;
+  border-top: 1px solid var(--nx-border);
+}
+.caja__tabla-codigos .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.caja__mono {
+  font-family: var(--nx-font-mono);
+}

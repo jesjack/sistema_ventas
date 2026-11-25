@@ -31,6 +31,8 @@ pub struct CodigoBarras {
     pub producto_id: i64,
     pub producto: String,
     pub precio: f64,
+    /// Cuándo se registró (texto de la base, como lo guarda la v2).
+    pub creado_en: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -106,7 +108,7 @@ fn ahora_local() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-const SELECT_CODIGOS: &str = "SELECT b.id, b.codigo_barras, c.id, c.producto, b.precio_venta
+const SELECT_CODIGOS: &str = "SELECT b.id, b.codigo_barras, c.id, c.producto, b.precio_venta, b.creado_en
      FROM codigos_barras_registrados b JOIN catalogo_autocompletado c ON c.id = b.producto_id";
 
 impl Base {
@@ -221,5 +223,5 @@ impl Base {
 }
 
 fn fila_codigo(f: &rusqlite::Row<'_>) -> rusqlite::Result<CodigoBarras> {
-    Ok(CodigoBarras { id: f.get(0)?, codigo: f.get(1)?, producto_id: f.get(2)?, producto: f.get(3)?, precio: f.get(4)? })
+    Ok(CodigoBarras { id: f.get(0)?, codigo: f.get(1)?, producto_id: f.get(2)?, producto: f.get(3)?, precio: f.get(4)?, creado_en: f.get(5)? })
 }

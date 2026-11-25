@@ -450,6 +450,99 @@ fn verificar_corte(estado: tauri::State<'_, Compartido>, corte_id: i64, contado:
     })
 }
 
+// ---- Códigos de barras (como la v2: registrar al escanear, ver y editar) -----------------------
+
+/// Largo máximo de un código ESCRITO a mano (lo que cabe en las etiquetas que imprime la caja). Un
+/// código escaneado de fábrica (EAN-13…) se registra tal cual; uno viejo más largo se puede dejar.
+const MAX_LARGO_CODIGO: usize = 6;
+
+/// Precio de venta como lo pide la v2 (`leer_precio`): número >= 0.
+fn leer_precio(texto: &str) -> Result<f64, String> {
+    match nucleo::leer_monto(texto) {
+        None if texto.trim().is_empty() => Err("Escriba el precio de venta (solo números y, si hace falta, punto decimal).".into()),
+        None => Err("Escriba el precio de venta (solo números y, si hace falta, punto decimal).".into()),
+        Some(p) if p < 0.0 => Err("El precio de venta debe ser mayor o igual a cero.".into()),
+        Some(p) => Ok(p),
+    }
+}
+
+#[derive(Serialize)]
+struct ListaCodigos {
+    codigos: Vec<nucleo::CodigoBarras>,
+    total: usize,
+}
+
+/// VER CÓDIGOS: los registrados, filtrados por código o producto (sin acentos), y cuántos hay.
+#[tauri::command]
+fn codigos_barras(estado: tauri::State<'_, Compartido>, filtro: String) -> Result<ListaCodigos, String> {
+    con_base(&estado, |b| {
+        let total = b.codigos("").map_err(|e| e.to_string())?.len();
+        let codigos = if filtro.trim().is_empty() { b.codigos("") } else { b.codigos(&filtro) }.map_err(|e| e.to_string())?;
+        Ok(ListaCodigos { codigos, total })
+    })
+}
+
+/// El producto del catálogo para un código: el elegido de la lista o, si se escribió uno que no
+/// está, se agrega al catálogo (con el formato de nombre de la v2).
+fn producto_para(b: &mut Base, producto_id: Option<i64>, nombre: &str, sesion_id: i64) -> Result<i64, String> {
+    if let Some(id) = producto_id {
+        return Ok(id);
+    }
+    let nombre = nucleo::catalogo::formatear_nombre(nombre);
+    if let Some(p) = b.productos().map_err(|e| e.to_string())?.into_iter().find(|p| p.nombre == nombre) {
+        return Ok(p.id);
+    }
+    b.agregar_producto(&nombre, Some(sesion_id)).map_err(|e| e.to_string())
+}
+
+/// Registra un código escaneado que no estaba (como la v2: producto y precio de venta). Devuelve el
+/// registro para agregarlo al carrito.
+#[tauri::command]
+fn registrar_codigo(estado: tauri::State<'_, Compartido>, codigo: String, producto_id: Option<i64>, producto: String, precio: String) -> Result<nucleo::CodigoBarras, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    let precio = leer_precio(&precio)?;
+    if producto_id.is_none() && producto.trim().is_empty() {
+        return Err("Elija o escriba el producto.".into());
+    }
+    con_base(&estado, |b| {
+        let producto_id = producto_para(b, producto_id, &producto, sesion.id)?;
+        b.registrar_codigo(&codigo, producto_id, precio, Some(sesion.id)).map_err(|e| e.to_string())?;
+        b.buscar_codigo(&codigo).map_err(|e| e.to_string())?.ok_or_else(|| "No se encontró el código recién registrado.".into())
+    })
+}
+
+/// Edita un código registrado: su texto, su producto o su precio (como "Editar..." de la v2).
+#[tauri::command]
+fn actualizar_codigo(
+    estado: tauri::State<'_, Compartido>,
+    id: i64,
+    codigo: String,
+    producto_id: Option<i64>,
+    producto: String,
+    precio: String,
+) -> Result<(), String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    let precio = leer_precio(&precio)?;
+    let codigo = codigo.trim().to_string();
+    con_base(&estado, |b| {
+        let anterior = b.codigos("").map_err(|e| e.to_string())?.into_iter().find(|c| c.id == id).ok_or("Ese código ya no existe.")?;
+        if codigo.is_empty() {
+            return Err("Escriba el código.".into());
+        }
+        // Un código viejo más largo que lo que se imprime se puede dejar como está; uno nuevo no.
+        if codigo != anterior.codigo && codigo.chars().count() > MAX_LARGO_CODIGO {
+            return Err(format!("El código debe tener como máximo {MAX_LARGO_CODIGO} caracteres."));
+        }
+        let producto_id = producto_para(b, producto_id, &producto, sesion.id)?;
+        match b.actualizar_codigo(id, &codigo, producto_id, precio, Some(sesion.id)) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("Ese código ya no existe.".into()),
+            Err(nucleo::ErrorCatalogo::CodigoDuplicado) => Err(format!("Ya hay otro código registrado como «{codigo}».")),
+            Err(e) => Err(e.to_string()),
+        }
+    })
+}
+
 /// Estado de la lectura directa del escáner (para Desarrollador).
 #[tauri::command]
 fn estado_escaner(escaner: tauri::State<'_, Arc<escaner::Escaner>>) -> escaner::EstadoEscaner {
@@ -491,7 +584,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte, codigos_barras, registrar_codigo, actualizar_codigo])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {
