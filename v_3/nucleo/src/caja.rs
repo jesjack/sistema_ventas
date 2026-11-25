@@ -478,13 +478,13 @@ mod pruebas {
         assert!(matches!(base.agregar_codigo(empleada, "1234", &m("10:00:00"), None), Err(ErrorCaja::SinPermisoParaElCodigo)));
         assert!(matches!(base.codigos_caja(empleada, 10), Err(ErrorCaja::SinPermisoParaElCodigo)));
         assert!(matches!(base.agregar_codigo(duena, "12", &m("10:00:00"), None), Err(ErrorCaja::CodigoCorto(4))));
-        base.agregar_codigo(duena, " 7410 ", &m("10:00:00"), None).unwrap();
+        base.agregar_codigo(duena, " 5931 ", &m("10:00:00"), None).unwrap();
         let segundo = base.agregar_codigo(duena, "8520", &m("10:00:01"), None).unwrap();
         let tercero = base.agregar_codigo(duena, "9630", &m("10:00:02"), None).unwrap();
         assert!(matches!(base.agregar_codigo(duena, "8520", &m("10:00:03"), None), Err(ErrorCaja::CodigoRepetido)));
         assert_eq!(base.estado_codigos().unwrap().disponibles, 3);
         let guardado: String = base.con.query_row("SELECT group_concat(hash || sal) FROM codigos_caja", [], |f| f.get(0)).unwrap();
-        assert!(!guardado.contains("7410") && !guardado.contains("8520"), "los códigos no se guardan en texto");
+        assert!(!guardado.contains("5931") && !guardado.contains("8520"), "los códigos no se guardan en texto");
         // Uno incorrecto no gasta nada; uno correcto gasta solo ese.
         assert!(matches!(base.usar_codigo("0000", &m("10:05:00"), None), Err(ErrorCaja::CodigoIncorrecto)));
         let sesion = base.iniciar_sesion(empleada, &m("09:00:00"), None, None).unwrap();
@@ -502,7 +502,7 @@ mod pruebas {
         assert!(lista[0].usado.is_none() && lista[0].retirado.is_none(), "primero los disponibles");
         assert!(lista.iter().any(|c| c.id == tercero && c.retirado.is_some()));
         assert!(lista.iter().any(|c| c.id == segundo && c.usado.is_some()));
-        base.usar_codigo("7410", &m("10:10:00"), None).unwrap();
-        assert!(matches!(base.usar_codigo("7410", &m("10:11:00"), None), Err(ErrorCaja::SinCodigo)));
+        base.usar_codigo("5931", &m("10:10:00"), None).unwrap();
+        assert!(matches!(base.usar_codigo("5931", &m("10:11:00"), None), Err(ErrorCaja::SinCodigo)));
     }
 }

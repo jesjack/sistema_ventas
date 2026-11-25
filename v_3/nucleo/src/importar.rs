@@ -167,7 +167,7 @@ mod pruebas {
             let p = v2.agregar_producto("Blusa Básica", Some(s1)).unwrap();
             v2.registrar_codigo("7501", p, 150.0, Some(s1)).unwrap();
             // Algo que NO debe pasar a la v3: un código de autorización en texto plano.
-            v2.ejecutar_sql("INSERT INTO autorizaciones_codigos (codigo, evento_id) VALUES ('7410', 1)").unwrap();
+            v2.ejecutar_sql("INSERT INTO autorizaciones_codigos (codigo, evento_id) VALUES ('5931', 1)").unwrap();
         }
         let antes = std::fs::read(&ruta_v2).unwrap();
         let ruta_v3 = carpeta.0.join("v3.db");
