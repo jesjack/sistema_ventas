@@ -24,3 +24,5 @@ log = "0.4"
 tauri = { version = "2.12.7", features = [] }
 tauri-plugin-log = "2"
 nucleo = { path = "../../nucleo" }
+evdev = "0.13"
+libc = "0.2"

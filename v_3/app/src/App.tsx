@@ -431,6 +431,23 @@ export default function App() {
     return () => window.removeEventListener('keydown', alTeclear, { capture: true })
   }, [procesarEscaneo])
 
+  // Lectura directa del escáner (Rust, evdev): llega aunque otra app tenga el foco, y la ventana
+  // pide pasar al frente. Apagada por defecto mientras la v2 sea la oficial (ver escaner.rs).
+  const [escanerDirecto, setEscanerDirecto] = useState<{ activo: boolean; estado: string } | null>(null)
+  useEffect(() => {
+    const quitar = listen<string>('escaneo', (e) => {
+      setVista('carrito')
+      void procesarEscaneo({ codigo: e.payload, ritmoMs: 0 })
+    })
+    return () => void quitar.then((f) => f())
+  }, [procesarEscaneo])
+  useEffect(() => {
+    const leer = () => invoke<{ activo: boolean; estado: string }>('estado_escaner').then(setEscanerDirecto, () => {})
+    leer()
+    const id = setInterval(leer, 2000)
+    return () => clearInterval(id)
+  }, [])
+
   // Solo llegan las teclas que NexCombobox no usó: Intro con la lista cerrada.
   const teclaProducto = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -815,6 +832,17 @@ export default function App() {
               >
                 Reiniciar mediciones
               </NexButton>
+
+              <h3>Escáner</h3>
+              <NexCheckbox
+                label="Lectura directa del escáner"
+                description="Lo toma en exclusiva y lee aunque otra app tenga el foco (la caja pide pasar al frente). Mientras esté encendido, la v2 NO recibe el escáner."
+                checked={escanerDirecto?.activo ?? false}
+                onChange={(e) =>
+                  void invoke<{ activo: boolean; estado: string }>('escaner_directo', { activar: e.target.checked }).then(setEscanerDirecto)
+                }
+              />
+              {escanerDirecto && <p className="caja__nota">Estado: {escanerDirecto.estado}</p>}
 
               <h3>Aspecto</h3>
               <NexSelect

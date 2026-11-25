@@ -10,7 +10,10 @@
 //! existe, `datos/ventas_v3.db` del prototipo. **Nunca abre una base de la v2:** ni la ruta real
 //! (`v_2/share/ventas.db`) ni ninguna otra con su esquema (el núcleo se niega a migrarla).
 
+mod escaner;
+
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use nucleo::caja::{Autorizacion, CodigoCaja, EstadoCodigos, POCOS_CODIGOS};
@@ -385,6 +388,19 @@ fn iniciar_latido(app: tauri::AppHandle) {
     });
 }
 
+/// Estado de la lectura directa del escáner (para Desarrollador).
+#[tauri::command]
+fn estado_escaner(escaner: tauri::State<'_, Arc<escaner::Escaner>>) -> escaner::EstadoEscaner {
+    escaner.estado()
+}
+
+/// Enciende o apaga la lectura directa del escáner (en exclusiva: la v2 deja de recibirlo).
+#[tauri::command]
+fn escaner_directo(escaner: tauri::State<'_, Arc<escaner::Escaner>>, activar: bool) -> escaner::EstadoEscaner {
+    escaner.activar(activar);
+    escaner.estado()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let app = tauri::Builder::default()
@@ -401,6 +417,9 @@ pub fn run() {
       app.manage(Mutex::new(Estado { ruta, base, sesion }));
       iniciar_latido(app.handle().clone());
       vigilar_turno(app.handle().clone());
+      let lector = Arc::new(escaner::Escaner::default());
+      escaner::iniciar(app.handle().clone(), lector.clone());
+      app.manage(lector);
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -410,7 +429,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {
