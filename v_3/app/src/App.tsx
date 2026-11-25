@@ -107,7 +107,7 @@ const serieConsultas = new Serie()
 
 export default function App() {
   const [tema, setTema] = useState('editorial-light')
-  const [movimiento, setMovimiento] = useState<NexMotion>('subtle')
+  const [movimiento, setMovimiento] = useState<NexMotion>('fluid')
   const [depurarGota, setDepurarGota] = useState(false)
   const [gotaSimetrica, setGotaSimetrica] = useState(true)
   const [hoverMembrana, setHoverMembrana] = useState(true)
