@@ -390,7 +390,7 @@ body,
 }
 
 /* Badge de CÓDIGOS DE CAJA: en la esquina superior derecha del botón, encima del borde, con letra
-   a la mitad del tamaño normal del badge. */
+   al 80 % del tamaño normal del badge (a la mitad no se leía). */
 .caja__con-badge {
   position: relative;
 }
@@ -400,8 +400,8 @@ body,
   right: 0;
   z-index: 1;
   transform: translate(30%, -40%);
-  padding: 1px 5px;
-  font-size: calc(var(--nx-text-micro, 0.75rem) * 0.5);
+  padding: 2px 7px;
+  font-size: calc(var(--nx-text-micro, 0.75rem) * 0.8);
   line-height: 1.2;
   pointer-events: none;
 }
