@@ -905,16 +905,19 @@ export default function App() {
           {estadoCaja?.administra_codigos && (
             <NexMorph open={verCodigos} onOpenChange={(abierto) => !abierto && cerrarCodigos()}>
               <NexMorph.Source>
-                <NexButton
-                  fullWidth
-                  contentAlign="start"
-                  iconStart={<Icono nombre="codigos_caja" />}
-                  iconEnd={<BadgeCodigos estado={estadoCaja} />}
-                  disabled={turnoPerdido}
-                  onClick={abrirCodigos}
-                >
-                  <span className="caja__boton-texto">CÓDIGOS DE CAJA</span>
-                </NexButton>
+                {/* El badge va en la esquina superior derecha del botón, encima: no le quita espacio al texto. */}
+                <div className="caja__con-badge">
+                  <NexButton
+                    fullWidth
+                    contentAlign="start"
+                    iconStart={<Icono nombre="codigos_caja" />}
+                    disabled={turnoPerdido}
+                    onClick={abrirCodigos}
+                  >
+                    <span className="caja__boton-texto">CÓDIGOS DE CAJA</span>
+                  </NexButton>
+                  <BadgeCodigos estado={estadoCaja} />
+                </div>
               </NexMorph.Source>
               <NexMorph.Target label="Códigos de caja" className="caja__modal" size="content" panelStyle={ESTILO_MODAL}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
@@ -1043,7 +1046,7 @@ function BadgeCodigos({ estado }: { estado: EstadoCaja }) {
   const n = estado.codigos.disponibles
   const tono = n === 0 ? 'danger' : n <= estado.pocos_codigos ? 'warning' : 'neutral'
   return (
-    <NexBadge tone={tono} title={n === 0 ? 'No quedan códigos para la empleada' : `Quedan ${n}`}>
+    <NexBadge className="caja__badge-esquina" tone={tono} title={n === 0 ? 'No quedan códigos para la empleada' : `Quedan ${n}`}>
       {n === 0 ? 'Sin códigos' : n}
     </NexBadge>
   )

@@ -388,3 +388,20 @@ body,
 .caja__codigo:not([data-estado='disponible']) {
   color: var(--nx-fg-subtle);
 }
+
+/* Badge de CÓDIGOS DE CAJA: en la esquina superior derecha del botón, encima del borde, con letra
+   a la mitad del tamaño normal del badge. */
+.caja__con-badge {
+  position: relative;
+}
+.caja__badge-esquina {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  transform: translate(30%, -40%);
+  padding: 1px 5px;
+  font-size: calc(var(--nx-text-micro, 0.75rem) * 0.5);
+  line-height: 1.2;
+  pointer-events: none;
+}
