@@ -128,13 +128,13 @@ No se instala desde GitHub (es un monorepo que hay que compilar). Pasos:
 
 ```bash
 cd ~/nexfluid && git switch jesjack/feat/caja-v3 && npm ci && npm run build:lib
-S=$(mktemp -d); V=~/sistema_ventas_v3/v_3/app/vendor; N=0.9.0-caja.18   # siguiente número (hoy: caja.17)
+S=$(mktemp -d); V=~/sistema_ventas_v3/v_3/app/vendor; N=0.9.0-caja.19   # siguiente número (hoy: caja.18)
 for p in foundation core components react; do
   mkdir -p $S/$p && cp -r packages/$p/{package.json,dist,README.md,LICENSE} $S/$p/
   (cd $S/$p && node -e "const p=require('./package.json');p.version='$N';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')" && npm pack --pack-destination $V)
 done
-rm $V/*-0.9.0-caja.17.tgz          # el anterior
-cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.17.tgz/$N.tgz/g" package.json && npm install && rm -rf node_modules/.vite
+rm $V/*-0.9.0-caja.18.tgz          # el anterior
+cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.18.tgz/$N.tgz/g" package.json && npm install && rm -rf node_modules/.vite
 ```
 
 - **Empaquetar SIEMPRE desde una copia temporal.** `npm version` dentro del repo de NexFluid
@@ -295,14 +295,30 @@ el permiso). Ya no hay panel de ventas debajo del carrito ni botón VER VENTAS.
 la futura pantalla de botones): IMPRIMIR CÓDIGO DE BARRAS y VER VENTAS desactivados; IMPRIMIR VARIOS
 CÓDIGOS → "IMPRIMIR CÓDIGOS"; VER CÓDIGOS DE BARRAS → "VER CÓDIGOS"; los permisos de §8.
 
-**NexFluid** (`caja.17`; ramas en §5): fix de la celda de la esquina de NexSheets (curva solo en la
+**NexFluid** (`caja.18`; ramas en §5): fix de la celda de la esquina de NexSheets (curva solo en la
 esquina visible); `NexDatePicker`, `NexCombobox tabSelects`, `NexMorph.Target size="content"`
 (el modal mide su contenido; sin barra sobrante). Hallazgos 18–21 en `docs/HALLAZGOS-CAJA-V3.md`;
 **el 19 sigue abierto** (el modal en `<body>` pierde `radius`/`corner` del NexProvider: la caja pone
 otro NexProvider dentro).
 
+**Corte de caja (hecho, con cambios respecto a la v2 pedidos por el usuario):**
+- Denominaciones: billetes de $500 a $20 y UN campo "Monedas (pesos)" (piezas de $1); las monedas
+  no se cuentan por denominación. Modal 3 × 2. Abre el cajón (apertura "corte", esquema v5);
+  confirmación con Intro = Regresar (como la v2). Ticket del corte: fase 3.
+- Un corte hecho al cerrar, sin ventas después ese día, **pasa al día siguiente** como el cambio
+  con el que empieza (`Base::ventas_de_hoy`; `ventas_del_dia` sigue como la v2 por las pruebas
+  doradas). Un corte del mismo día (Nancy en la mañana) sigue siendo el punto de partida de ese
+  día aunque luego se venda; las ventas solo impiden que pase al día siguiente.
+- Badge de CORTE DE CAJA: "Listo $X" mientras nadie venda después del último corte; "Sin corte".
+- **Verificar corte** (esquema v6, `verificaciones_corte`): aviso arriba de la venta con el cambio
+  esperado mientras nadie lo verifique; Cuadra / No cuadra (cuánto hay) / abrir caja para contar;
+  queda como evento en VENTAS REALIZADAS ("CORTE VERIFICADO: FALTAN $30.00").
+- `$` en las columnas de dinero de las hojas (NexSheets `columnFormats`, caja.18).
+
+**Pendiente del escáner directo:** lee bien y no escribe en la app de enfrente (probado), pero la
+ventana NO pasa al frente en Wayland; se verá después.
+
 **Siguiente (fase 2, bloques 2–4):**
-- **Corte de caja** desde la pantalla (el núcleo ya lo registra).
 - **Autocompletado:** editor del catálogo + el **corrector ortográfico** (pendiente de `CLAUDE.md`).
 - **Ver códigos de barras** y registrar un código no registrado al escanearlo.
 - **Administración de botones** (decidido): **por usuario + plantilla `__default__`** como la v2,
