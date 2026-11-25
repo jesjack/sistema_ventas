@@ -28,6 +28,16 @@ impl Momento {
     }
 }
 
+/// Un corte que sigue valiendo: nadie ha vendido después de él.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CorteListo {
+    pub id: i64,
+    pub fecha: String,
+    pub hora: String,
+    /// Lo que se dejó de cambio.
+    pub total: f64,
+}
+
 /// Una fila de VENTAS REALIZADAS: un producto vendido, un evento (sin precio, cantidad ni
 /// subtotal) o, tras un corte, una pieza del cambio que se dejó en la caja.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -201,6 +211,82 @@ impl Base {
         Ok(filas)
     }
 
+    /// VENTAS REALIZADAS de hoy en la v3: como `ventas_del_dia(hoy, true)`, pero si hoy no hay corte
+    /// y el último corte de un día anterior fue lo último de su día (ninguna venta después, ni ese
+    /// día ni en días intermedios), su cambio pasa a ser el cambio con el que empieza hoy (pedido el
+    /// 2026-11-24: Nancy hace el corte al cerrar y la empleada lo verifica al día siguiente).
+    pub fn ventas_de_hoy(&self, hoy: &str) -> Result<Vec<FilaVentas>, ErrorBase> {
+        let filas = self.ventas_del_dia(hoy, true)?;
+        let corte_hoy: bool = self.con.query_row("SELECT EXISTS(SELECT 1 FROM cortes_caja WHERE fecha = ?1)", params![hoy], |f| f.get(0))?;
+        if corte_hoy {
+            return Ok(filas);
+        }
+        let Some(listo) = self.corte_que_pasa_a(hoy)? else { return Ok(filas) };
+        let mut con_cambio = self.cambio_del_corte(listo.id, &listo.hora)?;
+        con_cambio.extend(filas);
+        Ok(con_cambio)
+    }
+
+    /// El último corte de un día anterior a `hoy`, si nadie vendió después de él antes de `hoy`.
+    fn corte_que_pasa_a(&self, hoy: &str) -> Result<Option<CorteListo>, ErrorBase> {
+        let corte: Option<(i64, String, String, i64)> = self
+            .con
+            .query_row(
+                "SELECT id, fecha, hora, ultima_venta_id FROM cortes_caja WHERE fecha < ?1 ORDER BY id DESC LIMIT 1",
+                params![hoy],
+                |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?, f.get(3)?)),
+            )
+            .optional()?;
+        let Some((id, fecha, hora, ultima_venta)) = corte else { return Ok(None) };
+        let ventas_despues: i64 =
+            self.con.query_row("SELECT count(*) FROM ventas WHERE id > ?1 AND fecha < ?2", params![ultima_venta, hoy], |f| f.get(0))?;
+        if ventas_despues > 0 {
+            return Ok(None);
+        }
+        Ok(Some(CorteListo { id, total: self.total_del_corte(id)?, fecha, hora }))
+    }
+
+    fn total_del_corte(&self, corte_id: i64) -> Result<f64, ErrorBase> {
+        Ok(self.con.query_row(
+            "SELECT COALESCE(SUM(denominacion * cantidad), 0) FROM cortes_caja_cambio WHERE corte_id = ?1",
+            params![corte_id],
+            |f| f.get(0),
+        )?)
+    }
+
+    /// Las filas del cambio que dejó un corte (una por denominación), a la hora del corte.
+    fn cambio_del_corte(&self, corte_id: i64, hora: &str) -> Result<Vec<FilaVentas>, ErrorBase> {
+        let mut consulta = self.con.prepare("SELECT tipo, denominacion, cantidad FROM cortes_caja_cambio WHERE corte_id = ?1 ORDER BY id")?;
+        let filas = consulta.query_map(params![corte_id], |f| {
+            let (tipo, denominacion, cantidad): (String, f64, i64) = (f.get(0)?, f.get(1)?, f.get(2)?);
+            Ok(FilaVentas {
+                hora: hora.to_string(),
+                producto: producto_de_cambio(&tipo),
+                precio: Some(denominacion),
+                cantidad: Some(cantidad),
+                subtotal: Some(denominacion * cantidad as f64),
+            })
+        })?;
+        Ok(filas.collect::<Result<_, _>>()?)
+    }
+
+    /// El estado del corte para el botón CORTE DE CAJA: "listo" mientras nadie haya vendido después
+    /// del último corte (una venta lo invalida y hay que volver a hacerlo).
+    pub fn corte_listo(&self) -> Result<Option<CorteListo>, ErrorBase> {
+        let corte: Option<(i64, String, String, i64)> = self
+            .con
+            .query_row("SELECT id, fecha, hora, ultima_venta_id FROM cortes_caja ORDER BY id DESC LIMIT 1", [], |f| {
+                Ok((f.get(0)?, f.get(1)?, f.get(2)?, f.get(3)?))
+            })
+            .optional()?;
+        let Some((id, fecha, hora, ultima_venta)) = corte else { return Ok(None) };
+        let ventas_despues: i64 = self.con.query_row("SELECT count(*) FROM ventas WHERE id > ?1", params![ultima_venta], |f| f.get(0))?;
+        if ventas_despues > 0 {
+            return Ok(None);
+        }
+        Ok(Some(CorteListo { id, total: self.total_del_corte(id)?, fecha, hora }))
+    }
+
     /// Los últimos `limite` días con ventas, del más reciente al más viejo.
     pub fn dias_con_ventas(&self, limite: u32) -> Result<Vec<String>, ErrorBase> {
         let mut consulta = self.con.prepare("SELECT DISTINCT fecha FROM ventas ORDER BY fecha DESC LIMIT ?1")?;
@@ -212,6 +298,30 @@ impl Base {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn el_corte_al_cerrar_pasa_al_dia_siguiente_si_nadie_vende_despues() {
+        use crate::corte::PiezaCambio;
+        let mut base = Base::en_memoria_v3().unwrap();
+        let item = FilaCarrito { producto: "faja".into(), precio: 200.0, cantidad: 1, subtotal: 200.0 };
+        let cambio = [PiezaCambio { tipo: "BILLETE".into(), denominacion: 100.0, cantidad: 3 }, PiezaCambio { tipo: "MONEDA".into(), denominacion: 1.0, cantidad: 40 }];
+        assert_eq!(base.corte_listo().unwrap(), None, "sin cortes");
+        base.registrar_venta(&[item.clone()], 200.0, 0.0, &Momento::nuevo("2026-11-24", "18:00:00"), None).unwrap();
+        base.registrar_corte(&cambio, &Momento::nuevo("2026-11-24", "20:00:00"), None).unwrap();
+        let listo = base.corte_listo().unwrap().expect("listo: nadie vendió después");
+        assert_eq!((listo.fecha.as_str(), listo.total), ("2026-11-24", 340.0));
+        // Al día siguiente, la tabla empieza con ese cambio, y las ventas de hoy van después.
+        base.registrar_venta(&[item.clone()], 200.0, 0.0, &Momento::nuevo("2026-11-25", "10:00:00"), None).unwrap();
+        let hoy = base.ventas_de_hoy("2026-11-25").unwrap();
+        let productos: Vec<_> = hoy.iter().map(|f| f.producto.as_str()).collect();
+        assert_eq!(productos, ["CAMBIO: BILLETE", "CAMBIO: MONEDA", "faja"]);
+        assert_eq!(base.corte_listo().unwrap(), None, "ya se vendió después del corte");
+        // Si se hubiera vendido después del corte ese mismo día, el corte ya no pasa.
+        base.registrar_corte(&cambio, &Momento::nuevo("2026-11-25", "20:00:00"), None).unwrap();
+        base.registrar_venta(&[item], 200.0, 0.0, &Momento::nuevo("2026-11-25", "20:30:00"), None).unwrap();
+        let siguiente = base.ventas_de_hoy("2026-11-26").unwrap();
+        assert!(siguiente.is_empty(), "el corte quedó invalidado por la venta de las 20:30");
+    }
 
     #[test]
     fn venta_sin_ticket_recibe_el_total_sin_cambio_y_queda_marcada() {

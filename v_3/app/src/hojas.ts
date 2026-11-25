@@ -65,7 +65,15 @@ export function anchosAjustados(
   return Object.fromEntries(anchos.map((a, c) => [c, a]))
 }
 
-/** Anchos del carrito: Precio, C. y Subtotal a su contenido; Producto ocupa el resto. */
+/** Formato de moneda de las columnas de dinero (NexSheets `columnFormats`): "$1,030.00". */
+export const FORMATO_MONEDA: Intl.NumberFormatOptions = { style: 'currency', currency: 'MXN' }
+export const IDIOMA_HOJAS = 'es-MX'
+const moneda = new Intl.NumberFormat(IDIOMA_HOJAS, FORMATO_MONEDA)
+/** Columnas de dinero del carrito (Precio, Subtotal) y de VENTAS REALIZADAS (Precio, Subtotal). */
+export const FORMATOS_CARRITO = { 1: FORMATO_MONEDA, 3: FORMATO_MONEDA }
+export const FORMATOS_VENTAS = { 2: FORMATO_MONEDA, 4: FORMATO_MONEDA }
+
+/** Anchos del carrito: Precio, C. y Subtotal a su contenido (como se VEN, con $); Producto ocupa el resto. */
 export function anchosCarrito(
   carrito: readonly FilaCarrito[],
   disponible: number,
@@ -73,9 +81,9 @@ export function anchosCarrito(
 ): Record<number, number> {
   const valores = [
     carrito.map((f) => f.producto),
-    carrito.map((f) => String(f.precio)),
+    carrito.map((f) => moneda.format(f.precio)),
     carrito.map((f) => String(f.cantidad)),
-    carrito.map((f) => String(f.subtotal)),
+    carrito.map((f) => moneda.format(f.subtotal)),
   ]
   return anchosAjustados(ENCABEZADOS_CARRITO, valores, 0, disponible, medir)
 }
@@ -156,9 +164,9 @@ export function anchosVentas(
   const valores = [
     lineas.map((l) => l.hora.slice(0, 5)),
     lineas.map((l) => l.producto),
-    lineas.map((l) => texto(l.precio)),
+    lineas.map((l) => (l.precio === null ? '' : moneda.format(l.precio))),
     lineas.map((l) => texto(l.cantidad)),
-    lineas.map((l) => texto(l.subtotal)),
+    lineas.map((l) => (l.subtotal === null ? '' : moneda.format(l.subtotal))),
   ]
   return anchosAjustados(ENCABEZADOS_VENTAS, valores, 1, disponible, medir)
 }

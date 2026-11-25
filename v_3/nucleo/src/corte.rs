@@ -3,19 +3,18 @@
 pub const BILLETE: &str = "BILLETE";
 pub const MONEDA: &str = "MONEDA";
 
-/// Las denominaciones en el orden del diálogo, del ticket y de la tabla de ventas.
+/// Las denominaciones del corte, en el orden del diálogo, del ticket y de la tabla de ventas.
+///
+/// Cambio respecto a la v2 (pedido el 2026-11-24): las monedas no se cuentan por denominación; se
+/// escribe cuánto suman en pesos, como piezas de `$1`. (La v2 tenía también monedas de $20, $10,
+/// $5, $2 y $0.50; los cortes viejos guardan sus propias denominaciones y se siguen mostrando.)
 pub const DENOMINACIONES: &[(&str, f64)] = &[
     (BILLETE, 500.0),
     (BILLETE, 200.0),
     (BILLETE, 100.0),
     (BILLETE, 50.0),
     (BILLETE, 20.0),
-    (MONEDA, 20.0),
-    (MONEDA, 10.0),
-    (MONEDA, 5.0),
-    (MONEDA, 2.0),
     (MONEDA, 1.0),
-    (MONEDA, 0.5),
 ];
 
 /// Nombre del evento que deja un corte en el historial.
@@ -106,16 +105,16 @@ mod pruebas {
     fn leer_el_cambio_como_la_v2() {
         let mut textos = vec![String::new(); DENOMINACIONES.len()];
         textos[0] = " 2 ".into();
-        textos[6] = "3".into();
+        textos[5] = "30".into();
         let cambio = leer_cambio(&textos).unwrap();
         assert_eq!(total_del_cambio(&cambio), 1030.0);
-        assert_eq!(resumen_del_cambio(&cambio), "2 x BILLETE $500, 3 x MONEDA $10 = $1,030.00");
-        textos[10] = "-1".into();
+        assert_eq!(resumen_del_cambio(&cambio), "2 x BILLETE $500, 30 x MONEDA $1 = $1,030.00");
+        textos[5] = "-1".into();
         assert_eq!(
             leer_cambio(&textos).unwrap_err(),
-            "La cantidad de monedas de $0.50 no es válida: escriba cuántas piezas hay (un número entero) o déjelo vacío."
+            "La cantidad de monedas de $1 no es válida: escriba cuántas piezas hay (un número entero) o déjelo vacío."
         );
-        textos[10] = "1.5".into();
+        textos[5] = "1.5".into();
         assert!(leer_cambio(&textos).is_err());
         assert_eq!(leer_cantidad(""), Some(0));
     }

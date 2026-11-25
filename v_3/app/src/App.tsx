@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { NexBadge, NexButton, NexCheckbox, NexCombobox, NexDatePicker, NexInput, NexMorph, NexProvider, NexSegmented, NexSelect, toIsoDate } from '@nexfluid/react'
 import { NexSheets, type Workbook } from '@nexfluid/react/sheets'
-import { ALTO_FILA_HOJA, CARRIL_HOJA, altoHojaCarrito, filasVentasQueCaben, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
+import { ALTO_FILA_HOJA, CARRIL_HOJA, FORMATOS_CARRITO, FORMATOS_VENTAS, IDIOMA_HOJAS, altoHojaCarrito, filasVentasQueCaben, altoHojaVentas, anchosCarrito, anchosVentas, libroDeCarrito, libroDeVentas, medidorDeTexto, type LineaVenta } from './hojas.ts'
 import { useAltoDisponible, useMarcoHoja } from './marcoHoja.ts'
 import { Icono } from './iconos.tsx'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
@@ -65,6 +65,8 @@ interface EstadoCaja {
   pocos_codigos: number
   administra_codigos: boolean
   ve_otros_dias: boolean
+  /** El último corte, si nadie ha vendido después (badge de CORTE DE CAJA). */
+  corte_listo: { id: number; fecha: string; hora: string; total: number } | null
 }
 
 /** Ancho de los modales; el alto es el de su contenido (NexMorph `size="content"`). */
@@ -554,6 +556,7 @@ export default function App() {
     try {
       const resumen = await invoke<string>('hacer_corte', { cantidades: corte.cantidades })
       setCorte(null)
+      leerEstadoCaja()
       setAviso({ tono: 'success', texto: `Corte de caja hecho. Cambio en caja: ${resumen}. (Ticket del corte: fase 3.)` })
       setFecha(hoy)
       setVista('ventas')
@@ -679,41 +682,32 @@ export default function App() {
                 </NexProvider>
               </NexMorph.Target>
   )
-  const columnaCorte = (tipo: string) => (
-    <div className="caja__corte-columna">
-      <p className="caja__corte-titulo">{tipo === 'BILLETE' ? 'Billetes' : 'Monedas'}</p>
-      {denominaciones.map((d, i) =>
-        d.tipo !== tipo ? null : (
-          <div key={i} className="caja__corte-fila">
-            <NexInput
-              ref={i === 0 ? refPrimeraPieza : undefined}
-              label={d.texto}
-              density="compact"
-              inputMode="numeric"
-              autoComplete="off"
-              value={corte?.cantidades[i] ?? ''}
-              disabled={corte?.confirmar}
-              onChange={(e) =>
-                corte && setCorte({ ...corte, error: null, cantidades: corte.cantidades.map((c, j) => (j === i ? e.target.value : c)) })
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  pedirConfirmacionCorte()
-                }
-              }}
-            />
-            <span className="caja__corte-subtotal">
-              {(() => {
-                const n = piezas(corte?.cantidades[i] ?? '')
-                return n === null ? '¿?' : n ? `= ${dinero(d.valor * n)}` : ''
-              })()}
-            </span>
-          </div>
-        ),
-      )}
-    </div>
-  )
+  // Corte: cinco billetes y las monedas (en pesos) en una cuadrícula de 3 × 2, la etiqueta arriba
+  // de cada campo (los $ quedan alineados) y el subtotal debajo.
+  const celdasCorte = denominaciones.map((d, i) => {
+    const n = piezas(corte?.cantidades[i] ?? '')
+    return (
+      <NexInput
+        key={i}
+        ref={i === 0 ? refPrimeraPieza : undefined}
+        label={d.tipo === 'MONEDA' ? 'Monedas (pesos)' : `Billetes de ${d.texto}`}
+        description={n === null ? '¿?' : n ? `= ${dinero(d.valor * n)}` : '\u00a0'}
+        inputMode="numeric"
+        autoComplete="off"
+        value={corte?.cantidades[i] ?? ''}
+        disabled={corte?.confirmar}
+        onChange={(e) =>
+          corte && setCorte({ ...corte, error: null, cantidades: corte.cantidades.map((c, j) => (j === i ? e.target.value : c)) })
+        }
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            pedirConfirmacionCorte()
+          }
+        }}
+      />
+    )
+  })
   const modalCorte = (
               <NexMorph.Target label="Corte de caja" className="caja__modal" size="content" panelStyle={{ width: 'min(560px, calc(100vw - 32px))' }}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
@@ -721,13 +715,10 @@ export default function App() {
                   <div className="caja__cobro">
                     <p className="caja__cobro-total">Corte de caja</p>
                     <p className="caja__nota">
-                      Escriba cuántas piezas de cada billete y moneda se quedan en la caja como cambio. Lo que no haya, déjelo vacío.
-                      Intro sigue.
+                      Escriba cuántos billetes de cada uno se quedan en la caja como cambio, y cuánto suman las monedas en pesos.
+                      Lo que no haya, déjelo vacío. Intro sigue.
                     </p>
-                    <div className="caja__corte">
-                      {columnaCorte('BILLETE')}
-                      {columnaCorte('MONEDA')}
-                    </div>
+                    <div className="caja__corte">{celdasCorte}</div>
                     <p className="caja__corte-total">Total de cambio: {dinero(totalCorte)}</p>
                     {corte?.error && (
                       <p className="caja__aviso caja__aviso--danger" role="alert">
@@ -797,7 +788,26 @@ export default function App() {
     if (b.accion === 'corte_de_caja')
       return (
         <NexMorph key={b.id} open={corte !== null} onOpenChange={(abierto) => !abierto && cerrarCorte()}>
-          <NexMorph.Source>{boton}</NexMorph.Source>
+          <NexMorph.Source>
+            {/* Badge: "Listo $…" mientras nadie venda después del último corte; si no, "Sin corte". */}
+            <div className="caja__con-badge">
+              {boton}
+              {estadoCaja && (
+                <NexBadge
+                  className="caja__badge-esquina"
+                  appearance="filled"
+                  tone={estadoCaja.corte_listo ? 'success' : 'warning'}
+                  title={
+                    estadoCaja.corte_listo
+                      ? `Corte del ${estadoCaja.corte_listo.fecha} a las ${estadoCaja.corte_listo.hora.slice(0, 5)}; nadie ha vendido después`
+                      : 'Se vendió después del último corte (o no hay corte)'
+                  }
+                >
+                  {estadoCaja.corte_listo ? `Listo ${dinero(estadoCaja.corte_listo.total)}` : 'Sin corte'}
+                </NexBadge>
+              )}
+            </div>
+          </NexMorph.Source>
           {modalCorte}
         </NexMorph>
       )
@@ -900,6 +910,8 @@ export default function App() {
                   height={altoHojaCarrito(carrito, marcoHoja.extraAlto)}
                   label="Carrito"
                   columnLabels="name"
+                  columnFormats={FORMATOS_CARRITO}
+                  locale={IDIOMA_HOJAS}
                   tabs={false}
                   statusBar={false}
                   toolbar={false}
@@ -948,6 +960,8 @@ export default function App() {
                     height={altoHojaVentas(lineasVenta, marcoVentas.extraAlto, altoVentas)}
                     label={`Ventas del ${fecha}`}
                     columnLabels="name"
+                    columnFormats={FORMATOS_VENTAS}
+                    locale={IDIOMA_HOJAS}
                     tabs={false}
                     statusBar={false}
                     toolbar={false}

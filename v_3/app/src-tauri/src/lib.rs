@@ -198,7 +198,8 @@ fn ventas_del_dia(estado: tauri::State<'_, Compartido>, fecha: String) -> Result
         if !es_hoy && !ve_otros_dias(b, sesion.usuario_id)? {
             return Err("Solo puedes ver las ventas de hoy.".into());
         }
-        b.ventas_del_dia(&fecha, es_hoy).map_err(|e| e.to_string())
+        // Hoy: desde el último corte, o con el cambio del corte de un día anterior que siga valiendo.
+        if es_hoy { b.ventas_de_hoy(&fecha) } else { b.ventas_del_dia(&fecha, false) }.map_err(|e| e.to_string())
     })
 }
 
@@ -254,6 +255,8 @@ struct EstadoCaja {
     administra_codigos: bool,
     /// Ve las ventas de otros días (administradores); la empleada, solo las de hoy.
     ve_otros_dias: bool,
+    /// El último corte, si nadie ha vendido después (badge de CORTE DE CAJA: "Listo $…").
+    corte_listo: Option<nucleo::ventas::CorteListo>,
 }
 
 /// Lo que la vista necesita para el botón "Abrir caja" y el código (D21, D23).
@@ -266,6 +269,7 @@ fn estado_caja(estado: tauri::State<'_, Compartido>) -> Result<EstadoCaja, Strin
             administra_codigos: permisos.contains(&nucleo::caja::Permiso::AbrirCajaSinLimite),
             pocos_codigos: POCOS_CODIGOS,
             ve_otros_dias: ve_otros_dias(b, sesion.usuario_id)?,
+            corte_listo: b.corte_listo().map_err(|e| e.to_string())?,
             permisos: permisos.iter().map(|p| p.clave()).collect(),
             como_abrir: b.como_abrir(sesion.usuario_id, &Momento::ahora().fecha).map_err(|e| e.to_string())?.clave(),
             codigos: b.estado_codigos().map_err(|e| e.to_string())?,
