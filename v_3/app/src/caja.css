@@ -331,3 +331,10 @@ body,
 .caja__marco-hoja--vacio .nx-sheet__active {
   display: none;
 }
+
+/* Las tablas de la caja con la redondez de los controles (md), no la de 22 px. */
+.caja__hoja.nx-sheets,
+.caja__hoja .nx-sheets,
+.caja__marco-hoja {
+  --nx-sheets-radius: 12px;
+}

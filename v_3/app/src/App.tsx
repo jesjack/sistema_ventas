@@ -47,6 +47,9 @@ interface EstadoCaja {
   ve_otros_dias: boolean
 }
 
+/** Los modales miden su contenido (NexMorph usa 760 × 680 px por defecto). */
+const ESTILO_MODAL: CSSProperties = { width: 'min(460px, calc(100vw - 32px))', height: 'fit-content' }
+
 /** Las pantallas de la caja (arriba de todo): la venta, las ventas realizadas y el desarrollador. */
 type Vista = 'carrito' | 'ventas' | 'desarrollador'
 
@@ -109,7 +112,7 @@ export default function App() {
   const [botones, setBotones] = useState<Boton[]>([])
   const [vista, setVista] = useState<Vista>('carrito')
   // Pago exacto: se pide una segunda confirmación (Intro otra vez).
-  const [confirmarExacto, setConfirmarExacto] = useState(false)
+  const [confirmarExacto, setConfirmarExacto] = useState<null | 'normal' | 'sinTicket'>(null)
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
   // ajustan al contenido y al ancho disponible (Producto ocupa lo que sobra: sin hueco a la derecha).
   const refHoja = useRef<HTMLDivElement>(null)
@@ -217,12 +220,21 @@ export default function App() {
     invoke<Boton[]>('botones').then(setBotones, () => setBotones([]))
   }, [])
 
+  // Si ya se pidió el código nuevo y se dejó para más tarde, no se vuelve a pedir en cada venta.
+  const codigoYaPedido = useRef(false)
+  const habiaCodigo = useRef(false)
   const leerEstadoCaja = useCallback(() => {
     invoke<EstadoCaja>('estado_caja').then(
       (e) => {
         setEstadoCaja(e)
-        // D21/D23: si puede ponerlo y no hay código (o el último ya se usó), se le pide uno nuevo.
-        if (e.puede_poner_codigo && e.codigo !== 'Disponible') setCodigoNuevo((c) => c ?? '')
+        // D21/D23: si puede ponerlo y no hay código (o el último ya se usó), se le pide uno nuevo:
+        // al abrir la caja y cada vez que el código disponible se gasta.
+        const hay = e.codigo === 'Disponible'
+        if (e.puede_poner_codigo && !hay && (!codigoYaPedido.current || habiaCodigo.current)) {
+          codigoYaPedido.current = true
+          setCodigoNuevo((c) => c ?? '')
+        }
+        habiaCodigo.current = hay
       },
       () => setEstadoCaja(null),
     )
@@ -307,7 +319,7 @@ export default function App() {
   }
 
   const abrirCobro = () => {
-    setConfirmarExacto(false)
+    setConfirmarExacto(null)
     setCobro('')
     requestAnimationFrame(() => refRecibido.current?.focus())
   }
@@ -331,7 +343,7 @@ export default function App() {
       })
       setCarrito([])
       setCobro(null)
-      setConfirmarExacto(false)
+      setConfirmarExacto(null)
       setRecargaVentas((n) => n + 1)
       leerEstadoCaja()
       enfocarProducto()
@@ -405,29 +417,30 @@ export default function App() {
   const teclaCobro = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      cobrarNormal()
+      cobrarCon('normal')
     } else if (e.key === 'F4') {
       e.preventDefault()
-      void confirmarCobro(true)
+      cobrarCon('sinTicket')
     } else if (e.key === 'Escape' && confirmarExacto) {
       // Escape en la confirmación vuelve a pedir lo recibido (NexMorph no cierra si se previene).
       e.preventDefault()
-      setConfirmarExacto(false)
+      setConfirmarExacto(null)
     }
   }
 
-  // Pago exacto (vacío o igual al total): primero se pide confirmarlo; el segundo Intro cobra.
-  const cobrarNormal = () => {
-    const exacto = cobro === null || cobro.trim() === '' || leerNumero(cobro) === total
-    if (exacto && !confirmarExacto) {
-      setConfirmarExacto(true)
+  // Sin escribir lo recibido (pago exacto), se pide confirmarlo: la misma tecla otra vez (Intro, o
+  // F4 sin ticket). Con una cantidad escrita, cobra directo.
+  const cobrarCon = (modo: 'normal' | 'sinTicket') => {
+    const sinCantidad = cobro === null || cobro.trim() === ''
+    if (sinCantidad && confirmarExacto !== modo) {
+      setConfirmarExacto(modo)
       return
     }
-    void confirmarCobro(false)
+    void confirmarCobro(modo === 'sinTicket')
   }
   const cerrarCobro = () => {
     setCobro(null)
-    setConfirmarExacto(false)
+    setConfirmarExacto(null)
     enfocarProducto()
   }
 
@@ -472,11 +485,10 @@ export default function App() {
   // crece desde él). Si el usuario no tiene ese botón, el modal aparece igual, sin origen.
   const tieneBoton = (nombre: string) => botones.some((b) => b.accion === nombre)
   const modalCobro = (
-              <NexMorph.Target label="Cobrar" className="caja__modal">
+              <NexMorph.Target label="Cobrar" className="caja__modal" panelStyle={ESTILO_MODAL}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
                   <div className="caja__cobro">
-
                     <p className="caja__cobro-total">Cobrar {dinero(total)}</p>
                     <NexInput
                       ref={refRecibido}
@@ -488,7 +500,7 @@ export default function App() {
                       autoComplete="off"
                       onChange={(e) => {
                         setCobro(e.target.value)
-                        setConfirmarExacto(false)
+                        setConfirmarExacto(null)
                       }}
                       onKeyDown={teclaCobro}
                       onFocus={cursorAlFinal}
@@ -498,28 +510,30 @@ export default function App() {
                     </p>
                     {confirmarExacto && (
                       <p className="caja__aviso caja__aviso--warning" role="alert">
-                        ¿Pago exacto de {dinero(total)}, sin cambio? Intro otra vez para cobrar · Escape para escribir lo recibido
+                        {confirmarExacto === 'sinTicket'
+                          ? `¿Cobrar ${dinero(total)} sin ticket, pago exacto? F4 otra vez para cobrar`
+                          : `¿Pago exacto de ${dinero(total)}, sin cambio? Intro otra vez para cobrar`}{' '}
+                        · Escape para escribir lo recibido
                       </p>
                     )}
                     <div className="caja__cobro-acciones">
-                      <NexButton appearance="filled" onClick={cobrarNormal} disabled={cobrando}>
-                        {confirmarExacto ? 'Sí, pago exacto (Intro)' : 'Cobrar (Intro)'}
+                      <NexButton appearance="filled" onClick={() => cobrarCon('normal')} disabled={cobrando}>
+                        {confirmarExacto === 'normal' ? 'Sí, pago exacto (Intro)' : 'Cobrar (Intro)'}
                       </NexButton>
-                      <NexButton appearance="outlined" onClick={() => void confirmarCobro(true)} disabled={cobrando}>
-                        Sin ticket (F4)
+                      <NexButton appearance="outlined" onClick={() => cobrarCon('sinTicket')} disabled={cobrando}>
+                        {confirmarExacto === 'sinTicket' ? 'Sí, sin ticket (F4)' : 'Sin ticket (F4)'}
                       </NexButton>
+                      <NexButton appearance="ghost" onClick={cerrarCobro}>Cancelar</NexButton>
                     </div>
-
                   </div>
                 </NexProvider>
               </NexMorph.Target>
   )
   const modalCodigo = (
-              <NexMorph.Target label="Código de autorización" className="caja__modal">
+              <NexMorph.Target label="Código de autorización" className="caja__modal" panelStyle={ESTILO_MODAL}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
                   <div className="caja__cobro">
-
                     <p className="caja__cobro-total">Abrir caja con código</p>
                     <NexInput
                       ref={refCodigo}
@@ -536,7 +550,12 @@ export default function App() {
                         }
                       }}
                     />
-
+                    <div className="caja__cobro-acciones">
+                      <NexButton appearance="filled" onClick={() => void abrirCaja(pideCodigo ?? '')}>
+                        Abrir caja (Intro)
+                      </NexButton>
+                      <NexButton appearance="ghost" onClick={() => (setPideCodigo(null), enfocarProducto())}>Cancelar</NexButton>
+                    </div>
                   </div>
                 </NexProvider>
               </NexMorph.Target>
@@ -600,6 +619,7 @@ export default function App() {
         <section className="caja__venta" aria-label="Caja">
           <NexSegmented
             aria-label="Pantalla"
+            density="compact"
             value={vista}
             onValueChange={(v) => setVista(v as Vista)}
             options={[
@@ -633,6 +653,7 @@ export default function App() {
                   value={producto}
                   options={opciones}
                   filter={false}
+                  tabSelects
                   autoFocus
                   onValueChange={setProducto}
                   onOptionSelect={() => requestAnimationFrame(() => refPrecio.current?.focus())}
@@ -850,11 +871,10 @@ export default function App() {
             open={codigoNuevo !== null && !!estadoCaja?.puede_poner_codigo}
             onOpenChange={(abierto) => !abierto && (setCodigoNuevo(null), enfocarProducto())}
           >
-            <NexMorph.Target label="Código nuevo" className="caja__modal">
+            <NexMorph.Target label="Código nuevo" className="caja__modal" panelStyle={ESTILO_MODAL}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
                   <div className="caja__cobro">
-
                     <p className="caja__cobro-total">
                       {estadoCaja?.codigo === 'SinCodigo'
                         ? 'Todavía no hay código de autorización'
@@ -877,7 +897,12 @@ export default function App() {
                         }
                       }}
                     />
-
+                    <div className="caja__cobro-acciones">
+                      <NexButton appearance="filled" onClick={() => void guardarCodigoNuevo()}>
+                        Guardar código (Intro)
+                      </NexButton>
+                      <NexButton appearance="ghost" onClick={() => (setCodigoNuevo(null), enfocarProducto())}>Más tarde</NexButton>
+                    </div>
                   </div>
                 </NexProvider>
               </NexMorph.Target>
