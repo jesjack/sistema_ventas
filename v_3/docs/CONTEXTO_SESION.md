@@ -1,7 +1,7 @@
 # Contexto para continuar la V3 (Rust + Tauri + NexFluid)
 
 Documento de traspaso entre sesiones de trabajo (con o sin Claude). **Léelo antes de seguir.**
-Última actualización: 2026-11-24, noche (**fase 1 completa**; ver §8; siguiente: fase 2).
+Última actualización: 2026-11-24, noche (fase 1 completa; **fase 2: bloque 1 hecho**, ver §9).
 
 ## 1. La decisión de fondo
 
@@ -33,7 +33,7 @@ haga todo lo que hace la v2.
 |---|---|---|
 | 0 | Prototipo: Tauri + NexFluid en la PC de la caja, medir | **Hecha** (2026-11-24, también en release) |
 | 1 | Núcleo en Rust: reglas de la v2 probadas contra ella, base propia de la v3 con importación, turno y permisos | **Hecha** (2026-11-24, §8) |
-| 2 | Pantalla de venta completa (captura, carrito, cobro, VENTAS REALIZADAS), en paralelo con la v2 sobre una copia | |
+| 2 | Pantalla de venta completa (captura, carrito, cobro, VENTAS REALIZADAS), en paralelo con la v2 sobre una copia | **Bloque 1 hecho** (§9); faltan corte, catálogo, códigos de barras, admin. de botones, prueba en paralelo |
 | 3 | Hardware: ticket, cajón (reglas D21/D23), etiquetas | |
 | 4 | Administración: usuarios, roles, turnos, botones | |
 | 5 | Cámaras en Rust dentro de la app: embudo al DVR, vivo, grabaciones, "VER EN CÁMARAS" (ver `camaras_v3.md`) | Video probado (2026-11-24) |
@@ -128,13 +128,13 @@ No se instala desde GitHub (es un monorepo que hay que compilar). Pasos:
 
 ```bash
 cd ~/nexfluid && git switch jesjack/feat/caja-v3 && npm ci && npm run build:lib
-S=$(mktemp -d); V=~/sistema_ventas_v3/v_3/app/vendor; N=0.9.0-caja.12   # siguiente número
+S=$(mktemp -d); V=~/sistema_ventas_v3/v_3/app/vendor; N=0.9.0-caja.18   # siguiente número (hoy: caja.17)
 for p in foundation core components react; do
   mkdir -p $S/$p && cp -r packages/$p/{package.json,dist,README.md,LICENSE} $S/$p/
   (cd $S/$p && node -e "const p=require('./package.json');p.version='$N';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')" && npm pack --pack-destination $V)
 done
-rm $V/*-0.9.0-caja.11.tgz          # el anterior
-cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.11.tgz/$N.tgz/g" package.json && npm install && rm -rf node_modules/.vite
+rm $V/*-0.9.0-caja.17.tgz          # el anterior
+cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.17.tgz/$N.tgz/g" package.json && npm install && rm -rf node_modules/.vite
 ```
 
 - **Empaquetar SIEMPRE desde una copia temporal.** `npm version` dentro del repo de NexFluid
@@ -251,3 +251,63 @@ pierden: asignarlos otra vez.** Pendiente: pantalla de administración (D21).
 **Siguiente: fase 2** (pantalla de venta definitiva): afinar textos e interfaz (el usuario lo dejó
 para aquí), botones configurables (P1, modelo de la v2), corte de caja desde la pantalla, prueba
 en paralelo con la v2 sobre una importación reciente.
+
+## 9. Fase 2, bloque 1: la pantalla de venta (2026-11-24, revisada con el usuario)
+
+**Distribución (elegida por el usuario):** venta a la izquierda, columna fija de botones a la
+derecha. Arriba, un `NexSegmented` compacto: **Carrito · Ver ventas · Desarrollador** (este solo con
+el permiso). Ya no hay panel de ventas debajo del carrito ni botón VER VENTAS.
+
+**Lo que quedó (y por qué):**
+- **Botones configurables (P1):** de `botones` / `boton_visibilidad` (importados de la v2), los
+  activos que ve el usuario, en orden; cada `archivo_accion` está programada en la app; las que aún
+  no existen salen deshabilitadas con el motivo. Iconos propios (`src/iconos.tsx`, reglas de los de
+  NexFluid). Texto largo se corta con "…".
+- **CÓDIGOS DE CAJA** (pedido del usuario): esquema **v4** = una **reserva** de códigos (`codigos_caja`)
+  en lugar de uno solo; la empleada escribe cualquiera disponible y solo se gasta ese. Botón para
+  quien tiene "abrir caja sin límite" (ligado al PERMISO, no a la tabla de botones: una
+  reimportación no lo pierde), con badge filled en su esquina: número; ámbar con ≤ 2
+  (`POCOS_CODIGOS`), rojo "Sin códigos" con 0. Modal: agregar, retirar (si se filtró), historial.
+  Ya NO se pide un código nuevo con un modal al abrir.
+- **Cobro:** modal (NexMorph, crece desde COBRAR). Intro = cobro normal; **F4 = sin ticket** (D15;
+  esquema **v3**: `ventas.sin_ticket`; recibido = total, cambio 0, el cajón se abre igual). **Solo si
+  no se escribió lo recibido** se pide confirmar (la misma tecla otra vez), para Intro y para F4.
+- **Abrir caja con código:** modal desde ABRIR CAJA. Si no queda ningún código, avisa sin pedirlo.
+- **Tab en Producto** elige la sugerencia marcada o la primera y pasa a Precio (como la v2).
+- **Ver ventas:** la empleada solo ve las de hoy; "sin límite" y "desarrollador" eligen el día con
+  `NexDatePicker` (días con ventas marcados). Rust también lo exige.
+- **Hojas:** carrito y ventas en NexSheets, esquinas de 12 px; el carrito vacío se ve como una sola
+  celda gris "El carrito está vacío" (NexSheets no fusiona celdas: se cubre la fila). Sin carril
+  horizontal (las columnas siempre caben) y sin vertical en el carrito: los carriles se sostenían
+  entre sí (hallazgo 21). Se mide `.nx-sheet` (incluye los carriles), no el área con scroll, y se
+  reserva el carril vertical de ventas de antemano: antes había un ciclo infinito de barras.
+- **Forma:** controles con radio **md** (10 px), no cápsula; movimiento por defecto **fluid**.
+- **Escáner directo** (`src-tauri/src/escaner.rs`): lee el escáner por evdev aunque otra app tenga el
+  foco, lo toma EN EXCLUSIVA y pide pasar la ventana al frente. **Apagado por defecto mientras la
+  v2 sea la oficial** (si no, la v2 se queda sin escáner): se enciende en Desarrollador o con
+  `CAJA_ESCANER_DIRECTO=1`. Permiso: regla de udev **portable, sin grupos** (ya puesta en la PC de
+  la caja; el instalador de la fase 6 la pondrá):
+  `SUBSYSTEM=="input", ATTRS{idVendor}=="0c2e", ATTRS{idProduct}=="0200", TAG+="uaccess"` en
+  `/etc/udev/rules.d/70-escaner-caja.rules` (el 70 importa: antes de la regla que aplica uaccess).
+  Falta probar si Wayland deja pasar la ventana al frente (si no: extensión de GNOME o notificación).
+
+**Ajustes que solo viven en `datos/ventas_v3.db`** (se pierden si se reimporta; rehacer a mano o en
+la futura pantalla de botones): IMPRIMIR CÓDIGO DE BARRAS y VER VENTAS desactivados; IMPRIMIR VARIOS
+CÓDIGOS → "IMPRIMIR CÓDIGOS"; VER CÓDIGOS DE BARRAS → "VER CÓDIGOS"; los permisos de §8.
+
+**NexFluid** (`caja.17`; ramas en §5): fix de la celda de la esquina de NexSheets (curva solo en la
+esquina visible); `NexDatePicker`, `NexCombobox tabSelects`, `NexMorph.Target size="content"`
+(el modal mide su contenido; sin barra sobrante). Hallazgos 18–21 en `docs/HALLAZGOS-CAJA-V3.md`;
+**el 19 sigue abierto** (el modal en `<body>` pierde `radius`/`corner` del NexProvider: la caja pone
+otro NexProvider dentro).
+
+**Siguiente (fase 2, bloques 2–4):**
+- **Corte de caja** desde la pantalla (el núcleo ya lo registra).
+- **Autocompletado:** editor del catálogo + el **corrector ortográfico** (pendiente de `CLAUDE.md`).
+- **Ver códigos de barras** y registrar un código no registrado al escanearlo.
+- **Administración de botones** (decidido): **por usuario + plantilla `__default__`** como la v2,
+  **solo desarrollador**, como **pantalla en el selector**; matriz con una fila por botón y una
+  columna por usuario, activo, orden, etiqueta y acción elegida de una lista. **Ojo:** la v3 aún NO
+  copia los botones de la plantilla a un usuario nuevo (la v2 sí): un usuario nuevo se queda sin botones.
+- **Prueba en paralelo:** el usuario repetirá en la v3 las ventas del día (la v2 sigue oficial).
+
