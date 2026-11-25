@@ -1046,7 +1046,7 @@ function BadgeCodigos({ estado }: { estado: EstadoCaja }) {
   const n = estado.codigos.disponibles
   const tono = n === 0 ? 'danger' : n <= estado.pocos_codigos ? 'warning' : 'neutral'
   return (
-    <NexBadge className="caja__badge-esquina" tone={tono} title={n === 0 ? 'No quedan códigos para la empleada' : `Quedan ${n}`}>
+    <NexBadge className="caja__badge-esquina" appearance="filled" tone={tono} title={n === 0 ? 'No quedan códigos para la empleada' : `Quedan ${n}`}>
       {n === 0 ? 'Sin códigos' : n}
     </NexBadge>
   )
