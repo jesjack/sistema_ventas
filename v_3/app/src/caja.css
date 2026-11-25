@@ -351,3 +351,23 @@ body,
   display: flex;
   flex-direction: column;
 }
+
+/*
+ * Carriles de NexSheets: cada uno ocupa 14 px, y en una hoja ajustada a su contenido se sostienen
+ * entre sí (el horizontal quita alto → aparece el vertical → quita ancho → sigue el horizontal),
+ * aunque el contenido ya quepa (p. ej. al restaurar la ventana). En la caja las columnas siempre
+ * se ajustan al ancho: sin carril horizontal. El carrito mide justo sus filas: sin vertical.
+ * VENTAS REALIZADAS conserva el vertical (su ancho se reserva al calcular las columnas).
+ */
+.caja__hoja .nx-sheet {
+  grid-template-rows: minmax(0, 1fr) 0 !important;
+}
+.caja__hoja .nx-sheet__lane--h {
+  display: none !important;
+}
+.caja__hoja:not(.caja__hoja--ventas) .nx-sheet {
+  grid-template-columns: minmax(0, 1fr) 0 !important;
+}
+.caja__hoja:not(.caja__hoja--ventas) .nx-sheet__lane--v {
+  display: none !important;
+}
