@@ -358,3 +358,33 @@ body,
 .caja__hoja:not(.caja__hoja--ventas) .nx-sheet__lane--v {
   display: none !important;
 }
+
+/* CÓDIGOS DE CAJA: la reserva (disponibles primero, luego el historial). */
+.caja__botones .nx-button__end {
+  margin-left: auto;
+}
+.caja__codigos {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 260px;
+  overflow: auto;
+}
+.caja__codigo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--nx-control-radius);
+  font-size: var(--nx-text-small);
+}
+.caja__codigo[data-estado='disponible'] {
+  background: var(--nx-surface-sunken);
+}
+.caja__codigo:not([data-estado='disponible']) {
+  color: var(--nx-fg-subtle);
+}

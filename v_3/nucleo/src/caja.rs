@@ -83,30 +83,51 @@ impl Autorizacion {
     }
 }
 
-/// El estado del código de autorización.
+/// Cuántos códigos de caja quedan y el último uso (para el aviso y el botón CÓDIGOS DE CAJA).
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum EstadoCodigo {
-    /// Nadie ha puesto un código todavía.
-    SinCodigo,
-    /// Hay un código y no se ha usado.
-    Disponible,
-    /// Ya se usó: está bloqueado hasta que pongan uno nuevo. Quién y cuándo, para mostrarlo.
-    Usado { usado_en: String, usado_sesion_id: Option<i64> },
+pub struct EstadoCodigos {
+    pub disponibles: i64,
+    /// Cuándo se usó el último código y quién (nombre de usuario), si alguno se ha usado.
+    pub ultimo_uso: Option<UsoCodigo>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UsoCodigo {
+    pub en: String,
+    pub usuario: Option<String>,
+}
+
+/// Un código de la reserva, sin el código (solo se guarda su hash).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CodigoCaja {
+    pub id: i64,
+    pub creado_en: String,
+    pub creado_por: Option<String>,
+    pub usado: Option<UsoCodigo>,
+    pub retirado: Option<UsoCodigo>,
+}
+
+/// Con esta cantidad de códigos disponibles o menos, el botón avisa que quedan pocos.
+pub const POCOS_CODIGOS: i64 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ErrorCaja {
     #[error("El código debe tener al menos {0} caracteres.")]
     CodigoCorto(usize),
-    #[error("Solo alguien con permiso para abrir la caja sin límite puede poner el código.")]
+    #[error("Solo alguien con permiso para abrir la caja sin límite puede administrar los códigos.")]
     SinPermisoParaElCodigo,
-    #[error("Todavía no hay código de autorización. Pide a quien tenga permiso para abrir la caja sin límite que la abra o ponga uno.")]
+    /// No queda ningún código disponible (nunca hubo, o todos se usaron o retiraron).
+    #[error("No hay códigos de caja disponibles. Pide a quien tenga permiso para abrir la caja sin límite que la abra o agregue códigos.")]
     SinCodigo,
-    /// No hay un código disponible porque el último ya se usó (un código sirve una sola vez).
-    #[error("Ya no hay código disponible: el último se usó. Pide a quien tenga permiso para abrir la caja sin límite que la abra o ponga uno nuevo.")]
+    /// El código escrito es uno que ya se usó (cada código sirve una sola vez).
+    #[error("Ese código ya se usó: cada código sirve una sola vez.")]
     CodigoUsado,
     #[error("El código no es correcto.")]
     CodigoIncorrecto,
+    #[error("Ese código ya está entre los disponibles.")]
+    CodigoRepetido,
+    #[error("Ese código no existe o ya no está disponible.")]
+    CodigoNoDisponible,
     #[error("No se pudo generar la sal del código: {0}")]
     Aleatorio(String),
     #[error(transparent)]
@@ -242,21 +263,70 @@ impl Base {
         Ok(apertura_id)
     }
 
-    // ---- Código de autorización (D20, D21) --------------------------------------------------
+    // ---- Códigos de caja (D20, D21; reserva desde el esquema 4) --------------------------------
 
-    pub fn estado_codigo(&self) -> Result<EstadoCodigo, ErrorBase> {
-        let fila: Option<(Option<String>, Option<i64>)> =
-            self.con.query_row("SELECT usado_en, usado_sesion_id FROM codigo_caja WHERE id = 1", [], |f| Ok((f.get(0)?, f.get(1)?))).optional()?;
-        Ok(match fila {
-            None => EstadoCodigo::SinCodigo,
-            Some((None, _)) => EstadoCodigo::Disponible,
-            Some((Some(usado_en), usado_sesion_id)) => EstadoCodigo::Usado { usado_en, usado_sesion_id },
-        })
+    fn uso(en: Option<String>, usuario: Option<String>) -> Option<UsoCodigo> {
+        en.map(|en| UsoCodigo { en, usuario })
     }
 
-    /// Pone (o reemplaza) el código. Solo un usuario con "abrir caja sin límite". Se guarda como
-    /// hash con una sal nueva; queda disponible para un uso.
-    pub fn poner_codigo(&mut self, usuario_id: i64, codigo: &str, momento: &Momento, sesion_id: Option<i64>) -> Result<(), ErrorCaja> {
+    /// Cuántos códigos quedan y cuándo se usó el último.
+    pub fn estado_codigos(&self) -> Result<EstadoCodigos, ErrorBase> {
+        let disponibles: i64 = self.con.query_row(
+            "SELECT count(*) FROM codigos_caja WHERE usado_en IS NULL AND retirado_en IS NULL",
+            [],
+            |f| f.get(0),
+        )?;
+        let ultimo_uso = self
+            .con
+            .query_row(
+                "SELECT c.usado_en, u.nombre_usuario FROM codigos_caja c
+                 LEFT JOIN sesiones_sistema s ON s.id = c.usado_sesion_id
+                 LEFT JOIN usuarios_sistema u ON u.id = s.usuario_id
+                 WHERE c.usado_en IS NOT NULL ORDER BY c.usado_en DESC, c.id DESC LIMIT 1",
+                [],
+                |f| Ok(Self::uso(f.get(0)?, f.get(1)?)),
+            )
+            .optional()?
+            .flatten();
+        Ok(EstadoCodigos { disponibles, ultimo_uso })
+    }
+
+    /// La reserva: los disponibles y los últimos `historial` usados o retirados, más recientes
+    /// primero. Solo para quien tiene "abrir caja sin límite".
+    pub fn codigos_caja(&self, usuario_id: i64, historial: u32) -> Result<Vec<CodigoCaja>, ErrorCaja> {
+        if !self.tiene_permiso(usuario_id, Permiso::AbrirCajaSinLimite)? {
+            return Err(ErrorCaja::SinPermisoParaElCodigo);
+        }
+        let mut consulta = self.con.prepare(
+            "SELECT * FROM (
+                 SELECT c.id, c.creado_en, uc.nombre_usuario, c.usado_en, uu.nombre_usuario, c.retirado_en, ur.nombre_usuario,
+                        (c.usado_en IS NULL AND c.retirado_en IS NULL) AS disponible,
+                        COALESCE(c.usado_en, c.retirado_en, c.creado_en) AS momento
+                 FROM codigos_caja c
+                 LEFT JOIN sesiones_sistema sc ON sc.id = c.creado_sesion_id LEFT JOIN usuarios_sistema uc ON uc.id = sc.usuario_id
+                 LEFT JOIN sesiones_sistema su ON su.id = c.usado_sesion_id LEFT JOIN usuarios_sistema uu ON uu.id = su.usuario_id
+                 LEFT JOIN sesiones_sistema sr ON sr.id = c.retirado_sesion_id LEFT JOIN usuarios_sistema ur ON ur.id = sr.usuario_id
+             )
+             WHERE disponible OR id IN (
+                 SELECT id FROM codigos_caja WHERE usado_en IS NOT NULL OR retirado_en IS NOT NULL
+                 ORDER BY COALESCE(usado_en, retirado_en) DESC, id DESC LIMIT ?1)
+             ORDER BY disponible DESC, momento DESC, id DESC",
+        )?;
+        let filas = consulta.query_map(params![historial], |f| {
+            Ok(CodigoCaja {
+                id: f.get(0)?,
+                creado_en: f.get(1)?,
+                creado_por: f.get(2)?,
+                usado: Self::uso(f.get(3)?, f.get(4)?),
+                retirado: Self::uso(f.get(5)?, f.get(6)?),
+            })
+        })?;
+        Ok(filas.collect::<Result<_, _>>()?)
+    }
+
+    /// Agrega un código a la reserva. Solo un usuario con "abrir caja sin límite". Se guarda como
+    /// hash con una sal nueva; queda disponible para un uso. No se repite uno ya disponible.
+    pub fn agregar_codigo(&mut self, usuario_id: i64, codigo: &str, momento: &Momento, sesion_id: Option<i64>) -> Result<i64, ErrorCaja> {
         if !self.tiene_permiso(usuario_id, Permiso::AbrirCajaSinLimite)? {
             return Err(ErrorCaja::SinPermisoParaElCodigo);
         }
@@ -264,35 +334,61 @@ impl Base {
         if codigo.chars().count() < LARGO_MINIMO_CODIGO {
             return Err(ErrorCaja::CodigoCorto(LARGO_MINIMO_CODIGO));
         }
+        if self.buscar_codigo_caja(codigo, true)?.is_some() {
+            return Err(ErrorCaja::CodigoRepetido);
+        }
         let mut bytes = [0u8; 16];
         fill(&mut bytes).map_err(|e| ErrorCaja::Aleatorio(e.to_string()))?;
         let sal = hex(&bytes);
         self.con.execute(
-            "INSERT INTO codigo_caja (id, hash, sal, creado_en, creado_sesion_id, usado_en, usado_sesion_id)
-             VALUES (1, ?1, ?2, ?3, ?4, NULL, NULL)
-             ON CONFLICT (id) DO UPDATE SET hash = excluded.hash, sal = excluded.sal, creado_en = excluded.creado_en,
-                 creado_sesion_id = excluded.creado_sesion_id, usado_en = NULL, usado_sesion_id = NULL",
+            "INSERT INTO codigos_caja (hash, sal, creado_en, creado_sesion_id) VALUES (?1, ?2, ?3, ?4)",
             params![hash_codigo(&sal, codigo), sal, format!("{} {}", momento.fecha, momento.hora), sesion_id],
         )?;
-        Ok(())
+        Ok(self.con.last_insert_rowid())
     }
 
-    /// Comprueba el código y, si es correcto, lo gasta (queda bloqueado). Un código incorrecto no lo
-    /// gasta. Después, el cajón se abre y se llama a `registrar_apertura(Autorizacion::Codigo, …)`.
-    pub fn usar_codigo(&mut self, codigo: &str, momento: &Momento, sesion_id: Option<i64>) -> Result<(), ErrorCaja> {
-        let fila: Option<(String, String, Option<String>)> =
-            self.con.query_row("SELECT hash, sal, usado_en FROM codigo_caja WHERE id = 1", [], |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?))).optional()?;
-        let Some((hash, sal, usado_en)) = fila else { return Err(ErrorCaja::SinCodigo) };
-        if usado_en.is_some() {
-            return Err(ErrorCaja::CodigoUsado);
+    /// Retira un código disponible (p. ej. porque se filtró): ya no sirve, pero queda en el historial.
+    pub fn retirar_codigo(&mut self, usuario_id: i64, id: i64, momento: &Momento, sesion_id: Option<i64>) -> Result<(), ErrorCaja> {
+        if !self.tiene_permiso(usuario_id, Permiso::AbrirCajaSinLimite)? {
+            return Err(ErrorCaja::SinPermisoParaElCodigo);
         }
-        if !iguales(&hash_codigo(&sal, codigo), &hash) {
-            return Err(ErrorCaja::CodigoIncorrecto);
-        }
-        // Gastarlo solo si nadie lo gastó entre la lectura y ahora.
         let cambios = self.con.execute(
-            "UPDATE codigo_caja SET usado_en = ?1, usado_sesion_id = ?2 WHERE id = 1 AND usado_en IS NULL",
-            params![format!("{} {}", momento.fecha, momento.hora), sesion_id],
+            "UPDATE codigos_caja SET retirado_en = ?1, retirado_sesion_id = ?2
+             WHERE id = ?3 AND usado_en IS NULL AND retirado_en IS NULL",
+            params![format!("{} {}", momento.fecha, momento.hora), sesion_id, id],
+        )?;
+        if cambios == 0 { Err(ErrorCaja::CodigoNoDisponible) } else { Ok(()) }
+    }
+
+    /// El id del código que coincide con `codigo`: entre los disponibles, o entre los ya usados.
+    fn buscar_codigo_caja(&self, codigo: &str, disponibles: bool) -> Result<Option<i64>, ErrorBase> {
+        let filtro = if disponibles { "usado_en IS NULL AND retirado_en IS NULL" } else { "usado_en IS NOT NULL" };
+        let mut consulta = self.con.prepare(&format!("SELECT id, hash, sal FROM codigos_caja WHERE {filtro}"))?;
+        let filas = consulta.query_map([], |f| Ok((f.get::<_, i64>(0)?, f.get::<_, String>(1)?, f.get::<_, String>(2)?)))?;
+        let mut encontrado = None;
+        // Se comparan todos (sin cortar en el primero que coincide): no deja adivinar por el tiempo.
+        for fila in filas {
+            let (id, hash, sal) = fila?;
+            if iguales(&hash_codigo(&sal, codigo), &hash) && encontrado.is_none() {
+                encontrado = Some(id);
+            }
+        }
+        Ok(encontrado)
+    }
+
+    /// Comprueba el código y, si es uno disponible, lo gasta. Uno incorrecto no gasta nada.
+    /// Después, el cajón se abre y se llama a `registrar_apertura(Autorizacion::Codigo, …)`.
+    pub fn usar_codigo(&mut self, codigo: &str, momento: &Momento, sesion_id: Option<i64>) -> Result<(), ErrorCaja> {
+        if self.estado_codigos()?.disponibles == 0 {
+            return Err(ErrorCaja::SinCodigo);
+        }
+        let Some(id) = self.buscar_codigo_caja(codigo.trim(), true)? else {
+            return Err(if self.buscar_codigo_caja(codigo.trim(), false)?.is_some() { ErrorCaja::CodigoUsado } else { ErrorCaja::CodigoIncorrecto });
+        };
+        // Gastarlo solo si nadie lo gastó (o retiró) entre la lectura y ahora.
+        let cambios = self.con.execute(
+            "UPDATE codigos_caja SET usado_en = ?1, usado_sesion_id = ?2 WHERE id = ?3 AND usado_en IS NULL AND retirado_en IS NULL",
+            params![format!("{} {}", momento.fecha, momento.hora), sesion_id, id],
         )?;
         if cambios == 0 { Err(ErrorCaja::CodigoUsado) } else { Ok(()) }
     }
@@ -375,25 +471,38 @@ mod pruebas {
     }
 
     #[test]
-    fn el_codigo_es_de_un_solo_uso_y_no_se_guarda_en_texto() {
+    fn la_reserva_de_codigos_se_gasta_de_uno_en_uno_y_no_guarda_el_texto() {
         let (mut base, duena, empleada, _) = base_con_usuarios();
-        assert_eq!(base.estado_codigo().unwrap(), EstadoCodigo::SinCodigo);
+        assert_eq!(base.estado_codigos().unwrap(), EstadoCodigos { disponibles: 0, ultimo_uso: None });
         assert!(matches!(base.usar_codigo("1234", &m("10:00:00"), None), Err(ErrorCaja::SinCodigo)));
-        assert!(matches!(base.poner_codigo(empleada, "1234", &m("10:00:00"), None), Err(ErrorCaja::SinPermisoParaElCodigo)));
-        assert!(matches!(base.poner_codigo(duena, "12", &m("10:00:00"), None), Err(ErrorCaja::CodigoCorto(4))));
-        base.poner_codigo(duena, " 7410 ", &m("10:00:00"), None).unwrap();
-        assert_eq!(base.estado_codigo().unwrap(), EstadoCodigo::Disponible);
-        let guardado: String = base.con.query_row("SELECT hash || sal FROM codigo_caja", [], |f| f.get(0)).unwrap();
-        assert!(!guardado.contains("7410"), "el código no se guarda en texto");
-        // Un código incorrecto no lo gasta; el correcto sí, y después queda bloqueado.
+        assert!(matches!(base.agregar_codigo(empleada, "1234", &m("10:00:00"), None), Err(ErrorCaja::SinPermisoParaElCodigo)));
+        assert!(matches!(base.codigos_caja(empleada, 10), Err(ErrorCaja::SinPermisoParaElCodigo)));
+        assert!(matches!(base.agregar_codigo(duena, "12", &m("10:00:00"), None), Err(ErrorCaja::CodigoCorto(4))));
+        base.agregar_codigo(duena, " 7410 ", &m("10:00:00"), None).unwrap();
+        let segundo = base.agregar_codigo(duena, "8520", &m("10:00:01"), None).unwrap();
+        let tercero = base.agregar_codigo(duena, "9630", &m("10:00:02"), None).unwrap();
+        assert!(matches!(base.agregar_codigo(duena, "8520", &m("10:00:03"), None), Err(ErrorCaja::CodigoRepetido)));
+        assert_eq!(base.estado_codigos().unwrap().disponibles, 3);
+        let guardado: String = base.con.query_row("SELECT group_concat(hash || sal) FROM codigos_caja", [], |f| f.get(0)).unwrap();
+        assert!(!guardado.contains("7410") && !guardado.contains("8520"), "los códigos no se guardan en texto");
+        // Uno incorrecto no gasta nada; uno correcto gasta solo ese.
         assert!(matches!(base.usar_codigo("0000", &m("10:05:00"), None), Err(ErrorCaja::CodigoIncorrecto)));
         let sesion = base.iniciar_sesion(empleada, &m("09:00:00"), None, None).unwrap();
-        base.usar_codigo("7410", &m("10:06:00"), Some(sesion)).unwrap();
-        assert_eq!(base.estado_codigo().unwrap(), EstadoCodigo::Usado { usado_en: "2026-11-25 10:06:00".into(), usado_sesion_id: Some(sesion) });
-        assert!(matches!(base.usar_codigo("7410", &m("10:07:00"), None), Err(ErrorCaja::CodigoUsado)));
-        // Uno nuevo lo vuelve a habilitar.
-        base.poner_codigo(duena, "8520", &m("11:00:00"), None).unwrap();
-        assert_eq!(base.estado_codigo().unwrap(), EstadoCodigo::Disponible);
-        assert!(matches!(base.usar_codigo("7410", &m("11:01:00"), None), Err(ErrorCaja::CodigoIncorrecto)));
+        base.usar_codigo("8520", &m("10:06:00"), Some(sesion)).unwrap();
+        let estado = base.estado_codigos().unwrap();
+        assert_eq!(estado.disponibles, 2);
+        assert_eq!(estado.ultimo_uso.unwrap().en, "2026-11-25 10:06:00");
+        assert!(matches!(base.usar_codigo("8520", &m("10:07:00"), None), Err(ErrorCaja::CodigoUsado)));
+        // Retirar uno: ya no sirve y queda en el historial.
+        base.retirar_codigo(duena, tercero, &m("10:08:00"), None).unwrap();
+        assert!(matches!(base.retirar_codigo(duena, segundo, &m("10:08:30"), None), Err(ErrorCaja::CodigoNoDisponible)));
+        assert!(matches!(base.usar_codigo("9630", &m("10:09:00"), None), Err(ErrorCaja::CodigoIncorrecto)));
+        let lista = base.codigos_caja(duena, 10).unwrap();
+        assert_eq!(lista.len(), 3);
+        assert!(lista[0].usado.is_none() && lista[0].retirado.is_none(), "primero los disponibles");
+        assert!(lista.iter().any(|c| c.id == tercero && c.retirado.is_some()));
+        assert!(lista.iter().any(|c| c.id == segundo && c.usado.is_some()));
+        base.usar_codigo("7410", &m("10:10:00"), None).unwrap();
+        assert!(matches!(base.usar_codigo("7410", &m("10:11:00"), None), Err(ErrorCaja::SinCodigo)));
     }
 }

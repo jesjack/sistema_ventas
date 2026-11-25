@@ -22,6 +22,8 @@ const TRAZOS: Record<string, string[]> = {
   ver_camaras: ['M3 8.5a2 2 0 0 1 2-2h2.2L9 4h6l1.8 2.5H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M12 9.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7'],
   // Lista (ventas)
   ver_ventas: ['M8 6h12', 'M8 12h12', 'M8 18h12', 'M4 6v.01', 'M4 12v.01', 'M4 18v.01'],
+  // Llave (códigos de caja)
+  codigos_caja: ['M8 10.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7', 'M11.5 14H21', 'M18 14v3', 'M15 14v2'],
   // Carrito
   carrito: ['M3 4h2.5l2.2 11h10.6l2-7.5H6.4', 'M9 19.5v.01', 'M17 19.5v.01'],
 }

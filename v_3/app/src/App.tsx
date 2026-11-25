@@ -35,15 +35,28 @@ interface Boton {
   orden: number
 }
 
-/** Estado del código de autorización (núcleo: `EstadoCodigo`). */
-type EstadoCodigo = 'SinCodigo' | 'Disponible' | { Usado: { usado_en: string; usado_sesion_id: number | null } }
+/** Cuándo y quién (núcleo: `UsoCodigo`). */
+interface UsoCodigo {
+  en: string
+  usuario: string | null
+}
+
+/** Un código de la reserva, sin el código (núcleo: `CodigoCaja`). */
+interface CodigoCaja {
+  id: number
+  creado_en: string
+  creado_por: string | null
+  usado: UsoCodigo | null
+  retirado: UsoCodigo | null
+}
 
 /** Lo que devuelve `estado_caja` (D21, D23). */
 interface EstadoCaja {
   permisos: string[]
   como_abrir: 'permiso' | 'ventana_diaria' | 'codigo'
-  codigo: EstadoCodigo
-  puede_poner_codigo: boolean
+  codigos: { disponibles: number; ultimo_uso: UsoCodigo | null }
+  pocos_codigos: number
+  administra_codigos: boolean
   ve_otros_dias: boolean
 }
 
@@ -130,7 +143,10 @@ export default function App() {
   // Apertura del cajón y código de autorización (D21, D23).
   const [estadoCaja, setEstadoCaja] = useState<EstadoCaja | null>(null)
   const [pideCodigo, setPideCodigo] = useState<string | null>(null)
-  const [codigoNuevo, setCodigoNuevo] = useState<string | null>(null)
+  // CÓDIGOS DE CAJA: el modal para administrar la reserva (quien tiene "sin límite").
+  const [verCodigos, setVerCodigos] = useState(false)
+  const [listaCodigos, setListaCodigos] = useState<CodigoCaja[]>([])
+  const [codigoNuevo, setCodigoNuevo] = useState('')
   const [turnoPerdido, setTurnoPerdido] = useState(false)
   const refCodigo = useRef<HTMLInputElement>(null)
   const refCodigoNuevo = useRef<HTMLInputElement>(null)
@@ -224,24 +240,10 @@ export default function App() {
     invoke<Boton[]>('botones').then(setBotones, () => setBotones([]))
   }, [])
 
-  // Si ya se pidió el código nuevo y se dejó para más tarde, no se vuelve a pedir en cada venta.
-  const codigoYaPedido = useRef(false)
-  const habiaCodigo = useRef(false)
+  // El estado de la caja: permisos, cómo se abriría el cajón y cuántos códigos quedan (el botón
+  // CÓDIGOS DE CAJA avisa con su badge; ya no se interrumpe con un modal).
   const leerEstadoCaja = useCallback(() => {
-    invoke<EstadoCaja>('estado_caja').then(
-      (e) => {
-        setEstadoCaja(e)
-        // D21/D23: si puede ponerlo y no hay código (o el último ya se usó), se le pide uno nuevo:
-        // al abrir la caja y cada vez que el código disponible se gasta.
-        const hay = e.codigo === 'Disponible'
-        if (e.puede_poner_codigo && !hay && (!codigoYaPedido.current || habiaCodigo.current)) {
-          codigoYaPedido.current = true
-          setCodigoNuevo((c) => c ?? '')
-        }
-        habiaCodigo.current = hay
-      },
-      () => setEstadoCaja(null),
-    )
+    invoke<EstadoCaja>('estado_caja').then(setEstadoCaja, () => setEstadoCaja(null))
   }, [])
   useEffect(() => leerEstadoCaja(), [leerEstadoCaja])
 
@@ -273,15 +275,44 @@ export default function App() {
     }
   }
 
-  const guardarCodigoNuevo = async () => {
+  const [errorCodigos, setErrorCodigos] = useState<string | null>(null)
+  const leerCodigos = () =>
+    invoke<CodigoCaja[]>('codigos_caja').then(
+      (lista) => {
+        setListaCodigos(lista)
+        setErrorCodigos(null)
+      },
+      (e) => setErrorCodigos(String(e)),
+    )
+  const abrirCodigos = () => {
+    setCodigoNuevo('')
+    setErrorCodigos(null)
+    setVerCodigos(true)
+    void leerCodigos()
+    requestAnimationFrame(() => refCodigoNuevo.current?.focus())
+  }
+  const cerrarCodigos = () => {
+    setVerCodigos(false)
+    enfocarProducto()
+  }
+  const agregarCodigo = async () => {
     try {
-      await invoke('poner_codigo', { codigo: codigoNuevo ?? '' })
-      setCodigoNuevo(null)
-      setAviso({ tono: 'success', texto: 'Código de autorización guardado. Sirve para una sola apertura.' })
+      await invoke('agregar_codigo', { codigo: codigoNuevo })
+      setCodigoNuevo('')
+      await leerCodigos()
       leerEstadoCaja()
-      enfocarProducto()
+      refCodigoNuevo.current?.focus()
     } catch (e) {
-      setAviso({ tono: 'warning', texto: String(e) })
+      setErrorCodigos(String(e))
+    }
+  }
+  const retirarCodigo = async (id: number) => {
+    try {
+      await invoke('retirar_codigo', { id })
+      await leerCodigos()
+      leerEstadoCaja()
+    } catch (e) {
+      setErrorCodigos(String(e))
     }
   }
 
@@ -871,46 +902,81 @@ export default function App() {
               {modalCodigo}
             </NexMorph>
           )}
-          <NexMorph
-            open={codigoNuevo !== null && !!estadoCaja?.puede_poner_codigo}
-            onOpenChange={(abierto) => !abierto && (setCodigoNuevo(null), enfocarProducto())}
-          >
-            <NexMorph.Target label="Código nuevo" className="caja__modal" size="content" panelStyle={ESTILO_MODAL}>
+          {estadoCaja?.administra_codigos && (
+            <NexMorph open={verCodigos} onOpenChange={(abierto) => !abierto && cerrarCodigos()}>
+              <NexMorph.Source>
+                <NexButton
+                  fullWidth
+                  contentAlign="start"
+                  iconStart={<Icono nombre="codigos_caja" />}
+                  iconEnd={<BadgeCodigos estado={estadoCaja} />}
+                  disabled={turnoPerdido}
+                  onClick={abrirCodigos}
+                >
+                  <span className="caja__boton-texto">CÓDIGOS DE CAJA</span>
+                </NexButton>
+              </NexMorph.Source>
+              <NexMorph.Target label="Códigos de caja" className="caja__modal" size="content" panelStyle={ESTILO_MODAL}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
                   <div className="caja__cobro">
-                    <p className="caja__cobro-total">
-                      {estadoCaja?.codigo === 'SinCodigo'
-                        ? 'Todavía no hay código de autorización'
-                        : typeof estadoCaja?.codigo === 'object'
-                          ? `El código se usó el ${estadoCaja?.codigo.Usado.usado_en}${estadoCaja?.codigo.Usado.usado_sesion_id ? ` (sesión ${estadoCaja?.codigo.Usado.usado_sesion_id})` : ''}`
-                          : 'Código nuevo'}
+                    <p className="caja__cobro-total">Códigos de caja</p>
+                    <p className="caja__nota">
+                      La empleada escribe cualquiera de los disponibles para abrir la caja fuera de su apertura diaria;
+                      cada código sirve una sola vez. Se guardan cifrados: aquí no se pueden volver a ver.
                     </p>
                     <NexInput
                       ref={refCodigoNuevo}
-                      label="Pon un código nuevo"
-                      description="Al menos 4 caracteres. Se guarda cifrado y sirve para una sola apertura · Escape: más tarde"
+                      label="Agregar un código"
+                      description="Al menos 4 caracteres · Intro lo agrega · Escape cierra"
                       type="password"
                       autoComplete="new-password"
-                      value={codigoNuevo ?? ''}
-                      onChange={(e) => setCodigoNuevo(e.target.value)}
+                      value={codigoNuevo}
+                      error={errorCodigos ?? undefined}
+                      onChange={(e) => {
+                        setCodigoNuevo(e.target.value)
+                        setErrorCodigos(null)
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          void guardarCodigoNuevo()
+                          void agregarCodigo()
                         }
                       }}
                     />
+                    <ul className="caja__codigos">
+                      {listaCodigos.length === 0 && <li className="caja__nota">Todavía no hay códigos.</li>}
+                      {listaCodigos.map((c) => (
+                        <li key={c.id} className="caja__codigo" data-estado={c.usado ? 'usado' : c.retirado ? 'retirado' : 'disponible'}>
+                          <span>
+                            <strong>Código #{c.id}</strong>{' '}
+                            {c.usado
+                              ? `· usado el ${c.usado.en}${c.usado.usuario ? ` por ${c.usado.usuario}` : ''}`
+                              : c.retirado
+                                ? `· retirado el ${c.retirado.en}${c.retirado.usuario ? ` por ${c.retirado.usuario}` : ''}`
+                                : `· disponible, agregado el ${c.creado_en}${c.creado_por ? ` por ${c.creado_por}` : ''}`}
+                          </span>
+                          {!c.usado && !c.retirado && (
+                            <NexButton appearance="ghost" tone="danger" density="compact" onClick={() => void retirarCodigo(c.id)}>
+                              Retirar
+                            </NexButton>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                     <div className="caja__cobro-acciones">
-                      <NexButton appearance="filled" onClick={() => void guardarCodigoNuevo()}>
-                        Guardar código (Intro)
+                      <NexButton appearance="filled" onClick={() => void agregarCodigo()}>
+                        Agregar (Intro)
                       </NexButton>
-                      <NexButton appearance="ghost" onClick={() => (setCodigoNuevo(null), enfocarProducto())}>Más tarde</NexButton>
+                      <NexButton appearance="ghost" onClick={cerrarCodigos}>
+                        Cerrar
+                      </NexButton>
                     </div>
                   </div>
                 </NexProvider>
               </NexMorph.Target>
-          </NexMorph>
+            </NexMorph>
+          )}
           <div className="caja__sesion">
             {info ? (
               <NexBadge tone="success" dot>
@@ -969,5 +1035,16 @@ function Medida({ titulo, resumen, nota }: { titulo: string; resumen: Resumen | 
       )}
       <span className="caja__nota">{nota}</span>
     </div>
+  )
+}
+
+/** Badge del botón CÓDIGOS DE CAJA: cuántos quedan; ámbar si son pocos, rojo si no queda ninguno. */
+function BadgeCodigos({ estado }: { estado: EstadoCaja }) {
+  const n = estado.codigos.disponibles
+  const tono = n === 0 ? 'danger' : n <= estado.pocos_codigos ? 'warning' : 'neutral'
+  return (
+    <NexBadge tone={tono} title={n === 0 ? 'No quedan códigos para la empleada' : `Quedan ${n}`}>
+      {n === 0 ? 'Sin códigos' : n}
+    </NexBadge>
   )
 }

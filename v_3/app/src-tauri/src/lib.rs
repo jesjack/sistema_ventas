@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use nucleo::caja::{Autorizacion, EstadoCodigo};
+use nucleo::caja::{Autorizacion, CodigoCaja, EstadoCodigos, POCOS_CODIGOS};
 use nucleo::{Base, Carrito, Cobro, DatosUsuario, FilaVentas, Momento, Producto};
 use tauri::Emitter;
 use serde::{Deserialize, Serialize};
@@ -243,9 +243,12 @@ struct EstadoCaja {
     permisos: Vec<&'static str>,
     /// Cómo se abriría el cajón ahora: permiso, ventana_diaria o codigo.
     como_abrir: &'static str,
-    codigo: EstadoCodigo,
-    /// Tiene "abrir caja sin límite": puede (y debe, si falta) poner el código.
-    puede_poner_codigo: bool,
+    /// La reserva de códigos: cuántos quedan y el último uso.
+    codigos: EstadoCodigos,
+    /// Con esta cantidad o menos, el botón CÓDIGOS DE CAJA avisa que quedan pocos.
+    pocos_codigos: i64,
+    /// Tiene "abrir caja sin límite": administra los códigos (botón CÓDIGOS DE CAJA).
+    administra_codigos: bool,
     /// Ve las ventas de otros días (administradores); la empleada, solo las de hoy.
     ve_otros_dias: bool,
 }
@@ -257,11 +260,12 @@ fn estado_caja(estado: tauri::State<'_, Compartido>) -> Result<EstadoCaja, Strin
     con_base(&estado, |b| {
         let permisos = b.permisos(sesion.usuario_id).map_err(|e| e.to_string())?;
         Ok(EstadoCaja {
-            puede_poner_codigo: permisos.contains(&nucleo::caja::Permiso::AbrirCajaSinLimite),
+            administra_codigos: permisos.contains(&nucleo::caja::Permiso::AbrirCajaSinLimite),
+            pocos_codigos: POCOS_CODIGOS,
             ve_otros_dias: ve_otros_dias(b, sesion.usuario_id)?,
             permisos: permisos.iter().map(|p| p.clave()).collect(),
             como_abrir: b.como_abrir(sesion.usuario_id, &Momento::ahora().fecha).map_err(|e| e.to_string())?.clave(),
-            codigo: b.estado_codigo().map_err(|e| e.to_string())?,
+            codigos: b.estado_codigos().map_err(|e| e.to_string())?,
         })
     })
 }
@@ -275,13 +279,14 @@ fn abrir_caja(estado: tauri::State<'_, Compartido>, codigo: Option<String>) -> R
         let momento = Momento::ahora();
         let autorizacion = b.como_abrir(sesion.usuario_id, &momento.fecha).map_err(|e| e.to_string())?;
         if autorizacion == Autorizacion::Codigo {
-            // Si no hay código disponible, ninguno va a servir: se avisa sin pedirlo.
-            match b.estado_codigo().map_err(|e| e.to_string())? {
-                EstadoCodigo::SinCodigo => return Err(nucleo::caja::ErrorCaja::SinCodigo.to_string()),
-                EstadoCodigo::Usado { usado_en, .. } => {
-                    return Err(format!("{} (Se usó el {usado_en}.)", nucleo::caja::ErrorCaja::CodigoUsado));
-                }
-                EstadoCodigo::Disponible => {}
+            // Si no queda ningún código, ninguno va a servir: se avisa sin pedirlo.
+            let codigos = b.estado_codigos().map_err(|e| e.to_string())?;
+            if codigos.disponibles == 0 {
+                let error = nucleo::caja::ErrorCaja::SinCodigo.to_string();
+                return Err(match codigos.ultimo_uso {
+                    Some(u) => format!("{error} (El último se usó el {}.)", u.en),
+                    None => error,
+                });
             }
             let Some(codigo) = codigo.filter(|c| !c.trim().is_empty()) else { return Err(PIDE_CODIGO.into()) };
             b.usar_codigo(&codigo, &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
@@ -298,11 +303,26 @@ fn botones(estado: tauri::State<'_, Compartido>) -> Result<Vec<nucleo::botones::
     con_base(&estado, |b| b.botones_de(sesion.usuario_id).map_err(|e| e.to_string()))
 }
 
-/// Pone un código de autorización nuevo (solo con "abrir caja sin límite"; el núcleo lo comprueba).
+/// La reserva de códigos de caja: los disponibles y los últimos 20 usados o retirados. Solo con
+/// "abrir caja sin límite" (lo comprueba el núcleo).
 #[tauri::command]
-fn poner_codigo(estado: tauri::State<'_, Compartido>, codigo: String) -> Result<(), String> {
+fn codigos_caja(estado: tauri::State<'_, Compartido>) -> Result<Vec<CodigoCaja>, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    con_base(&estado, |b| b.codigos_caja(sesion.usuario_id, 20).map_err(|e| e.to_string()))
+}
+
+/// Agrega un código a la reserva (solo con "abrir caja sin límite"; el núcleo lo comprueba).
+#[tauri::command]
+fn agregar_codigo(estado: tauri::State<'_, Compartido>, codigo: String) -> Result<(), String> {
     let sesion = sesion_con_turno(&estado)?;
-    con_base(&estado, |b| b.poner_codigo(sesion.usuario_id, &codigo, &Momento::ahora(), Some(sesion.id)).map_err(|e| e.to_string()))
+    con_base(&estado, |b| b.agregar_codigo(sesion.usuario_id, &codigo, &Momento::ahora(), Some(sesion.id)).map(|_| ()).map_err(|e| e.to_string()))
+}
+
+/// Retira un código disponible (p. ej. si se filtró).
+#[tauri::command]
+fn retirar_codigo(estado: tauri::State<'_, Compartido>, id: i64) -> Result<(), String> {
+    let sesion = sesion_con_turno(&estado)?;
+    con_base(&estado, |b| b.retirar_codigo(sesion.usuario_id, id, &Momento::ahora(), Some(sesion.id)).map_err(|e| e.to_string()))
 }
 
 /// Abre la sesión de esta ejecución con el usuario del sistema (el mismo que reconoce la v2).
@@ -390,7 +410,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, poner_codigo, botones])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {
