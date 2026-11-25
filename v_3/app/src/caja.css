@@ -286,8 +286,6 @@ body,
 /* Modales (NexMorph): el panel mide su contenido. */
 .caja__modal .caja__cobro {
   box-sizing: border-box;
-  flex: 1;
-  min-height: 0;
   margin: 0;
   border: 0;
   background: transparent;
@@ -339,17 +337,6 @@ body,
 .caja__hoja .nx-sheets,
 .caja__marco-hoja {
   --nx-sheets-radius: 12px;
-}
-
-.caja__modal .caja__cobro-acciones {
-  margin-top: auto;
-}
-/* El NexProvider que repite la forma dentro del modal también ocupa todo el alto. */
-.caja__modal .nx-morph__content > .nx-root {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 /*
