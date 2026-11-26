@@ -14,6 +14,7 @@ pub mod caja;
 pub mod carrito;
 pub mod catalogo;
 pub mod cobro;
+pub mod corrector;
 pub mod corte;
 pub mod esquema;
 pub mod importar;

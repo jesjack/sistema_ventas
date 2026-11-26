@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type Ref } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { NexButton, NexCombobox, NexInput } from '@nexfluid/react'
 import { dinero } from './carrito.ts'
+import { AvisoSugerencia } from './catalogo.tsx'
 
 export interface CodigoBarras {
   id: number
@@ -40,7 +41,7 @@ function BuscadorProducto(props: {
     }
     invoke<Producto[]>('buscar_productos', { texto }).then((lista) => n === consulta.current && setOpciones(lista), () => {})
   }, [props.nombre])
-  return (
+  const campo = (
     <NexCombobox
       ref={props.refCampo}
       label="Producto"
@@ -56,6 +57,15 @@ function BuscadorProducto(props: {
         props.alElegir?.()
       }}
     />
+  )
+  // Si se escribe un producto que no está, el corrector sugiere antes de agregarlo al catálogo.
+  return props.nombre.trim() && !opciones.some((p) => p.nombre.toLowerCase() === props.nombre.trim().toLowerCase()) ? (
+    <>
+      {campo}
+      <AvisoSugerencia nombre={props.nombre} usar={(s) => props.cambiar(s, null)} />
+    </>
+  ) : (
+    campo
   )
 }
 

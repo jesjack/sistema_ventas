@@ -482,31 +482,31 @@ mod pruebas {
         assert!(matches!(base.agregar_codigo(empleada, "1234", &m("10:00:00"), None), Err(ErrorCaja::SinPermisoParaElCodigo)));
         assert!(matches!(base.codigos_caja(empleada, 10), Err(ErrorCaja::SinPermisoParaElCodigo)));
         assert!(matches!(base.agregar_codigo(duena, "12", &m("10:00:00"), None), Err(ErrorCaja::CodigoCorto(4))));
-        base.agregar_codigo(duena, " 5931 ", &m("10:00:00"), None).unwrap();
-        let segundo = base.agregar_codigo(duena, "8520", &m("10:00:01"), None).unwrap();
-        let tercero = base.agregar_codigo(duena, "9630", &m("10:00:02"), None).unwrap();
-        assert!(matches!(base.agregar_codigo(duena, "8520", &m("10:00:03"), None), Err(ErrorCaja::CodigoRepetido)));
+        base.agregar_codigo(duena, " qz59 ", &m("10:00:00"), None).unwrap();
+        let segundo = base.agregar_codigo(duena, "wy85", &m("10:00:01"), None).unwrap();
+        let tercero = base.agregar_codigo(duena, "vx96", &m("10:00:02"), None).unwrap();
+        assert!(matches!(base.agregar_codigo(duena, "wy85", &m("10:00:03"), None), Err(ErrorCaja::CodigoRepetido)));
         assert_eq!(base.estado_codigos().unwrap().disponibles, 3);
         let guardado: String = base.con.query_row("SELECT group_concat(hash || sal) FROM codigos_caja", [], |f| f.get(0)).unwrap();
-        assert!(!guardado.contains("5931") && !guardado.contains("8520"), "los códigos no se guardan en texto");
+        assert!(!guardado.contains("qz59") && !guardado.contains("wy85"), "los códigos no se guardan en texto");
         // Uno incorrecto no gasta nada; uno correcto gasta solo ese.
         assert!(matches!(base.usar_codigo("0000", &m("10:05:00"), None), Err(ErrorCaja::CodigoIncorrecto)));
         let sesion = base.iniciar_sesion(empleada, &m("09:00:00"), None, None).unwrap();
-        base.usar_codigo("8520", &m("10:06:00"), Some(sesion)).unwrap();
+        base.usar_codigo("wy85", &m("10:06:00"), Some(sesion)).unwrap();
         let estado = base.estado_codigos().unwrap();
         assert_eq!(estado.disponibles, 2);
         assert_eq!(estado.ultimo_uso.unwrap().en, "2026-11-25 10:06:00");
-        assert!(matches!(base.usar_codigo("8520", &m("10:07:00"), None), Err(ErrorCaja::CodigoUsado)));
+        assert!(matches!(base.usar_codigo("wy85", &m("10:07:00"), None), Err(ErrorCaja::CodigoUsado)));
         // Retirar uno: ya no sirve y queda en el historial.
         base.retirar_codigo(duena, tercero, &m("10:08:00"), None).unwrap();
         assert!(matches!(base.retirar_codigo(duena, segundo, &m("10:08:30"), None), Err(ErrorCaja::CodigoNoDisponible)));
-        assert!(matches!(base.usar_codigo("9630", &m("10:09:00"), None), Err(ErrorCaja::CodigoIncorrecto)));
+        assert!(matches!(base.usar_codigo("vx96", &m("10:09:00"), None), Err(ErrorCaja::CodigoIncorrecto)));
         let lista = base.codigos_caja(duena, 10).unwrap();
         assert_eq!(lista.len(), 3);
         assert!(lista[0].usado.is_none() && lista[0].retirado.is_none(), "primero los disponibles");
         assert!(lista.iter().any(|c| c.id == tercero && c.retirado.is_some()));
         assert!(lista.iter().any(|c| c.id == segundo && c.usado.is_some()));
-        base.usar_codigo("5931", &m("10:10:00"), None).unwrap();
-        assert!(matches!(base.usar_codigo("5931", &m("10:11:00"), None), Err(ErrorCaja::SinCodigo)));
+        base.usar_codigo("qz59", &m("10:10:00"), None).unwrap();
+        assert!(matches!(base.usar_codigo("qz59", &m("10:11:00"), None), Err(ErrorCaja::SinCodigo)));
     }
 }

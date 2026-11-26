@@ -7,6 +7,7 @@ import { ALTO_FILA_HOJA, CARRIL_HOJA, FORMATOS_CARRITO, FORMATOS_VENTAS, IDIOMA_
 import { useAltoDisponible, useMarcoHoja } from './marcoHoja.ts'
 import { Icono } from './iconos.tsx'
 import { PanelCodigos, PanelRegistro } from './codigos.tsx'
+import { PanelCatalogo } from './catalogo.tsx'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
 import { agregarAlCarrito, dinero, leerNumero, totalDelCarrito, type FilaCarrito } from './carrito.ts'
 import { DetectorEscaner, type Escaneo } from './escaner.ts'
@@ -146,6 +147,7 @@ export default function App() {
   // Códigos de barras: el escaneado que no estaba (se registra) y VER CÓDIGOS.
   const [registroCodigo, setRegistroCodigo] = useState<string | null>(null)
   const [verCodigosBarras, setVerCodigosBarras] = useState(false)
+  const [verCatalogo, setVerCatalogo] = useState(false)
   // Pago exacto: se pide una segunda confirmación (Intro otra vez).
   const [confirmarExacto, setConfirmarExacto] = useState<null | 'normal' | 'sinTicket'>(null)
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
@@ -703,7 +705,7 @@ export default function App() {
       case 'ver_codigos_de_barras':
         return () => setVerCodigosBarras(true)
       case 'autocompletado':
-        return 'Todavía no está en la v3 (fase 2, siguiente bloque).'
+        return () => setVerCatalogo(true)
       case 'imprimir_codigo_de_barras':
       case 'imprimir_varios_codigos':
         return 'Llega con las impresoras (fase 3).'
@@ -895,6 +897,17 @@ export default function App() {
         <NexMorph key={b.id} open={pideCodigo !== null} onOpenChange={(abierto) => !abierto && (setPideCodigo(null), enfocarProducto())}>
           <NexMorph.Source>{boton}</NexMorph.Source>
           {modalCodigo}
+        </NexMorph>
+      )
+    if (b.accion === 'autocompletado')
+      return (
+        <NexMorph key={b.id} open={verCatalogo} onOpenChange={(abierto) => !abierto && (setVerCatalogo(false), enfocarProducto())}>
+          <NexMorph.Source>{boton}</NexMorph.Source>
+          <NexMorph.Target label="Catálogo" className="caja__modal" size="content" panelStyle={{ width: 'min(720px, calc(100vw - 32px))' }}>
+            <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
+              <PanelCatalogo cerrar={() => (setVerCatalogo(false), enfocarProducto())} />
+            </NexProvider>
+          </NexMorph.Target>
         </NexMorph>
       )
     if (b.accion === 'ver_codigos_de_barras')

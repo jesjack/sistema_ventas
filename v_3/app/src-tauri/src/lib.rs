@@ -488,8 +488,9 @@ fn producto_para(b: &mut Base, producto_id: Option<i64>, nombre: &str, sesion_id
     if let Some(id) = producto_id {
         return Ok(id);
     }
-    let nombre = nucleo::catalogo::formatear_nombre(nombre);
-    if let Some(p) = b.productos().map_err(|e| e.to_string())?.into_iter().find(|p| p.nombre == nombre) {
+    // El catálogo guarda los nombres en minúsculas (como la v2); el formato es solo para mostrar.
+    let nombre = nombre.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    if let Some(p) = b.productos().map_err(|e| e.to_string())?.into_iter().find(|p| p.nombre.to_lowercase() == nombre) {
         return Ok(p.id);
     }
     b.agregar_producto(&nombre, Some(sesion_id)).map_err(|e| e.to_string())
@@ -543,6 +544,114 @@ fn actualizar_codigo(
     })
 }
 
+// ---- Catálogo (AUTOCOMPLETADO, como la v2) y su corrector ortográfico -------------------------
+
+#[derive(Serialize)]
+struct ProductoCatalogo {
+    id: i64,
+    nombre: String,
+    /// Códigos de barras que lo usan (con alguno no se puede eliminar).
+    codigos: i64,
+}
+
+/// Todo el catálogo, con cuántos códigos usa cada producto.
+#[tauri::command]
+fn catalogo(estado: tauri::State<'_, Compartido>) -> Result<Vec<ProductoCatalogo>, String> {
+    con_base(&estado, |b| {
+        let productos = b.productos().map_err(|e| e.to_string())?;
+        productos
+            .into_iter()
+            .map(|p| Ok(ProductoCatalogo { codigos: b.codigos_del_producto(p.id).map_err(|e| e.to_string())?, id: p.id, nombre: p.nombre }))
+            .collect()
+    })
+}
+
+/// La sugerencia del corrector para un nombre (en minúsculas), o nada.
+#[tauri::command]
+fn sugerir_nombre(estado: tauri::State<'_, Compartido>, nombre: String) -> Result<Option<String>, String> {
+    con_base(&estado, |b| Ok(b.corrector().map_err(|e| e.to_string())?.sugerir(&nombre)))
+}
+
+/// Nombre limpio como lo guarda el catálogo: minúsculas y un espacio entre palabras.
+fn nombre_de_catalogo(nombre: &str) -> String {
+    nombre.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+#[derive(Serialize)]
+#[serde(tag = "resultado")]
+enum CambioCatalogo {
+    Hecho { id: i64 },
+    /// Ya hay un producto con ese nombre: se puede unir.
+    YaExiste { id: i64, nombre: String },
+}
+
+fn ya_existe(b: &Base, nombre: &str, salvo: Option<i64>) -> Result<Option<nucleo::Producto>, String> {
+    Ok(b.productos().map_err(|e| e.to_string())?.into_iter().find(|p| Some(p.id) != salvo && p.nombre.to_lowercase() == nombre))
+}
+
+#[tauri::command]
+fn agregar_producto(estado: tauri::State<'_, Compartido>, nombre: String) -> Result<CambioCatalogo, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    let nombre = nombre_de_catalogo(&nombre);
+    con_base(&estado, |b| {
+        if let Some(p) = ya_existe(b, &nombre, None)? {
+            return Ok(CambioCatalogo::YaExiste { id: p.id, nombre: p.nombre });
+        }
+        Ok(CambioCatalogo::Hecho { id: b.agregar_producto(&nombre, Some(sesion.id)).map_err(|e| e.to_string())? })
+    })
+}
+
+/// Cambia el nombre de un producto. Con `recordar`, las palabras corregidas a mano se recuerdan
+/// para sugerirlas después ("bycker" → "biker").
+#[tauri::command]
+fn renombrar_producto(estado: tauri::State<'_, Compartido>, id: i64, nombre: String, recordar: bool) -> Result<CambioCatalogo, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    let nombre = nombre_de_catalogo(&nombre);
+    con_base(&estado, |b| {
+        if let Some(p) = ya_existe(b, &nombre, Some(id))? {
+            return Ok(CambioCatalogo::YaExiste { id: p.id, nombre: p.nombre });
+        }
+        let antes = b.productos().map_err(|e| e.to_string())?.into_iter().find(|p| p.id == id).ok_or("Ese producto ya no existe.")?;
+        b.editar_producto(id, &nombre, Some(sesion.id)).map_err(|e| e.to_string())?;
+        if recordar {
+            let aprendidas = nucleo::corrector::correcciones_de(&antes.nombre, &nombre);
+            b.recordar_correcciones(&aprendidas, Some(sesion.id)).map_err(|e| e.to_string())?;
+        }
+        Ok(CambioCatalogo::Hecho { id })
+    })
+}
+
+/// Une dos productos (los códigos de `origen` pasan a `destino`).
+#[tauri::command]
+fn unir_productos(estado: tauri::State<'_, Compartido>, origen: i64, destino: i64) -> Result<(), String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    if origen == destino {
+        return Err("Es el mismo producto.".into());
+    }
+    con_base(&estado, |b| b.unir_productos(origen, destino, Some(sesion.id)).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+fn eliminar_producto(estado: tauri::State<'_, Compartido>, id: i64) -> Result<bool, String> {
+    con_base(&estado, |b| b.eliminar_producto(id))
+}
+
+/// Los productos con una sugerencia del corrector (Revisar ortografía).
+#[tauri::command]
+fn revisar_catalogo(estado: tauri::State<'_, Compartido>) -> Result<Vec<nucleo::corrector::Sugerencia>, String> {
+    con_base(&estado, |b| b.revisar_catalogo().map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+fn correcciones(estado: tauri::State<'_, Compartido>) -> Result<Vec<nucleo::corrector::Correccion>, String> {
+    con_base(&estado, |b| b.correcciones().map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+fn olvidar_correccion(estado: tauri::State<'_, Compartido>, incorrecta: String) -> Result<bool, String> {
+    con_base(&estado, |b| b.olvidar_correccion(&incorrecta).map_err(|e| e.to_string()))
+}
+
 /// Estado de la lectura directa del escáner (para Desarrollador).
 #[tauri::command]
 fn estado_escaner(escaner: tauri::State<'_, Arc<escaner::Escaner>>) -> escaner::EstadoEscaner {
@@ -584,7 +693,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte, codigos_barras, registrar_codigo, actualizar_codigo])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte, codigos_barras, registrar_codigo, actualizar_codigo, catalogo, sugerir_nombre, agregar_producto, renombrar_producto, unir_productos, eliminar_producto, revisar_catalogo, correcciones, olvidar_correccion])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {
