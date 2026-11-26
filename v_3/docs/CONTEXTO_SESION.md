@@ -124,6 +124,10 @@ OPCIONAL (atributo apagado por defecto) en la rama de sugerencias, nunca como co
 
 ### Llevar un cambio de NexFluid a la caja (paquetes `.tgz`)
 
+**Usa `v_3/app/empaquetar_nexfluid.sh`** (hace todo lo de abajo, incluido borrar la caché de Vite;
+luego reinicia `npm run tauri dev`). El 2026-11-26 se olvidó borrar `node_modules/.vite` y la app
+siguió sirviendo la versión anterior de NexFluid: parecía que un cambio no funcionaba.
+
 No se instala desde GitHub (es un monorepo que hay que compilar). Pasos:
 
 ```bash
@@ -143,7 +147,7 @@ cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.18.tgz/$N.tgz/g" package.
   `overrides` (`"$@nexfluid/..."`) para foundation, core y components. Cada paquete parcheado
   va en `dependencies` como `file:vendor/...tgz` y en `overrides`.
 - `@nexfluid/sheets` viene de npm (0.9.0); no se ha modificado.
-- Pendiente: convertir esto en un script `empaquetar.sh`.
+- Hecho: `v_3/app/empaquetar_nexfluid.sh`.
 
 ## 6. Cosas aprendidas (para no repetirlas)
 
