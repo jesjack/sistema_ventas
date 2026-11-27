@@ -74,10 +74,13 @@ export function useAltoDisponible(ref: RefObject<HTMLElement | null>, margenInfe
       const nodo = ref.current
       if (!nodo) return
       setAlto(Math.max(0, Math.floor(window.innerHeight - nodo.getBoundingClientRect().top - margenInferior)))
-      // Si con ese alto la página igual se desborda (algo más abajo o al lado lo empuja), se le
-      // quita la diferencia: si no, aparecen dos barras, la de la hoja y la de la página.
+      // Si con ese alto SU columna igual pasa del fondo de la ventana (algo debajo la empuja), se le
+      // quita la diferencia: si no, aparecen dos barras, la de la hoja y la de la página. Solo su
+      // columna: si lo que desborda es otra (p. ej. la de botones), achicar la hoja no lo arregla.
       requestAnimationFrame(() => {
-        const sobra = document.documentElement.scrollHeight - window.innerHeight
+        const columna = nodo.parentElement?.closest<HTMLElement>('section') ?? nodo
+        // 20 px: el margen inferior de la página (.caja).
+        const sobra = Math.ceil(columna.getBoundingClientRect().bottom + 20 - window.innerHeight)
         if (sobra > 0) setAlto((a) => Math.max(0, a - sobra))
       })
     }

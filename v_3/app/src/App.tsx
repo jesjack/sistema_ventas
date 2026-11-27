@@ -895,6 +895,9 @@ export default function App() {
       <NexButton
         key={b.id}
         appearance={b.accion === 'cobrar_carrito' ? 'filled' : 'default'}
+        // Compactos (como la hoja de la v2): con la densidad normal, 10 botones no caben en una
+        // ventana de ~600 px y la página se desplaza (segunda barra junto a la de VENTAS REALIZADAS).
+        density="compact"
         fullWidth
         contentAlign="start"
         iconStart={<Icono nombre={b.accion} />}
@@ -1336,6 +1339,7 @@ export default function App() {
                 {/* El badge va en la esquina superior derecha del botón, encima: no le quita espacio al texto. */}
                 <div className="caja__con-badge">
                   <NexButton
+                    density="compact"
                     fullWidth
                     contentAlign="start"
                     iconStart={<Icono nombre="codigos_caja" />}
