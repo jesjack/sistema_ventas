@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { NexButton, NexInput, NexSelect } from '@nexfluid/react'
 import { NexSheets, cellKey, createSheet, createWorkbook, type Sheet, type Workbook } from '@nexfluid/react/sheets'
 import { ALTO_FILA_HOJA, medidorDeTexto } from './hojas.ts'
+import { useMarcoHoja } from './marcoHoja.ts'
 
 interface BotonAdmin {
   id: number
@@ -94,6 +95,9 @@ export function PanelBotones(props: { alCambiar: () => void }) {
   // ---- La hoja: filas = Activo + usuarios (sus nombres en lugar de números, `rowLabels`);
   // columnas = un botón cada una (30 × 30, nombre en vertical).
   const refHoja = useRef<HTMLDivElement>(null)
+  // Lo que ocupa la hoja aparte de las celdas, MEDIDO (como el carrito): sin sumar px a ojo, que
+  // dejaban un hueco abajo y a la derecha.
+  const marco = useMarcoHoja(refHoja, [botones.length > 0])
   const filas = useMemo(
     () => [{ nombre: 'Activo', id: null as number | null }, ...usuarios.map((u) => ({ nombre: u.plantilla ? 'DEFAULT' : u.nombre, id: u.id as number | null }))],
     [usuarios],
@@ -161,7 +165,7 @@ export function PanelBotones(props: { alCambiar: () => void }) {
       <div
         ref={refHoja}
         className="caja__marco-botones"
-        style={{ width: `min(100%, ${anchoNombre + botones.length * ALTO_FILA_HOJA + 4}px)` }}
+        style={{ width: `min(100%, ${anchoNombre + botones.length * ALTO_FILA_HOJA}px)` }}
         onClick={alClic}
         onKeyDown={alTeclear}
       >
@@ -170,7 +174,7 @@ export function PanelBotones(props: { alCambiar: () => void }) {
           workbook={libro}
           readOnly
           extent={false}
-          height={altoEncabezado + filas.length * ALTO_FILA_HOJA + 4}
+          height={altoEncabezado + filas.length * ALTO_FILA_HOJA + marco.extraAlto}
           label="Botones por usuario"
           columnLabels="name"
           headerHeight={altoEncabezado}
