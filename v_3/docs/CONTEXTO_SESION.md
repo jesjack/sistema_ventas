@@ -1,7 +1,7 @@
 # Contexto para continuar la V3 (Rust + Tauri + NexFluid)
 
 Documento de traspaso entre sesiones de trabajo (con o sin Claude). **Léelo antes de seguir.**
-Última actualización: 2026-11-24, noche (fase 1 completa; **fase 2: pantalla, corte y códigos de barras hechos**, ver §9).
+Última actualización: 2026-11-26 (fase 1 completa; **fase 2 casi completa**: falta la prueba en paralelo; ver §9).
 
 ## 1. La decisión de fondo
 
@@ -335,11 +335,29 @@ uno viejo más largo se puede dejar; sin duplicados; aviso de etiquetas impresas
 **Pendiente del escáner directo:** lee bien y no escribe en la app de enfrente (probado), pero la
 ventana NO pasa al frente en Wayland; se verá después.
 
-**Siguiente (fase 2, bloques 2–4):**
-- **Autocompletado:** editor del catálogo + el **corrector ortográfico** (pendiente de `CLAUDE.md`).
-- **Administración de botones** (decidido): **por usuario + plantilla `__default__`** como la v2,
-  **solo desarrollador**, como **pantalla en el selector**; matriz con una fila por botón y una
-  columna por usuario, activo, orden, etiqueta y acción elegida de una lista. **Ojo:** la v3 aún NO
-  copia los botones de la plantilla a un usuario nuevo (la v2 sí): un usuario nuevo se queda sin botones.
+**Catálogo (AUTOCOMPLETADO, 2026-11-26, hecho):** como la v2 (agregar, renombrar, eliminar si no
+tiene códigos; nombres en minúsculas en la base, con formato al mostrar) + **corrector**
+(`nucleo::corrector`, esquema **v7** `correcciones_catalogo`): SOLO sugiere ("¿Quisiste decir…?");
+correcciones recordadas al corregir a mano (no aprende género/número), diccionario de palabras con
+acento, y las formas con acento del propio catálogo. "Revisar ortografía" lista todo (en el catálogo
+real: 8 sugerencias, sin falsos positivos) y puede **unir** productos (los códigos pasan al correcto).
+
+**Administración de botones (2026-11-26, hecho):** vista "Botones" (solo desarrollador, lo exige
+Rust). Es una **hoja de NexSheets**: filas = Activo, DEFAULT (plantilla) y usuarios como nombres de
+fila (`rowLabels`); columnas = botones de 30 × 30 con el nombre en vertical (`headerHeight`,
+`headerOrientation`); ✓ que cambia con clic o Espacio; clic en el nombre del botón abre el editor
+(etiqueta, acción de una lista, mover). Usuarios: todos los de **esta PC** (`/etc/passwd`, uid ≥ 1000),
+hayan abierto la caja o no (se registran al darles un botón), más los del historial de la v2 con
+botones, marcados "(inactivo)"; sin root. **Un usuario nuevo recibe los botones de la plantilla**
+(una vez, como la v2).
+
+**NexFluid hoy (caja.22):** `NexMorph size="content"` cambia de alto con resorte; fix de la sombra
+de NexMorph en WebKitGTK (dejaba rastro al achicarse); NexSheets `headerHeight`,
+`headerOrientation`, `rowLabels`, `rowHeaderWidth`. Llevarlo a la caja: `v_3/app/empaquetar_nexfluid.sh`.
+
+**Siguiente:**
 - **Prueba en paralelo:** el usuario repetirá en la v3 las ventas del día (la v2 sigue oficial).
+  Antes: importación fresca desde la v2 y volver a aplicar lo que solo vive en `ventas_v3.db`
+  (permisos, ajustes de botones): conviene un paso automático tras importar.
+- Pendientes menores: pasar la ventana al frente al escanear (Wayland); ticket del corte (fase 3).
 

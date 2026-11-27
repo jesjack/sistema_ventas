@@ -19,9 +19,12 @@ interface BotonAdmin {
   visible_para: number[]
 }
 interface UsuarioBotones {
-  id: number
+  /** null: usuario de esta PC que todavía no abre la caja (se registra al darle un botón). */
+  id: number | null
   nombre: string
   plantilla: boolean
+  /** false: viene del historial (otra PC o ya no está). */
+  de_este_equipo: boolean
 }
 
 /** Las acciones que la caja sabe hacer (las de `accion()` en App.tsx), con su estado en la v3. */
@@ -98,8 +101,12 @@ export function PanelBotones(props: { alCambiar: () => void }) {
   // Lo que ocupa la hoja aparte de las celdas, MEDIDO (como el carrito): sin sumar px a ojo, que
   // dejaban un hueco abajo y a la derecha.
   const marco = useMarcoHoja(refHoja, [botones.length > 0])
+  // Filas: Activo y luego cada usuario (la plantilla como DEFAULT; los del historial, marcados).
   const filas = useMemo(
-    () => [{ nombre: 'Activo', id: null as number | null }, ...usuarios.map((u) => ({ nombre: u.plantilla ? 'DEFAULT' : u.nombre, id: u.id as number | null }))],
+    () => [
+      { nombre: 'Activo', usuario: null as UsuarioBotones | null },
+      ...usuarios.map((u) => ({ nombre: u.plantilla ? 'DEFAULT' : u.de_este_equipo ? u.nombre : `${u.nombre} (inactivo)`, usuario: u as UsuarioBotones | null })),
+    ],
     [usuarios],
   )
   const medir = (texto: string, encabezado = false) => (refHoja.current ? medidorDeTexto(refHoja.current)(texto, encabezado) : texto.length * 8)
@@ -109,7 +116,7 @@ export function PanelBotones(props: { alCambiar: () => void }) {
     const celdas: Sheet['cells'] = {}
     filas.forEach((f, r) => {
       botones.forEach((b, c) => {
-        const marcada = f.id === null ? b.activo : b.visible_para.includes(f.id)
+        const marcada = f.usuario === null ? b.activo : f.usuario.id !== null && b.visible_para.includes(f.usuario.id)
         if (marcada) celdas[cellKey(r, c)] = { input: '✓' }
       })
     })
@@ -125,8 +132,9 @@ export function PanelBotones(props: { alCambiar: () => void }) {
     const b = botones[c]
     const f = filas[r]
     if (!b || !f) return
-    if (f.id === null) void cambiar('poner_activo', { boton: b.id, activo: !b.activo })
-    else void cambiar('poner_visible', { boton: b.id, usuario: f.id, visible: !b.visible_para.includes(f.id) })
+    const u = f.usuario
+    if (u === null) void cambiar('poner_activo', { boton: b.id, activo: !b.activo })
+    else void cambiar('poner_visible', { boton: b.id, usuario: u.id, nombre: u.nombre, visible: !(u.id !== null && b.visible_para.includes(u.id)) })
   }
   const alClic = (e: React.MouseEvent) => {
     const el = e.target as HTMLElement

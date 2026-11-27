@@ -113,6 +113,24 @@ impl Base {
         Ok(resultado)
     }
 
+    /// Los usuarios de personas de ESTE equipo (Linux: `/etc/passwd`, uid 1000–59999 con una
+    /// shell de verdad), hayan abierto la caja o no. Para asignarles botones de antemano.
+    pub fn usuarios_del_equipo() -> Vec<String> {
+        let Ok(passwd) = std::fs::read_to_string("/etc/passwd") else { return Vec::new() };
+        let mut nombres: Vec<String> = passwd
+            .lines()
+            .filter_map(|linea| {
+                let campos: Vec<&str> = linea.split(':').collect();
+                let uid: u32 = campos.get(2)?.parse().ok()?;
+                let shell = campos.get(6).copied().unwrap_or("");
+                ((1000..60000).contains(&uid) && !shell.ends_with("nologin") && !shell.ends_with("false")).then(|| campos[0].to_lowercase())
+            })
+            .collect();
+        nombres.sort();
+        nombres.dedup();
+        nombres
+    }
+
     /// El id de un usuario de ESTE equipo por su nombre de usuario del sistema; si todavía no
     /// existe (nunca abrió la caja aquí), se registra con los datos de este equipo, así que cuando
     /// abra la caja por primera vez `asegurar_usuario` lo reconoce. Para dar permisos de antemano.

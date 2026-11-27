@@ -51,9 +51,12 @@ pub struct BotonAdmin {
 /// Un usuario en la matriz de botones (la plantilla primero).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct UsuarioBotones {
-    pub id: i64,
+    /// `None`: un usuario de este equipo que todavía no abre la caja (se registra al darle un botón).
+    pub id: Option<i64>,
     pub nombre: String,
     pub plantilla: bool,
+    /// Es un usuario de este equipo (si no, viene del historial: otra PC o ya no está).
+    pub de_este_equipo: bool,
 }
 
 impl Base {
@@ -75,17 +78,36 @@ impl Base {
         Ok(botones)
     }
 
-    /// Los usuarios de la matriz: la plantilla primero; luego los demás activos, por nombre.
-    pub fn usuarios_botones(&self) -> Result<Vec<UsuarioBotones>, ErrorBase> {
+    /// Los usuarios de la matriz: la plantilla; todos los usuarios de `equipo` (los de esta PC),
+    /// hayan abierto la caja o no; y los de la base que tienen botones aunque no sean de esta PC
+    /// (historial de la v2). Sin `root` ni cuentas sin botones ajenas a la PC.
+    pub fn usuarios_botones(&self, equipo: &[String]) -> Result<Vec<UsuarioBotones>, ErrorBase> {
+        let plantilla = crate::sesiones::USUARIO_PLANTILLA;
         let mut consulta = self.con.prepare(
-            "SELECT id, nombre_usuario FROM usuarios_sistema WHERE activo = 1 OR nombre_usuario = ?1
-             ORDER BY nombre_usuario <> ?1, nombre_usuario COLLATE NOCASE, id",
+            "SELECT u.id, u.nombre_usuario, EXISTS(SELECT 1 FROM boton_visibilidad v WHERE v.usuario_id = u.id)
+             FROM usuarios_sistema u ORDER BY u.id",
         )?;
-        let filas = consulta.query_map(params![crate::sesiones::USUARIO_PLANTILLA], |f| {
-            let nombre: String = f.get(1)?;
-            Ok(UsuarioBotones { id: f.get(0)?, plantilla: nombre == crate::sesiones::USUARIO_PLANTILLA, nombre })
-        })?;
-        Ok(filas.collect::<Result<_, _>>()?)
+        let en_base: Vec<(i64, String, bool)> =
+            consulta.query_map([], |f| Ok((f.get(0)?, f.get::<_, String>(1)?.to_lowercase(), f.get(2)?)))?.collect::<Result<_, _>>()?;
+        let mut usuarios: Vec<UsuarioBotones> = Vec::new();
+        if let Some((id, ..)) = en_base.iter().find(|(_, n, _)| n == plantilla) {
+            usuarios.push(UsuarioBotones { id: Some(*id), nombre: plantilla.into(), plantilla: true, de_este_equipo: false });
+        }
+        let mut resto: Vec<UsuarioBotones> = Vec::new();
+        for nombre in equipo {
+            let id = en_base.iter().find(|(_, n, _)| n == nombre).map(|(id, ..)| *id);
+            resto.push(UsuarioBotones { id, nombre: nombre.clone(), plantilla: false, de_este_equipo: true });
+        }
+        for (id, nombre, con_botones) in &en_base {
+            let ya = resto.iter().any(|u| &u.nombre == nombre);
+            if !ya && *con_botones && nombre != plantilla && nombre != "root" {
+                resto.push(UsuarioBotones { id: Some(*id), nombre: nombre.clone(), plantilla: false, de_este_equipo: false });
+            }
+        }
+        // Primero los de esta PC, luego los del historial; por nombre.
+        resto.sort_by(|a, b| b.de_este_equipo.cmp(&a.de_este_equipo).then_with(|| a.nombre.cmp(&b.nombre)));
+        usuarios.extend(resto);
+        Ok(usuarios)
     }
 
     pub fn poner_visible(&mut self, boton_id: i64, usuario_id: i64, visible: bool) -> Result<(), ErrorBase> {
@@ -220,8 +242,9 @@ mod pruebas {
         let resumen: Vec<_> = admin.iter().map(|b| (b.etiqueta.as_str(), b.activo)).collect();
         assert_eq!(resumen, [("COBRAR", true), ("COBRAR CARRITO", false), ("ABRIR CAJA", true)]);
         assert!(admin[0].visible_para.contains(&ana) && admin[0].visible_para.contains(&plantilla));
-        let usuarios = base.usuarios_botones().unwrap();
-        assert!(usuarios[0].plantilla, "la plantilla primero");
+        let usuarios = base.usuarios_botones(&["beto".into(), "ana".into()]).unwrap();
+        let nombres: Vec<_> = usuarios.iter().map(|u| (u.nombre.as_str(), u.id.is_some(), u.de_este_equipo)).collect();
+        assert_eq!(nombres, [("__default__", true, false), ("ana", true, true), ("beto", false, true)], "plantilla, y los de la PC aunque no estén en la base");
         assert!(base.crear_boton(" ", "x").is_err());
     }
 }

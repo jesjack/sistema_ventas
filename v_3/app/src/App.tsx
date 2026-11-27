@@ -1007,7 +1007,7 @@ export default function App() {
           )}
 
           {/* El corte con el que empieza el día: mientras nadie lo verifique, se avisa con su botón. */}
-          {corteHoy && !corteHoy.verificacion && (
+          {vista === 'carrito' && corteHoy && !corteHoy.verificacion && (
             <div className="caja__verificar">
               <span>
                 Cambio esperado en la caja: <strong>{dinero(corteHoy.total)}</strong> · corte
@@ -1023,7 +1023,7 @@ export default function App() {
               </NexMorph>
             </div>
           )}
-          {corteHoy?.verificacion && (
+          {vista === 'carrito' && corteHoy?.verificacion && (
             <p className="caja__nota">
               Corte del {corteHoy.fecha} verificado
               {corteHoy.verificacion.usuario ? ` por ${corteHoy.verificacion.usuario}` : ''} el {corteHoy.verificacion.en}: se contaron{' '}

@@ -675,15 +675,23 @@ fn botones_admin(estado: tauri::State<'_, Compartido>) -> Result<MatrizBotones, 
     con_base(&estado, |b| {
         Ok(MatrizBotones {
             botones: b.botones_admin().map_err(|e| e.to_string())?,
-            usuarios: b.usuarios_botones().map_err(|e| e.to_string())?,
+            usuarios: b.usuarios_botones(&Base::usuarios_del_equipo()).map_err(|e| e.to_string())?,
         })
     })
 }
 
 #[tauri::command]
-fn poner_visible(estado: tauri::State<'_, Compartido>, boton: i64, usuario: i64, visible: bool) -> Result<(), String> {
+fn poner_visible(estado: tauri::State<'_, Compartido>, boton: i64, usuario: Option<i64>, nombre: String, visible: bool) -> Result<(), String> {
     sesion_desarrollador(&estado)?;
-    con_base(&estado, |b| b.poner_visible(boton, usuario, visible).map_err(|e| e.to_string()))
+    con_base(&estado, |b| {
+        // Un usuario de esta PC que todavía no abre la caja se registra aquí (y recibe la plantilla,
+        // como cualquier usuario nuevo); luego se aplica el cambio.
+        let usuario = match usuario {
+            Some(id) => id,
+            None => b.usuario_de_este_equipo(&nombre).map_err(|e| e.to_string())?.0,
+        };
+        b.poner_visible(boton, usuario, visible).map_err(|e| e.to_string())
+    })
 }
 
 #[tauri::command]
