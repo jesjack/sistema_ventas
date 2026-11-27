@@ -19,6 +19,7 @@ pub mod corte;
 pub mod esquema;
 pub mod importar;
 pub mod sesiones;
+pub mod ticket;
 pub mod ventas;
 
 #[cfg(test)]
