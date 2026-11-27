@@ -3,9 +3,11 @@
 // la casilla de si lo ve. La plantilla (__default__) va primero: es lo que recibe un usuario nuevo
 // la primera vez que abre la caja. Rust exige el permiso en cada cambio.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { NexButton, NexInput, NexSelect } from '@nexfluid/react'
+import { NexSheets, cellKey, createSheet, createWorkbook, type Sheet, type Workbook } from '@nexfluid/react/sheets'
+import { ALTO_FILA_HOJA, medidorDeTexto } from './hojas.ts'
 
 interface BotonAdmin {
   id: number
@@ -88,9 +90,65 @@ export function PanelBotones(props: { alCambiar: () => void }) {
     if (ok) setEditor(null)
   }
   const indiceEditado = editor?.id != null ? botones.findIndex((b) => b.id === editor.id) : -1
-  const casilla = (etiqueta: string, marcada: boolean, cambio: (v: boolean) => void) => (
-    <input type="checkbox" className="caja__casilla" aria-label={etiqueta} checked={marcada} onChange={(e) => cambio(e.target.checked)} />
+
+  // ---- La hoja: filas = Activo + usuarios; columnas = nombre + un botón por columna (30 × 30).
+  const refHoja = useRef<HTMLDivElement>(null)
+  const filas = useMemo(
+    () => [{ nombre: 'Activo', id: null as number | null }, ...usuarios.map((u) => ({ nombre: u.plantilla ? 'DEFAULT' : u.nombre, id: u.id as number | null }))],
+    [usuarios],
   )
+  const medir = (texto: string, encabezado = false) => (refHoja.current ? medidorDeTexto(refHoja.current)(texto, encabezado) : texto.length * 8)
+  const anchoNombre = Math.ceil(Math.min(240, Math.max(90, ...filas.map((f) => medir(f.nombre) + 24))))
+  const altoEncabezado = Math.ceil(Math.min(190, Math.max(60, ...botones.map((b) => medir(b.etiqueta, true) + 16))))
+  const libro = useMemo<Workbook>(() => {
+    const celdas: Sheet['cells'] = {}
+    filas.forEach((f, r) => {
+      celdas[cellKey(r, 0)] = { input: f.nombre }
+      botones.forEach((b, c) => {
+        const marcada = f.id === null ? b.activo : b.visible_para.includes(f.id)
+        if (marcada) celdas[cellKey(r, c + 1)] = { input: '✓' }
+      })
+    })
+    const hoja: Sheet = {
+      ...createSheet('Botones', { rows: filas.length, columns: botones.length + 1, cells: celdas, headers: ['', ...botones.map((b) => b.etiqueta)] }, 'botones'),
+      columnWidths: Object.fromEntries([[0, anchoNombre], ...botones.map((_, c) => [c + 1, ALTO_FILA_HOJA])]),
+    }
+    return createWorkbook([hoja])
+  }, [filas, botones, anchoNombre])
+
+  /** Cambia la casilla de la fila `r` y la columna `c` (columna 0 = nombres: nada). */
+  const alternar = (r: number, c: number) => {
+    const b = botones[c - 1]
+    const f = filas[r]
+    if (!b || !f) return
+    if (f.id === null) void cambiar('poner_activo', { boton: b.id, activo: !b.activo })
+    else void cambiar('poner_visible', { boton: b.id, usuario: f.id, visible: !b.visible_para.includes(f.id) })
+  }
+  const alClic = (e: React.MouseEvent) => {
+    const el = e.target as HTMLElement
+    const cabeza = el.closest<HTMLElement>('[role="columnheader"]')
+    if (cabeza) {
+      const b = botones[Number(cabeza.getAttribute('aria-colindex')) - 3]
+      if (b) setEditor(editor?.id === b.id ? null : { id: b.id, etiqueta: b.etiqueta, accion: b.accion })
+      return
+    }
+    const celda = el.closest<HTMLElement>('[role="gridcell"]')
+    const fila = celda?.closest<HTMLElement>('[role="row"]')
+    if (celda && fila) alternar(Number(fila.getAttribute('aria-rowindex')) - 2, Number(celda.getAttribute('aria-colindex')) - 2)
+  }
+  // Espacio sobre la celda activa (la marca la rejilla con aria-activedescendant: …-fila-columna).
+  const alTeclear = (e: React.KeyboardEvent) => {
+    if (e.key !== ' ') return
+    const activa = (e.target as HTMLElement).getAttribute('aria-activedescendant')?.match(/-(\d+)-(\d+)$/)
+    if (!activa) return
+    e.preventDefault()
+    alternar(Number(activa[1]), Number(activa[2]))
+  }
+  // Columnas de botones inactivos, atenuadas (la hoja no tiene estilos por columna).
+  const estiloInactivos = botones
+    .map((b, c) => (b.activo ? null : `.caja__hoja--botones [aria-colindex="${c + 3}"]{opacity:.45}`))
+    .filter(Boolean)
+    .join('')
 
   return (
     <section className="caja__admin-botones" aria-label="Administrar botones">
@@ -99,46 +157,31 @@ export function PanelBotones(props: { alCambiar: () => void }) {
           {error}
         </p>
       )}
-      <div className="caja__matriz">
-        <table>
-          <thead>
-            <tr>
-              <th className="caja__matriz-esquina">
-                <span className="caja__nota">Clic en un botón para editarlo</span>
-              </th>
-              {botones.map((b) => (
-                <th key={b.id} className="caja__matriz-boton" data-elegido={editor?.id === b.id ? '' : undefined} data-inactivo={b.activo ? undefined : ''}>
-                  <button type="button" title={`${b.etiqueta} · ${b.accion}`} onClick={() => setEditor(editor?.id === b.id ? null : { id: b.id, etiqueta: b.etiqueta, accion: b.accion })}>
-                    <span>{b.etiqueta}</span>
-                  </button>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="caja__matriz-activo">
-              <th scope="row">Activo</th>
-              {botones.map((b) => (
-                <td key={b.id}>{casilla(`${b.etiqueta} activo`, b.activo, (v) => void cambiar('poner_activo', { boton: b.id, activo: v }))}</td>
-              ))}
-            </tr>
-            {usuarios.map((u) => (
-              <tr key={u.id}>
-                <th scope="row" title={u.plantilla ? 'Plantilla: lo que recibe un usuario nuevo' : u.nombre}>
-                  {u.plantilla ? 'DEFAULT' : u.nombre}
-                </th>
-                {botones.map((b) => (
-                  <td key={b.id} data-inactivo={b.activo ? undefined : ''}>
-                    {casilla(`${b.etiqueta} para ${u.plantilla ? 'la plantilla' : u.nombre}`, b.visible_para.includes(u.id), (v) =>
-                      void cambiar('poner_visible', { boton: b.id, usuario: u.id, visible: v }),
-                    )}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {estiloInactivos && <style>{estiloInactivos}</style>}
+      <div
+        ref={refHoja}
+        className="caja__marco-botones"
+        style={{ width: `min(100%, ${44 + anchoNombre + botones.length * ALTO_FILA_HOJA + 4}px)` }}
+        onClick={alClic}
+        onKeyDown={alTeclear}
+      >
+        <NexSheets
+          className="caja__hoja caja__hoja--botones"
+          workbook={libro}
+          readOnly
+          extent={false}
+          height={altoEncabezado + filas.length * ALTO_FILA_HOJA + 4}
+          label="Botones por usuario"
+          columnLabels="name"
+          headerHeight={altoEncabezado}
+          headerOrientation="vertical"
+          tabs={false}
+          statusBar={false}
+          toolbar={false}
+          formulaBar={false}
+        />
       </div>
+      <span className="caja__nota">Clic en una casilla (o Espacio) la cambia · clic en el nombre de un botón para editarlo.</span>
 
       {editor ? (
         <div className="caja__editor-boton">
