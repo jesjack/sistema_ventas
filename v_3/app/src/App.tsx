@@ -84,6 +84,9 @@ interface EstadoCaja {
 /** Ancho de los modales; el alto es el de su contenido (NexMorph `size="content"`). */
 const ESTILO_MODAL: CSSProperties = { width: 'min(460px, calc(100vw - 32px))' }
 
+/** Cómo se cobra: Intro (normal), F4 (sin ticket) o F6 (tarjeta: a Mercado Pago, sin abrir el cajón). */
+type ModoCobro = 'normal' | 'sinTicket' | 'tarjeta'
+
 /** Las pantallas de la caja (arriba de todo): la venta, las ventas realizadas y el desarrollador. */
 type Vista = 'carrito' | 'ventas' | 'botones' | 'desarrollador'
 
@@ -150,7 +153,7 @@ export default function App() {
   const [verCodigosBarras, setVerCodigosBarras] = useState(false)
   const [verCatalogo, setVerCatalogo] = useState(false)
   // Pago exacto: se pide una segunda confirmación (Intro otra vez).
-  const [confirmarExacto, setConfirmarExacto] = useState<null | 'normal' | 'sinTicket'>(null)
+  const [confirmarExacto, setConfirmarExacto] = useState<null | ModoCobro>(null)
   // Solo lectura (como la tabla de la hoja de Calc en la v2): se deriva del carrito. Los anchos se
   // ajustan al contenido y al ancho disponible (Producto ocupa lo que sobra: sin hueco a la derecha).
   const refHoja = useRef<HTMLDivElement>(null)
@@ -388,20 +391,24 @@ export default function App() {
 
   // El núcleo valida el cobro (mismas reglas y textos que la v2) y registra la venta en la base.
   const [cobrando, setCobrando] = useState(false)
-  const confirmarCobro = async (sinTicket = false) => {
+  const confirmarCobro = async (modo: ModoCobro = 'normal') => {
     if (cobrando) return
     setCobrando(true)
     try {
       const venta = await invoke<VentaRegistrada>('cobrar', {
         items: carrito.map(({ producto, precio, cantidad }) => ({ producto, precio, cantidad })),
         recibido: cobro ?? '',
-        sinTicket,
+        sinTicket: modo === 'sinTicket',
+        tarjeta: modo === 'tarjeta',
       })
       setAviso({
         tono: 'success',
-        texto: sinTicket
-          ? `Venta #${venta.venta_id} registrada sin ticket: ${dinero(venta.total)}.`
-          : `Venta #${venta.venta_id} registrada: ${dinero(venta.total)}, recibido ${dinero(venta.recibido)}, cambio ${dinero(venta.cambio)}.`,
+        texto:
+          modo === 'tarjeta'
+            ? `Venta #${venta.venta_id} pagada con tarjeta: ${dinero(venta.total)} (a Mercado Pago; no se abrió el cajón).`
+            : modo === 'sinTicket'
+              ? `Venta #${venta.venta_id} registrada sin ticket: ${dinero(venta.total)}.`
+              : `Venta #${venta.venta_id} registrada: ${dinero(venta.total)}, recibido ${dinero(venta.recibido)}, cambio ${dinero(venta.cambio)}.`,
       })
       setCarrito([])
       setCobro(null)
@@ -498,6 +505,9 @@ export default function App() {
     } else if (e.key === 'F4') {
       e.preventDefault()
       cobrarCon('sinTicket')
+    } else if (e.key === 'F6') {
+      e.preventDefault()
+      cobrarCon('tarjeta')
     } else if (e.key === 'Escape' && confirmarExacto) {
       // Escape en la confirmación vuelve a pedir lo recibido (NexMorph no cierra si se previene).
       e.preventDefault()
@@ -507,13 +517,13 @@ export default function App() {
 
   // Sin escribir lo recibido (pago exacto), se pide confirmarlo: la misma tecla otra vez (Intro, o
   // F4 sin ticket). Con una cantidad escrita, cobra directo.
-  const cobrarCon = (modo: 'normal' | 'sinTicket') => {
+  const cobrarCon = (modo: ModoCobro) => {
     const sinCantidad = cobro === null || cobro.trim() === ''
     if (sinCantidad && confirmarExacto !== modo) {
       setConfirmarExacto(modo)
       return
     }
-    void confirmarCobro(modo === 'sinTicket')
+    void confirmarCobro(modo)
   }
   const cerrarCobro = () => {
     setCobro(null)
@@ -734,7 +744,7 @@ export default function App() {
                     <NexInput
                       ref={refRecibido}
                       label="Recibido"
-                      description="Intro sin escribir nada = pago exacto · F4 sin ticket · Escape cancela"
+                      description="Intro sin escribir nada = pago exacto · F4 sin ticket · F6 tarjeta · Escape cancela"
                       inputMode="decimal"
                       leading="$"
                       value={cobro ?? ''}
@@ -751,9 +761,11 @@ export default function App() {
                     </p>
                     {confirmarExacto && (
                       <p className="caja__aviso caja__aviso--warning" role="alert">
-                        {confirmarExacto === 'sinTicket'
-                          ? `¿Cobrar ${dinero(total)} sin ticket, pago exacto? F4 otra vez para cobrar`
-                          : `¿Pago exacto de ${dinero(total)}, sin cambio? Intro otra vez para cobrar`}{' '}
+                        {confirmarExacto === 'tarjeta'
+                          ? `¿Cobrar ${dinero(total)} con tarjeta (a Mercado Pago, sin abrir el cajón)? F6 otra vez para cobrar`
+                          : confirmarExacto === 'sinTicket'
+                            ? `¿Cobrar ${dinero(total)} sin ticket, pago exacto? F4 otra vez para cobrar`
+                            : `¿Pago exacto de ${dinero(total)}, sin cambio? Intro otra vez para cobrar`}{' '}
                         · Escape para escribir lo recibido
                       </p>
                     )}
@@ -763,6 +775,9 @@ export default function App() {
                       </NexButton>
                       <NexButton appearance="outlined" onClick={() => cobrarCon('sinTicket')} disabled={cobrando}>
                         {confirmarExacto === 'sinTicket' ? 'Sí, sin ticket (F4)' : 'Sin ticket (F4)'}
+                      </NexButton>
+                      <NexButton appearance="outlined" onClick={() => cobrarCon('tarjeta')} disabled={cobrando}>
+                        {confirmarExacto === 'tarjeta' ? 'Sí, con tarjeta (F6)' : 'Tarjeta (F6)'}
                       </NexButton>
                       <NexButton appearance="ghost" onClick={cerrarCobro}>Cancelar</NexButton>
                     </div>
@@ -1145,13 +1160,21 @@ export default function App() {
               {lineasVenta.length > 0 && (() => {
                 // El total de la tabla (como el TOTAL de la hoja de la v2): con el cambio del corte, si
                 // el día empieza con él, es lo que debe haber en la caja.
-                const total = lineasVenta.reduce((suma, l) => suma + (l.subtotal ?? 0), 0)
-                const cambio = lineasVenta.filter((l) => l.producto.startsWith('CAMBIO:')).reduce((suma, l) => suma + (l.subtotal ?? 0), 0)
+                // Separado: el efectivo (lo que debe haber en la caja) y lo pagado con tarjeta (Mercado Pago).
+                const suma = (filtro: (l: LineaVenta) => boolean) => lineasVenta.filter(filtro).reduce((s, l) => s + (l.subtotal ?? 0), 0)
+                const efectivo = suma((l) => !l.tarjeta)
+                const tarjeta = suma((l) => l.tarjeta)
+                const cambio = suma((l) => l.producto.startsWith('CAMBIO:'))
                 return (
                   <div className="caja__total caja__total--ventas">
                     {cambio !== 0 && <span className="caja__nota">incluye {dinero(cambio)} de cambio del corte</span>}
-                    <span>Total</span>
-                    <strong>{dinero(total)}</strong>
+                    {tarjeta !== 0 && (
+                      <span className="caja__nota">
+                        Tarjeta (Mercado Pago): <strong>{dinero(tarjeta)}</strong>
+                      </span>
+                    )}
+                    <span>{tarjeta !== 0 ? 'Efectivo' : 'Total'}</span>
+                    <strong>{dinero(efectivo)}</strong>
                   </div>
                 )
               })()}

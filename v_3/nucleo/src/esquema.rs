@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::base::{Base, ErrorBase};
 
 /// Las migraciones en orden: la posición + 1 es la versión que deja la base.
-pub const MIGRACIONES: &[&str] = &[include_str!("esquema/v1.sql"), include_str!("esquema/v2.sql"), include_str!("esquema/v3.sql"), include_str!("esquema/v4.sql"), include_str!("esquema/v5.sql"), include_str!("esquema/v6.sql"), include_str!("esquema/v7.sql")];
+pub const MIGRACIONES: &[&str] = &[include_str!("esquema/v1.sql"), include_str!("esquema/v2.sql"), include_str!("esquema/v3.sql"), include_str!("esquema/v4.sql"), include_str!("esquema/v5.sql"), include_str!("esquema/v6.sql"), include_str!("esquema/v7.sql"), include_str!("esquema/v8.sql")];
 
 /// La versión más reciente del esquema.
 pub fn version_actual() -> i64 {

@@ -128,7 +128,12 @@ export interface LineaVenta {
   precio: number | null
   cantidad: number | null
   subtotal: number | null
+  /** Pagado con tarjeta (a Mercado Pago, no a la caja). */
+  tarjeta: boolean
 }
+
+/** Lo que se ve en Producto: con la marca de tarjeta si se pagó así. */
+export const productoVisible = (l: LineaVenta) => (l.tarjeta ? `${l.producto} (tarjeta)` : l.producto)
 
 export const ID_HOJA_VENTAS = 'ventas'
 const ENCABEZADOS_VENTAS = ['Hora', 'Producto', 'Precio', 'C.', 'Subtotal']
@@ -144,7 +149,7 @@ const texto = (v: number | null) => (v === null ? '' : String(v))
 export function libroDeVentas(lineas: readonly LineaVenta[], anchos?: Record<number, number>): Workbook {
   const celdas: Sheet['cells'] = {}
   lineas.forEach((l, fila) => {
-    ;[l.hora.slice(0, 5), l.producto, texto(l.precio), texto(l.cantidad), texto(l.subtotal)].forEach((v, c) => {
+    ;[l.hora.slice(0, 5), productoVisible(l), texto(l.precio), texto(l.cantidad), texto(l.subtotal)].forEach((v, c) => {
       if (v !== '') celdas[cellKey(fila, c)] = { input: v }
     })
   })
@@ -163,7 +168,7 @@ export function anchosVentas(
 ): Record<number, number> {
   const valores = [
     lineas.map((l) => l.hora.slice(0, 5)),
-    lineas.map((l) => l.producto),
+    lineas.map(productoVisible),
     lineas.map((l) => (l.precio === null ? '' : moneda.format(l.precio))),
     lineas.map((l) => texto(l.cantidad)),
     lineas.map((l) => (l.subtotal === null ? '' : moneda.format(l.subtotal))),

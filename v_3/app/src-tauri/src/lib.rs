@@ -215,7 +215,7 @@ fn ve_otros_dias(b: &Base, usuario_id: i64) -> Result<bool, String> {
 /// v2) y el total se calcula aquí, no en la vista. `recibido` vacío = pago exacto. `sin_ticket`
 /// (D15): cobro rápido, recibido = total, cambio 0, no imprime ticket pero el cajón se abre igual.
 #[tauri::command]
-fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: String, sin_ticket: bool) -> Result<VentaRegistrada, String> {
+fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: String, sin_ticket: bool, tarjeta: bool) -> Result<VentaRegistrada, String> {
     let mut carrito = Carrito::nuevo();
     for i in &items {
         if !carrito.agregar(&i.producto, i.precio, i.cantidad) {
@@ -225,10 +225,15 @@ fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: S
     if carrito.esta_vacio() {
         return Err("El carrito está vacío.".into());
     }
-    let cobro = if sin_ticket { Cobro::exacto(carrito.total()) } else { Cobro::con_texto(carrito.total(), &recibido).map_err(|e| e.to_string())? };
+    let cobro = if sin_ticket || tarjeta { Cobro::exacto(carrito.total()) } else { Cobro::con_texto(carrito.total(), &recibido).map_err(|e| e.to_string())? };
     let sesion = sesion_con_turno(&estado)?;
     con_base(&estado, |b| {
         let momento = Momento::ahora();
+        // Tarjeta (F6): va a Mercado Pago, no a la caja: se registra así y NO se abre el cajón.
+        if tarjeta {
+            let venta_id = b.registrar_venta_tarjeta(&carrito.filas, &momento, Some(sesion.id)).map_err(|e| e.to_string())?.ok_or("El carrito está vacío.")?;
+            return Ok(VentaRegistrada { venta_id, total: cobro.total, recibido: cobro.recibido, cambio: cobro.cambio });
+        }
         let registrada = if sin_ticket {
             b.registrar_venta_sin_ticket(&carrito.filas, &momento, Some(sesion.id))
         } else {

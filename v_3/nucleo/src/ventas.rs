@@ -65,6 +65,8 @@ pub struct FilaVentas {
     pub precio: Option<f64>,
     pub cantidad: Option<i64>,
     pub subtotal: Option<f64>,
+    /// Un producto de una venta pagada con tarjeta (no entra a la caja). Desde el esquema 8.
+    pub tarjeta: bool,
 }
 
 impl Base {
@@ -86,6 +88,22 @@ impl Base {
     pub fn registrar_venta_sin_ticket(&mut self, items: &[FilaCarrito], momento: &Momento, sesion_id: Option<i64>) -> Result<Option<i64>, ErrorBase> {
         let total: f64 = items.iter().map(|i| i.subtotal).sum();
         self.registrar_venta_con(items, total, 0.0, true, momento, sesion_id)
+    }
+
+    /// Venta pagada con tarjeta (esquema 8): recibido = total, cambio = 0, `metodo_pago = 'tarjeta'`.
+    /// El dinero va a Mercado Pago, no a la caja: quien llama NO abre el cajón.
+    pub fn registrar_venta_tarjeta(&mut self, items: &[FilaCarrito], momento: &Momento, sesion_id: Option<i64>) -> Result<Option<i64>, ErrorBase> {
+        let total: f64 = items.iter().map(|i| i.subtotal).sum();
+        let Some(id) = self.registrar_venta_con(items, total, 0.0, false, momento, sesion_id)? else { return Ok(None) };
+        self.con.execute("UPDATE ventas SET metodo_pago = 'tarjeta' WHERE id = ?1", params![id])?;
+        Ok(Some(id))
+    }
+
+    /// ¿La tabla tiene esa columna? (Una base de la v2 no tiene las que agregó la v3.)
+    fn tiene_columna(&self, tabla: &str, columna: &str) -> Result<bool, ErrorBase> {
+        let mut consulta = self.con.prepare(&format!("PRAGMA table_info({tabla})"))?;
+        let columnas: Vec<String> = consulta.query_map([], |f| f.get(1))?.collect::<Result<_, _>>()?;
+        Ok(columnas.iter().any(|c| c == columna))
     }
 
     fn registrar_venta_con(
@@ -203,25 +221,28 @@ impl Base {
                         precio: Some(p.denominacion),
                         cantidad: Some(p.cantidad),
                         subtotal: Some(p.denominacion * p.cantidad as f64),
+                        tarjeta: false,
                     });
                 }
             }
         }
-        let mut consulta = self.con.prepare(
-            "SELECT hora, producto, precio, cantidad, subtotal FROM (
+        // El método de pago solo existe en una base de la v3 (esquema 8); en una de la v2, todo es efectivo.
+        let tarjeta = if self.tiene_columna("ventas", "metodo_pago")? { "v.metodo_pago = 'tarjeta'" } else { "0" };
+        let mut consulta = self.con.prepare(&format!(
+            "SELECT hora, producto, precio, cantidad, subtotal, tarjeta FROM (
                  SELECT v.hora AS hora, i.producto AS producto, i.precio AS precio, i.cantidad AS cantidad,
-                        i.subtotal AS subtotal, v.id AS orden_principal, i.id AS orden_secundario, 0 AS tipo_registro
+                        i.subtotal AS subtotal, {tarjeta} AS tarjeta, v.id AS orden_principal, i.id AS orden_secundario, 0 AS tipo_registro
                  FROM ventas v JOIN venta_items i ON i.venta_id = v.id
                  WHERE v.fecha = ?1 AND v.id > ?2
                  UNION ALL
-                 SELECT e.hora, e.evento, NULL, NULL, NULL, e.id, 0, 1
+                 SELECT e.hora, e.evento, NULL, NULL, NULL, 0, e.id, 0, 1
                  FROM eventos_especiales e
                  WHERE e.fecha = ?1 AND e.id > ?3
              )
-             ORDER BY hora ASC, tipo_registro ASC, orden_principal ASC, orden_secundario ASC",
-        )?;
+             ORDER BY hora ASC, tipo_registro ASC, orden_principal ASC, orden_secundario ASC"
+        ))?;
         let resto = consulta.query_map(params![fecha, ultima_venta, ultimo_evento], |f| {
-            Ok(FilaVentas { hora: f.get(0)?, producto: f.get(1)?, precio: f.get(2)?, cantidad: f.get(3)?, subtotal: f.get(4)? })
+            Ok(FilaVentas { hora: f.get(0)?, producto: f.get(1)?, precio: f.get(2)?, cantidad: f.get(3)?, subtotal: f.get(4)?, tarjeta: f.get(5)? })
         })?;
         for fila in resto {
             filas.push(fila?);
@@ -283,6 +304,7 @@ impl Base {
                 precio: Some(denominacion),
                 cantidad: Some(cantidad),
                 subtotal: Some(denominacion * cantidad as f64),
+                tarjeta: false,
             })
         })?;
         Ok(filas.collect::<Result<_, _>>()?)
@@ -420,6 +442,20 @@ mod pruebas {
         let hoy: Vec<_> = base.ventas_de_hoy("2026-11-25").unwrap().into_iter().map(|f| f.producto).collect();
         assert_eq!(hoy, ["CAMBIO: BILLETE", "CORTE VERIFICADO: FALTAN $30.00"]);
         assert_eq!(base.verificar_corte(corte.id, 1000.0, &Momento::nuevo("2026-11-25", "09:05:00"), None).unwrap(), "CORTE VERIFICADO: CUADRA");
+    }
+
+    #[test]
+    fn venta_con_tarjeta_queda_marcada_y_se_distingue_en_ventas_realizadas() {
+        let mut base = Base::en_memoria_v3().unwrap();
+        let item = |p: &str, precio: f64| FilaCarrito { producto: p.into(), precio, cantidad: 1, subtotal: precio };
+        let m = Momento::nuevo("2026-11-26", "17:44:43");
+        base.registrar_venta(&[item("conjunto", 250.0)], 250.0, 0.0, &m, None).unwrap();
+        let id = base.registrar_venta_tarjeta(&[item("blusa de licra", 150.0)], &m, None).unwrap().unwrap();
+        let (metodo, recibido): (String, f64) = base.con.query_row("SELECT metodo_pago, recibido FROM ventas WHERE id = ?1", params![id], |f| Ok((f.get(0)?, f.get(1)?))).unwrap();
+        assert_eq!((metodo.as_str(), recibido), ("tarjeta", 150.0));
+        let filas = base.ventas_de_hoy("2026-11-26").unwrap();
+        let marcas: Vec<_> = filas.iter().map(|f| (f.producto.as_str(), f.tarjeta)).collect();
+        assert_eq!(marcas, [("conjunto", false), ("blusa de licra", true)]);
     }
 
     #[test]
