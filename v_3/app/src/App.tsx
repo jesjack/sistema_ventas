@@ -102,6 +102,8 @@ interface VentaRegistrada {
   total: number
   recibido: number
   cambio: number
+  /** Si el ticket o el cajón fallaron (la venta ya quedó registrada). */
+  aviso: string | null
 }
 
 interface ProductoConPrecio {
@@ -287,7 +289,7 @@ export default function App() {
     try {
       const autorizacion = await invoke<string>('abrir_caja', { codigo: codigo ?? null })
       setPideCodigo(null)
-      setAviso({ tono: 'success', texto: `Caja abierta ${TEXTO_AUTORIZACION[autorizacion] ?? autorizacion} (cajón simulado).` })
+      setAviso({ tono: 'success', texto: `Caja abierta ${TEXTO_AUTORIZACION[autorizacion] ?? autorizacion}${simulado}.` })
       setRecargaVentas((n) => n + 1)
       leerEstadoCaja()
       enfocarProducto()
@@ -410,6 +412,7 @@ export default function App() {
               ? `Venta #${venta.venta_id} registrada sin ticket: ${dinero(venta.total)}.`
               : `Venta #${venta.venta_id} registrada: ${dinero(venta.total)}, recibido ${dinero(venta.recibido)}, cambio ${dinero(venta.cambio)}.`,
       })
+      if (venta.aviso) setAviso({ tono: 'warning', texto: venta.aviso })
       setCarrito([])
       setCobro(null)
       setConfirmarExacto(null)
@@ -466,6 +469,15 @@ export default function App() {
   // Lectura directa del escáner (Rust, evdev): llega aunque otra app tenga el foco, y la ventana
   // pide pasar al frente. Apagada por defecto mientras la v2 sea la oficial (ver escaner.rs).
   const [escanerDirecto, setEscanerDirecto] = useState<{ activo: boolean; estado: string } | null>(null)
+  // Impresora y cajón: simulados por defecto mientras la v2 sea la oficial (ver impresora.rs).
+  const [impresora, setImpresora] = useState<{ real: boolean; estado: string } | null>(null)
+  useEffect(() => {
+    const leer = () => invoke<{ real: boolean; estado: string }>('estado_impresora').then(setImpresora, () => {})
+    leer()
+    const id = setInterval(leer, 2000)
+    return () => clearInterval(id)
+  }, [])
+  const simulado = impresora?.real ? '' : ' (simulado)'
   useEffect(() => {
     const quitar = listen<string>('escaneo', (e) => {
       setVista('carrito')
@@ -550,7 +562,8 @@ export default function App() {
     : 0
   const abrirCorte = async () => {
     try {
-      await invoke('abrir_caja_para_corte')
+      const fallo = await invoke<string | null>('abrir_caja_para_corte')
+      if (fallo) setAviso({ tono: 'warning', texto: `${fallo} Puedes hacer el corte de todos modos.` })
       setRecargaVentas((n) => n + 1)
       setCorte({ cantidades: denominaciones.map(() => ''), confirmar: false, error: null })
       requestAnimationFrame(() => refPrimeraPieza.current?.focus())
@@ -1215,6 +1228,15 @@ export default function App() {
               >
                 Reiniciar mediciones
               </NexButton>
+
+              <h3>Impresora y cajón</h3>
+              <NexCheckbox
+                label="Impresora y cajón reales"
+                description="Imprime los tickets y abre el cajón de verdad. Apagado, se simula: el último ticket queda en ultimo_ticket.bin junto a la base. Mientras la v2 sea la oficial, encenderlo imprime tickets de más y abre el cajón en cada venta de prueba."
+                checked={impresora?.real ?? false}
+                onChange={(e) => void invoke<{ real: boolean; estado: string }>('impresora_real', { activar: e.target.checked }).then(setImpresora)}
+              />
+              {impresora && <p className="caja__nota">Estado: {impresora.estado}</p>}
 
               <h3>Escáner</h3>
               <NexCheckbox

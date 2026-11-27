@@ -11,6 +11,7 @@
 //! (`v_2/share/ventas.db`) ni ninguna otra con su esquema (el núcleo se niega a migrarla).
 
 mod escaner;
+mod impresora;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -77,6 +78,36 @@ struct VentaRegistrada {
     total: f64,
     recibido: f64,
     cambio: f64,
+    /// Si el ticket o el cajón fallaron (la venta ya quedó registrada).
+    aviso: Option<String>,
+}
+
+// ---- Impresora de tickets y cajón (fase 3) -------------------------------------------------------
+
+type Impresora = Arc<impresora::Impresora>;
+
+/// La carpeta de la base: ahí van `tienda.json` y el ticket simulado.
+fn carpeta_datos(estado: &tauri::State<'_, Compartido>) -> Result<PathBuf, String> {
+    let ruta = estado.lock().map_err(|e| e.to_string())?.ruta.clone();
+    Ok(ruta.parent().map(Path::to_path_buf).unwrap_or_default())
+}
+
+/// Los datos de la tienda para el ticket; si faltan, un ticket sin encabezado (y se avisa).
+fn tienda_o_aviso(carpeta: &Path) -> (nucleo::ticket::Tienda, Option<String>) {
+    match impresora::tienda(carpeta) {
+        Ok(t) => (t, None),
+        Err(e) => (nucleo::ticket::Tienda::default(), Some(e)),
+    }
+}
+
+/// Manda bytes a la impresora (FUERA del candado de la base: puede tardar hasta 5 s).
+fn enviar(impresora: &Impresora, estado: &tauri::State<'_, Compartido>, bytes: &[u8]) -> Result<String, String> {
+    impresora.enviar(bytes, &carpeta_datos(estado)?)
+}
+
+/// Como la v2: la apertura solo se registra si el cajón de verdad se abrió; si falló, queda el evento.
+fn registrar_fallo(estado: &tauri::State<'_, Compartido>, sesion_id: i64, detalle: &str) {
+    let _ = con_base(estado, |b| b.registrar_evento("FALLO AL ABRIR CAJA", Some(detalle), &Momento::ahora(), Some(sesion_id)).map_err(|e| e.to_string()));
 }
 
 /// La ruta de la base, sin rutas fijas (D9).
@@ -215,7 +246,14 @@ fn ve_otros_dias(b: &Base, usuario_id: i64) -> Result<bool, String> {
 /// v2) y el total se calcula aquí, no en la vista. `recibido` vacío = pago exacto. `sin_ticket`
 /// (D15): cobro rápido, recibido = total, cambio 0, no imprime ticket pero el cajón se abre igual.
 #[tauri::command]
-fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: String, sin_ticket: bool, tarjeta: bool) -> Result<VentaRegistrada, String> {
+fn cobrar(
+    estado: tauri::State<'_, Compartido>,
+    impresora: tauri::State<'_, Impresora>,
+    items: Vec<Entrada>,
+    recibido: String,
+    sin_ticket: bool,
+    tarjeta: bool,
+) -> Result<VentaRegistrada, String> {
     let mut carrito = Carrito::nuevo();
     for i in &items {
         if !carrito.agregar(&i.producto, i.precio, i.cantidad) {
@@ -227,24 +265,43 @@ fn cobrar(estado: tauri::State<'_, Compartido>, items: Vec<Entrada>, recibido: S
     }
     let cobro = if sin_ticket || tarjeta { Cobro::exacto(carrito.total()) } else { Cobro::con_texto(carrito.total(), &recibido).map_err(|e| e.to_string())? };
     let sesion = sesion_con_turno(&estado)?;
-    con_base(&estado, |b| {
-        let momento = Momento::ahora();
-        // Tarjeta (F6): va a Mercado Pago, no a la caja: se registra así y NO se abre el cajón.
-        if tarjeta {
-            let venta_id = b.registrar_venta_tarjeta(&carrito.filas, &momento, Some(sesion.id)).map_err(|e| e.to_string())?.ok_or("El carrito está vacío.")?;
-            return Ok(VentaRegistrada { venta_id, total: cobro.total, recibido: cobro.recibido, cambio: cobro.cambio });
-        }
-        let registrada = if sin_ticket {
+    let momento = Momento::ahora();
+    let cuando = chrono::Local::now().naive_local();
+    // 1. Se registra la venta.
+    let venta_id = con_base(&estado, |b| {
+        let registrada = if tarjeta {
+            // Tarjeta (F6): va a Mercado Pago, no a la caja.
+            b.registrar_venta_tarjeta(&carrito.filas, &momento, Some(sesion.id))
+        } else if sin_ticket {
             b.registrar_venta_sin_ticket(&carrito.filas, &momento, Some(sesion.id))
         } else {
             b.registrar_venta(&carrito.filas, cobro.recibido, cobro.cambio, &momento, Some(sesion.id))
         };
-        let venta_id = registrada.map_err(|e| e.to_string())?.ok_or("El carrito está vacío.")?;
-        // El cobro abre el cajón (con el ticket). Fase 3: abrirlo de verdad y registrar después.
-        // D23: también entra al registro de aperturas.
-        b.registrar_apertura(Autorizacion::Venta, Some(venta_id), &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
-        Ok(VentaRegistrada { venta_id, total: cobro.total, recibido: cobro.recibido, cambio: cobro.cambio })
-    })
+        registrada.map_err(|e| e.to_string())?.ok_or_else(|| "El carrito está vacío.".to_string())
+    })?;
+    // 2. El ticket y el cajón (fuera del candado de la base). Como la v2: el ticket de venta abre el
+    // cajón; sin ticket (F4) solo se abre el cajón; con tarjeta, ticket sin abrir el cajón.
+    let (tienda, falta_tienda) = tienda_o_aviso(&carpeta_datos(&estado)?);
+    let bytes = if sin_ticket {
+        nucleo::ticket::abrir_cajon()
+    } else {
+        nucleo::ticket::ticket_venta(&tienda, &carrito.filas, cobro.total, cobro.recibido, cobro.cambio, cuando, !tarjeta)
+    };
+    let mut aviso = falta_tienda.filter(|_| !sin_ticket);
+    match enviar(&impresora, &estado, &bytes) {
+        // 3. D23: la apertura entra al registro, solo si de verdad se mandó (con tarjeta no se abre).
+        Ok(_) if !tarjeta => {
+            con_base(&estado, |b| b.registrar_apertura(Autorizacion::Venta, Some(venta_id), &momento, Some(sesion.id)).map(|_| ()).map_err(|e| e.to_string()))?;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            if !tarjeta {
+                registrar_fallo(&estado, sesion.id, &format!("Venta #{venta_id}: {e}"));
+            }
+            aviso = Some(format!("La venta quedó registrada, pero {}: {e}", if sin_ticket { "no se abrió el cajón" } else { "no se imprimió el ticket" }));
+        }
+    }
+    Ok(VentaRegistrada { venta_id, total: cobro.total, recibido: cobro.recibido, cambio: cobro.cambio, aviso })
 }
 
 #[derive(Serialize)]
@@ -288,10 +345,10 @@ fn estado_caja(estado: tauri::State<'_, Compartido>) -> Result<EstadoCaja, Strin
 /// "Abrir caja" (y Intro con el carrito vacío, D23). Si hace falta código y no viene, responde
 /// `PIDE_CODIGO`. Fase 3: el cajón se abre de verdad antes de registrar; hoy se simula.
 #[tauri::command]
-fn abrir_caja(estado: tauri::State<'_, Compartido>, codigo: Option<String>) -> Result<&'static str, String> {
+fn abrir_caja(estado: tauri::State<'_, Compartido>, impresora: tauri::State<'_, Impresora>, codigo: Option<String>) -> Result<&'static str, String> {
     let sesion = sesion_con_turno(&estado)?;
-    con_base(&estado, |b| {
-        let momento = Momento::ahora();
+    let momento = Momento::ahora();
+    let autorizacion = con_base(&estado, |b| {
         let autorizacion = b.como_abrir(sesion.usuario_id, &momento.fecha).map_err(|e| e.to_string())?;
         if autorizacion == Autorizacion::Codigo {
             // Si no queda ningún código, ninguno va a servir: se avisa sin pedirlo.
@@ -306,9 +363,14 @@ fn abrir_caja(estado: tauri::State<'_, Compartido>, codigo: Option<String>) -> R
             let Some(codigo) = codigo.filter(|c| !c.trim().is_empty()) else { return Err(PIDE_CODIGO.into()) };
             b.usar_codigo(&codigo, &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
         }
-        b.registrar_apertura(autorizacion, None, &momento, Some(sesion.id)).map_err(|e| e.to_string())?;
-        Ok(autorizacion.clave())
-    })
+        Ok(autorizacion)
+    })?;
+    if let Err(e) = enviar(&impresora, &estado, &nucleo::ticket::abrir_cajon()) {
+        registrar_fallo(&estado, sesion.id, &e);
+        return Err(format!("No se pudo abrir el cajón: {e}"));
+    }
+    con_base(&estado, |b| b.registrar_apertura(autorizacion, None, &momento, Some(sesion.id)).map_err(|e| e.to_string()))?;
+    Ok(autorizacion.clave())
 }
 
 /// Los botones de la columna derecha para el usuario de la sesión (P1: configurables, como la v2).
@@ -419,23 +481,45 @@ fn denominaciones() -> Vec<Denominacion> {
 /// Corte de caja, paso 1 (como la v2): se abre el cajón para contar el cambio. La apertura entra al
 /// registro como "corte" aunque luego se cancele. Fase 3: el cajón real; hoy, simulado.
 #[tauri::command]
-fn abrir_caja_para_corte(estado: tauri::State<'_, Compartido>) -> Result<(), String> {
+fn abrir_caja_para_corte(estado: tauri::State<'_, Compartido>, impresora: tauri::State<'_, Impresora>) -> Result<Option<String>, String> {
     let sesion = sesion_con_turno(&estado)?;
+    // Como la v2: si el cajón no se abre, queda el evento y el corte sigue (se puede contar igual).
+    if let Err(e) = enviar(&impresora, &estado, &nucleo::ticket::abrir_cajon()) {
+        registrar_fallo(&estado, sesion.id, &format!("Corte de caja: {e}"));
+        return Ok(Some(format!("No se pudo abrir el cajón: {e}")));
+    }
     con_base(&estado, |b| {
-        b.registrar_apertura(Autorizacion::Corte, None, &Momento::ahora(), Some(sesion.id)).map(|_| ()).map_err(|e| e.to_string())
+        b.registrar_apertura(Autorizacion::Corte, None, &Momento::ahora(), Some(sesion.id)).map(|_| None).map_err(|e| e.to_string())
     })
 }
 
 /// Corte de caja, paso 2: con lo que se deja de cambio (lo escrito para cada denominación, vacío =
 /// 0). Desde aquí VENTAS REALIZADAS de hoy empieza con ese cambio. Devuelve el resumen.
 #[tauri::command]
-fn hacer_corte(estado: tauri::State<'_, Compartido>, cantidades: Vec<String>) -> Result<String, String> {
+fn hacer_corte(estado: tauri::State<'_, Compartido>, impresora: tauri::State<'_, Impresora>, cantidades: Vec<String>) -> Result<String, String> {
     let cambio = nucleo::corte::leer_cambio(&cantidades)?;
     let sesion = sesion_con_turno(&estado)?;
-    con_base(&estado, |b| {
-        b.registrar_corte(&cambio, &Momento::ahora(), Some(sesion.id)).map_err(|e| e.to_string())?;
-        Ok(nucleo::corte::resumen_del_cambio(&cambio))
-    })
+    let cuando = chrono::Local::now().naive_local();
+    con_base(&estado, |b| b.registrar_corte(&cambio, &Momento::ahora(), Some(sesion.id)).map(|_| ()).map_err(|e| e.to_string()))?;
+    let resumen = nucleo::corte::resumen_del_cambio(&cambio);
+    // El ticket del corte (como la v2: si falla, el corte ya quedó hecho; solo se avisa).
+    let (tienda, _) = tienda_o_aviso(&carpeta_datos(&estado)?);
+    match enviar(&impresora, &estado, &nucleo::ticket::ticket_corte(&tienda, &cambio, Some(&sesion.usuario), cuando)) {
+        Ok(_) => Ok(resumen),
+        Err(e) => Ok(format!("{resumen}. (No se imprimió el ticket del corte: {e})")),
+    }
+}
+
+#[tauri::command]
+fn estado_impresora(impresora: tauri::State<'_, Impresora>) -> impresora::EstadoImpresora {
+    impresora.estado()
+}
+
+/// Enciende o apaga la impresora real (mientras la v2 sea la oficial, apagada: simulada).
+#[tauri::command]
+fn impresora_real(impresora: tauri::State<'_, Impresora>, activar: bool) -> impresora::EstadoImpresora {
+    impresora.activar(activar);
+    impresora.estado()
 }
 
 /// La empleada verifica el corte con el que empieza el día: `contado` vacío = cuadra (contó lo
@@ -752,6 +836,7 @@ pub fn run() {
       app.manage(Mutex::new(Estado { ruta, base, sesion }));
       iniciar_latido(app.handle().clone());
       vigilar_turno(app.handle().clone());
+      app.manage::<Impresora>(Arc::new(impresora::Impresora::nueva()));
       let lector = Arc::new(escaner::Escaner::default());
       escaner::iniciar(app.handle().clone(), lector.clone());
       app.manage(lector);
@@ -764,7 +849,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte, codigos_barras, registrar_codigo, actualizar_codigo, catalogo, sugerir_nombre, agregar_producto, renombrar_producto, unir_productos, eliminar_producto, revisar_catalogo, correcciones, olvidar_correccion, botones_admin, poner_visible, poner_activo, ordenar_botones, editar_boton, crear_boton])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte, codigos_barras, registrar_codigo, actualizar_codigo, catalogo, sugerir_nombre, agregar_producto, renombrar_producto, unir_productos, eliminar_producto, revisar_catalogo, correcciones, olvidar_correccion, botones_admin, poner_visible, poner_activo, ordenar_botones, editar_boton, crear_boton, estado_impresora, impresora_real])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {
