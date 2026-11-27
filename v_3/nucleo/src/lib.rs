@@ -17,6 +17,7 @@ pub mod cobro;
 pub mod corrector;
 pub mod corte;
 pub mod esquema;
+pub mod etiqueta;
 pub mod importar;
 pub mod sesiones;
 pub mod ticket;
