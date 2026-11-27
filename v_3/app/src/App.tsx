@@ -212,7 +212,7 @@ export default function App() {
   // VENTAS REALIZADAS como hoja de solo lectura, igual que el carrito.
   const refVentas = useRef<HTMLDivElement>(null)
   const marcoVentas = useMarcoHoja(refVentas, [lineasVenta.length > 0, vista])
-  const altoVentas = useAltoDisponible(refVentas, 24, [lineasVenta.length > 0, vista])
+  const altoVentas = useAltoDisponible(refVentas, 24 + 44, [lineasVenta.length > 0, vista])
   const libroVentas = useMemo<Workbook>(() => {
     const nodo = refVentas.current
     if (!nodo || !marcoVentas.anchoUtil) return libroDeVentas(lineasVenta)
@@ -364,7 +364,8 @@ export default function App() {
       enfocarProducto()
       return
     }
-    if (!(valorPrecio > 0)) {
+    // Como la v2 y el núcleo: cualquier número distinto de cero (también negativo).
+    if (!Number.isFinite(valorPrecio) || valorPrecio === 0) {
       setAviso({ tono: 'warning', texto: 'Falta el precio, o no es un número.' })
       refPrecio.current?.focus()
       return
@@ -490,7 +491,7 @@ export default function App() {
   }
 
   // D15/D17: Intro es siempre el cobro normal; sin ticket solo con su tecla (F4) o un clic.
-  const teclaCobro = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+  const teclaCobro = (e: ReactKeyboardEvent<HTMLElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
       cobrarCon('normal')
@@ -723,10 +724,12 @@ export default function App() {
   // crece desde él). Si el usuario no tiene ese botón, el modal aparece igual, sin origen.
   const tieneBoton = (nombre: string) => botones.some((b) => b.accion === nombre)
   const modalCobro = (
-              <NexMorph.Target label="Cobrar" className="caja__modal" size="content" panelStyle={ESTILO_MODAL}>
+              <NexMorph.Target label="Cobrar" className="caja__modal" size="content" panelStyle={{ width: 'min(540px, calc(100vw - 32px))' }}>
                 {/* El panel se monta en <body>, fuera del NexProvider de la caja: se repite la forma. */}
                 <NexProvider radius={redondez === 'tema' ? undefined : redondez} corner={esquina === 'tema' ? undefined : esquina}>
-                  <div className="caja__cobro">
+                  {/* Intro, F4 y Escape en TODO el modal (no solo en el campo): si el foco quedó en el
+                      panel o en un botón, Intro también cobra. */}
+                  <div className="caja__cobro" onKeyDown={teclaCobro}>
                     <p className="caja__cobro-total">Cobrar {dinero(total)}</p>
                     <NexInput
                       ref={refRecibido}
@@ -735,12 +738,12 @@ export default function App() {
                       inputMode="decimal"
                       leading="$"
                       value={cobro ?? ''}
+                      data-nx-autofocus=""
                       autoComplete="off"
                       onChange={(e) => {
                         setCobro(e.target.value)
                         setConfirmarExacto(null)
                       }}
-                      onKeyDown={teclaCobro}
                       onFocus={cursorAlFinal}
                     />
                     <p className="caja__cambio">
@@ -1139,6 +1142,19 @@ export default function App() {
                   <p className="caja__nota">No hay ventas ese día.</p>
                 )}
               </div>
+              {lineasVenta.length > 0 && (() => {
+                // El total de la tabla (como el TOTAL de la hoja de la v2): con el cambio del corte, si
+                // el día empieza con él, es lo que debe haber en la caja.
+                const total = lineasVenta.reduce((suma, l) => suma + (l.subtotal ?? 0), 0)
+                const cambio = lineasVenta.filter((l) => l.producto.startsWith('CAMBIO:')).reduce((suma, l) => suma + (l.subtotal ?? 0), 0)
+                return (
+                  <div className="caja__total caja__total--ventas">
+                    {cambio !== 0 && <span className="caja__nota">incluye {dinero(cambio)} de cambio del corte</span>}
+                    <span>Total</span>
+                    <strong>{dinero(total)}</strong>
+                  </div>
+                )
+              })()}
             </section>
           )}
 

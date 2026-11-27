@@ -10,6 +10,8 @@ body,
 
 .caja {
   min-height: 100%;
+  /* Por debajo de este ancho no se aprieta más: aparece el scroll horizontal de la página. */
+  min-width: 960px;
   box-sizing: border-box;
   padding: 20px 24px;
   display: flex;
@@ -280,6 +282,7 @@ body,
 
 .caja__cobro-acciones {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -552,4 +555,13 @@ body,
 }
 .caja__editor-boton .caja__cobro-acciones {
   grid-column: 1 / -1;
+}
+
+/* El total bajo VENTAS REALIZADAS: más chico que el del carrito. */
+.caja__total--ventas {
+  align-items: baseline;
+  gap: 12px;
+}
+.caja__total--ventas strong {
+  font-size: var(--nx-text-title, 1.6rem);
 }

@@ -72,7 +72,14 @@ export function useAltoDisponible(ref: RefObject<HTMLElement | null>, margenInfe
   useEffect(() => {
     const medir = () => {
       const nodo = ref.current
-      if (nodo) setAlto(Math.max(0, Math.floor(window.innerHeight - nodo.getBoundingClientRect().top - margenInferior)))
+      if (!nodo) return
+      setAlto(Math.max(0, Math.floor(window.innerHeight - nodo.getBoundingClientRect().top - margenInferior)))
+      // Si con ese alto la página igual se desborda (algo más abajo o al lado lo empuja), se le
+      // quita la diferencia: si no, aparecen dos barras, la de la hoja y la de la página.
+      requestAnimationFrame(() => {
+        const sobra = document.documentElement.scrollHeight - window.innerHeight
+        if (sobra > 0) setAlto((a) => Math.max(0, a - sobra))
+      })
     }
     medir()
     window.addEventListener('resize', medir)
