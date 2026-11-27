@@ -151,6 +151,11 @@ cd ~/sistema_ventas_v3/v_3/app && sed -i "s/0.9.0-caja.18.tgz/$N.tgz/g" package.
 
 ## 6. Cosas aprendidas (para no repetirlas)
 
+- **Al reiniciar `npm run tauri dev`, cerrar también Vite** (`node_modules/.bin/vite`): matar solo
+  `tauri` deja un Vite huérfano en el puerto 5173 sirviendo desde memoria el código de cuando
+  arrancó, y la app nueva se conecta a él (el 2026-11-26 parecía que los cambios de NexFluid no
+  llegaban). `vite.config.ts` ya tiene `strictPort`: un Vite viejo en 5173 ahora da error visible.
+
 - WebKitGTK ≠ Chromium: probar en los dos. Para medir en WebKit sin ventana:
   `WEBKIT_DISABLE_COMPOSITING_MODE=1` + `Gtk.OffscreenWindow` + `WebKit2.WebView` desde Python
   (`gi`, WebKit2 4.1); `get_snapshot` permite sacar una captura PNG.

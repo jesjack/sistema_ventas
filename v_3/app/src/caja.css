@@ -524,17 +524,17 @@ body,
 .caja__marco-botones {
   max-width: 100%;
 }
-.caja__hoja--botones .nx-sheet__cell:not([aria-colindex='2']) {
+.caja__hoja--botones .nx-sheet__cell {
   justify-content: center;
   padding: 0;
   color: var(--nx-accent);
   font-weight: 700;
   cursor: pointer;
 }
-.caja__hoja--botones .nx-sheet__cell:not([aria-colindex='2']):hover {
+.caja__hoja--botones .nx-sheet__cell:hover {
   background: var(--nx-accent-soft);
 }
-.caja__hoja--botones [role='row'][aria-rowindex='2'] .nx-sheet__cell {
+.caja__hoja--botones [role='row'][aria-rowindex='2'] :is(.nx-sheet__cell, .nx-sheet__rowhead) {
   background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
   font-weight: 600;
 }

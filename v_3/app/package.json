@@ -11,10 +11,10 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@nexfluid/components": "file:vendor/nexfluid-components-0.9.0-caja.21.tgz",
-    "@nexfluid/core": "file:vendor/nexfluid-core-0.9.0-caja.21.tgz",
-    "@nexfluid/foundation": "file:vendor/nexfluid-foundation-0.9.0-caja.21.tgz",
-    "@nexfluid/react": "file:vendor/nexfluid-react-0.9.0-caja.21.tgz",
+    "@nexfluid/components": "file:vendor/nexfluid-components-0.9.0-caja.22.tgz",
+    "@nexfluid/core": "file:vendor/nexfluid-core-0.9.0-caja.22.tgz",
+    "@nexfluid/foundation": "file:vendor/nexfluid-foundation-0.9.0-caja.22.tgz",
+    "@nexfluid/react": "file:vendor/nexfluid-react-0.9.0-caja.22.tgz",
     "@nexfluid/sheets": "0.9.0",
     "@tauri-apps/api": "2.12.5",
     "react": "^19.1.0",

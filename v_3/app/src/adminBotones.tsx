@@ -91,7 +91,8 @@ export function PanelBotones(props: { alCambiar: () => void }) {
   }
   const indiceEditado = editor?.id != null ? botones.findIndex((b) => b.id === editor.id) : -1
 
-  // ---- La hoja: filas = Activo + usuarios; columnas = nombre + un botón por columna (30 × 30).
+  // ---- La hoja: filas = Activo + usuarios (sus nombres en lugar de números, `rowLabels`);
+  // columnas = un botón cada una (30 × 30, nombre en vertical).
   const refHoja = useRef<HTMLDivElement>(null)
   const filas = useMemo(
     () => [{ nombre: 'Activo', id: null as number | null }, ...usuarios.map((u) => ({ nombre: u.plantilla ? 'DEFAULT' : u.nombre, id: u.id as number | null }))],
@@ -103,22 +104,21 @@ export function PanelBotones(props: { alCambiar: () => void }) {
   const libro = useMemo<Workbook>(() => {
     const celdas: Sheet['cells'] = {}
     filas.forEach((f, r) => {
-      celdas[cellKey(r, 0)] = { input: f.nombre }
       botones.forEach((b, c) => {
         const marcada = f.id === null ? b.activo : b.visible_para.includes(f.id)
-        if (marcada) celdas[cellKey(r, c + 1)] = { input: '✓' }
+        if (marcada) celdas[cellKey(r, c)] = { input: '✓' }
       })
     })
     const hoja: Sheet = {
-      ...createSheet('Botones', { rows: filas.length, columns: botones.length + 1, cells: celdas, headers: ['', ...botones.map((b) => b.etiqueta)] }, 'botones'),
-      columnWidths: Object.fromEntries([[0, anchoNombre], ...botones.map((_, c) => [c + 1, ALTO_FILA_HOJA])]),
+      ...createSheet('Botones', { rows: filas.length, columns: Math.max(botones.length, 1), cells: celdas, headers: botones.map((b) => b.etiqueta) }, 'botones'),
+      columnWidths: Object.fromEntries(botones.map((_, c) => [c, ALTO_FILA_HOJA])),
     }
     return createWorkbook([hoja])
-  }, [filas, botones, anchoNombre])
+  }, [filas, botones])
 
-  /** Cambia la casilla de la fila `r` y la columna `c` (columna 0 = nombres: nada). */
+  /** Cambia la casilla de la fila `r` y la columna `c`. */
   const alternar = (r: number, c: number) => {
-    const b = botones[c - 1]
+    const b = botones[c]
     const f = filas[r]
     if (!b || !f) return
     if (f.id === null) void cambiar('poner_activo', { boton: b.id, activo: !b.activo })
@@ -128,7 +128,7 @@ export function PanelBotones(props: { alCambiar: () => void }) {
     const el = e.target as HTMLElement
     const cabeza = el.closest<HTMLElement>('[role="columnheader"]')
     if (cabeza) {
-      const b = botones[Number(cabeza.getAttribute('aria-colindex')) - 3]
+      const b = botones[Number(cabeza.getAttribute('aria-colindex')) - 2]
       if (b) setEditor(editor?.id === b.id ? null : { id: b.id, etiqueta: b.etiqueta, accion: b.accion })
       return
     }
@@ -146,7 +146,7 @@ export function PanelBotones(props: { alCambiar: () => void }) {
   }
   // Columnas de botones inactivos, atenuadas (la hoja no tiene estilos por columna).
   const estiloInactivos = botones
-    .map((b, c) => (b.activo ? null : `.caja__hoja--botones [aria-colindex="${c + 3}"]{opacity:.45}`))
+    .map((b, c) => (b.activo ? null : `.caja__hoja--botones [aria-colindex="${c + 2}"]{opacity:.45}`))
     .filter(Boolean)
     .join('')
 
@@ -161,7 +161,7 @@ export function PanelBotones(props: { alCambiar: () => void }) {
       <div
         ref={refHoja}
         className="caja__marco-botones"
-        style={{ width: `min(100%, ${44 + anchoNombre + botones.length * ALTO_FILA_HOJA + 4}px)` }}
+        style={{ width: `min(100%, ${anchoNombre + botones.length * ALTO_FILA_HOJA + 4}px)` }}
         onClick={alClic}
         onKeyDown={alTeclear}
       >
@@ -175,6 +175,8 @@ export function PanelBotones(props: { alCambiar: () => void }) {
           columnLabels="name"
           headerHeight={altoEncabezado}
           headerOrientation="vertical"
+          rowLabels={filas.map((f) => f.nombre)}
+          rowHeaderWidth={anchoNombre}
           tabs={false}
           statusBar={false}
           toolbar={false}
