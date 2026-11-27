@@ -512,3 +512,63 @@ body,
   color: var(--nx-accent);
   font-size: var(--nx-text-small);
 }
+
+/* Administración de botones: la matriz (botón × usuario). */
+.caja__admin-botones {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.caja__tabla-botones {
+  max-height: none;
+}
+.caja__tabla-botones td {
+  vertical-align: middle;
+}
+.caja__tabla-botones tr[data-inactivo] td {
+  opacity: 0.55;
+}
+.caja__th-usuario {
+  vertical-align: bottom;
+  text-align: center !important;
+}
+.caja__th-usuario span {
+  display: inline-block;
+  max-height: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+.caja__celda-casilla {
+  text-align: center;
+}
+.caja__celda-casilla .nx-checkbox,
+.caja__tabla-botones .caja__casilla-sola {
+  display: inline-flex;
+}
+/* La casilla sin texto visible: la etiqueta sigue ahí para los lectores de pantalla. */
+.caja__casilla-sola .nx-checkbox__text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.caja__orden {
+  white-space: nowrap;
+}
+.caja__etiqueta-boton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 200px;
+}
+.caja__crear-boton {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}

@@ -88,7 +88,25 @@ impl Base {
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![datos.nombre_usuario, datos.sistema_operativo, datos.version_sistema, datos.nombre_equipo, datos.dominio, ahora],
                 )?;
-                (tx.last_insert_rowid(), true)
+                let nuevo = tx.last_insert_rowid();
+                // Como la v2 (`otorgar_plantilla_a_usuario_nuevo`): una sola vez, el usuario nuevo
+                // recibe los botones que hoy tenga la plantilla; desde ahí son suyos. (Solo si hay
+                // tabla de botones: en una base de la v2 la crea su servicio de botones al usarse,
+                // y las pruebas contra la v2 trabajan sin ella.)
+                let con_botones: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'boton_visibilidad')",
+                    [],
+                    |f| f.get(0),
+                )?;
+                if con_botones {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO boton_visibilidad (boton_id, usuario_id)
+                         SELECT v.boton_id, ?1 FROM boton_visibilidad v
+                         WHERE v.usuario_id = (SELECT id FROM usuarios_sistema WHERE nombre_usuario = ?2 ORDER BY id LIMIT 1)",
+                        params![nuevo, USUARIO_PLANTILLA],
+                    )?;
+                }
+                (nuevo, true)
             }
         };
         tx.commit()?;

@@ -652,6 +652,64 @@ fn olvidar_correccion(estado: tauri::State<'_, Compartido>, incorrecta: String) 
     con_base(&estado, |b| b.olvidar_correccion(&incorrecta).map_err(|e| e.to_string()))
 }
 
+// ---- Administración de botones (solo desarrollador; como admin_botones de la v2) ---------------
+
+/// La sesión, si su usuario es desarrollador.
+fn sesion_desarrollador(estado: &tauri::State<'_, Compartido>) -> Result<Sesion, String> {
+    let sesion = estado.lock().map_err(|e| e.to_string())?.sesion.clone().ok_or("No hay sesión abierta.")?;
+    let es = con_base(estado, |b| {
+        Ok(b.permisos(sesion.usuario_id).map_err(|e| e.to_string())?.contains(&nucleo::caja::Permiso::Desarrollador))
+    })?;
+    if es { Ok(sesion) } else { Err("Solo un desarrollador puede administrar los botones.".into()) }
+}
+
+#[derive(Serialize)]
+struct MatrizBotones {
+    botones: Vec<nucleo::botones::BotonAdmin>,
+    usuarios: Vec<nucleo::botones::UsuarioBotones>,
+}
+
+#[tauri::command]
+fn botones_admin(estado: tauri::State<'_, Compartido>) -> Result<MatrizBotones, String> {
+    sesion_desarrollador(&estado)?;
+    con_base(&estado, |b| {
+        Ok(MatrizBotones {
+            botones: b.botones_admin().map_err(|e| e.to_string())?,
+            usuarios: b.usuarios_botones().map_err(|e| e.to_string())?,
+        })
+    })
+}
+
+#[tauri::command]
+fn poner_visible(estado: tauri::State<'_, Compartido>, boton: i64, usuario: i64, visible: bool) -> Result<(), String> {
+    sesion_desarrollador(&estado)?;
+    con_base(&estado, |b| b.poner_visible(boton, usuario, visible).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+fn poner_activo(estado: tauri::State<'_, Compartido>, boton: i64, activo: bool) -> Result<(), String> {
+    sesion_desarrollador(&estado)?;
+    con_base(&estado, |b| b.poner_activo(boton, activo).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+fn ordenar_botones(estado: tauri::State<'_, Compartido>, ids: Vec<i64>) -> Result<(), String> {
+    sesion_desarrollador(&estado)?;
+    con_base(&estado, |b| b.ordenar_botones(&ids).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+fn editar_boton(estado: tauri::State<'_, Compartido>, boton: i64, etiqueta: String, accion: String) -> Result<(), String> {
+    sesion_desarrollador(&estado)?;
+    con_base(&estado, |b| b.editar_boton(boton, &etiqueta, &accion).and_then(|ok| if ok { Ok(()) } else { Err("Ese botón ya no existe.".into()) }))
+}
+
+#[tauri::command]
+fn crear_boton(estado: tauri::State<'_, Compartido>, etiqueta: String, accion: String) -> Result<i64, String> {
+    sesion_desarrollador(&estado)?;
+    con_base(&estado, |b| b.crear_boton(&etiqueta, &accion))
+}
+
 /// Estado de la lectura directa del escáner (para Desarrollador).
 #[tauri::command]
 fn estado_escaner(escaner: tauri::State<'_, Arc<escaner::Escaner>>) -> escaner::EstadoEscaner {
@@ -693,7 +751,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte, codigos_barras, registrar_codigo, actualizar_codigo, catalogo, sugerir_nombre, agregar_producto, renombrar_producto, unir_productos, eliminar_producto, revisar_catalogo, correcciones, olvidar_correccion])
+    .invoke_handler(tauri::generate_handler![buscar_productos, buscar_codigo, info_base, fechas_con_ventas, ventas_del_dia, cobrar, estado_caja, abrir_caja, codigos_caja, agregar_codigo, retirar_codigo, botones, estado_escaner, escaner_directo, denominaciones, abrir_caja_para_corte, hacer_corte, verificar_corte, codigos_barras, registrar_codigo, actualizar_codigo, catalogo, sugerir_nombre, agregar_producto, renombrar_producto, unir_productos, eliminar_producto, revisar_catalogo, correcciones, olvidar_correccion, botones_admin, poner_visible, poner_activo, ordenar_botones, editar_boton, crear_boton])
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
   app.run(|app, evento| {

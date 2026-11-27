@@ -8,6 +8,7 @@ import { useAltoDisponible, useMarcoHoja } from './marcoHoja.ts'
 import { Icono } from './iconos.tsx'
 import { PanelCodigos, PanelRegistro } from './codigos.tsx'
 import { PanelCatalogo } from './catalogo.tsx'
+import { PanelBotones } from './adminBotones.tsx'
 import type { NexCorner, NexMotion, NexRadius } from '@nexfluid/react'
 import { agregarAlCarrito, dinero, leerNumero, totalDelCarrito, type FilaCarrito } from './carrito.ts'
 import { DetectorEscaner, type Escaneo } from './escaner.ts'
@@ -84,7 +85,7 @@ interface EstadoCaja {
 const ESTILO_MODAL: CSSProperties = { width: 'min(460px, calc(100vw - 32px))' }
 
 /** Las pantallas de la caja (arriba de todo): la venta, las ventas realizadas y el desarrollador. */
-type Vista = 'carrito' | 'ventas' | 'desarrollador'
+type Vista = 'carrito' | 'ventas' | 'botones' | 'desarrollador'
 
 const TEXTO_AUTORIZACION: Record<string, string> = {
   permiso: 'con tu permiso sin límite',
@@ -260,9 +261,10 @@ export default function App() {
 
   const enfocarProducto = () => requestAnimationFrame(() => refProducto.current?.focus())
 
-  useEffect(() => {
+  const leerBotones = useCallback(() => {
     invoke<Boton[]>('botones').then(setBotones, () => setBotones([]))
   }, [])
+  useEffect(() => leerBotones(), [leerBotones])
 
   // El estado de la caja: permisos, cómo se abriría el cajón y cuántos códigos quedan (el botón
   // CÓDIGOS DE CAJA avisa con su badge; ya no se interrumpe con un modal).
@@ -980,7 +982,12 @@ export default function App() {
             options={[
               { value: 'carrito', label: 'Carrito' },
               { value: 'ventas', label: 'Ver ventas' },
-              ...(esDesarrollador ? [{ value: 'desarrollador', label: 'Desarrollador' }] : []),
+              ...(esDesarrollador
+                ? [
+                    { value: 'botones', label: 'Botones' },
+                    { value: 'desarrollador', label: 'Desarrollador' },
+                  ]
+                : []),
             ]}
           />
 
@@ -1134,6 +1141,8 @@ export default function App() {
               </div>
             </section>
           )}
+
+          {vista === 'botones' && esDesarrollador && <PanelBotones alCambiar={leerBotones} />}
 
           {vista === 'desarrollador' && esDesarrollador && (
             <section className="caja__medicion" aria-label="Desarrollador">
