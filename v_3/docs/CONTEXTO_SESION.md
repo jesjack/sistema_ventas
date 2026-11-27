@@ -357,7 +357,10 @@ de NexMorph en WebKitGTK (dejaba rastro al achicarse); NexSheets `headerHeight`,
 
 **Siguiente:**
 - **Prueba en paralelo:** el usuario repetirá en la v3 las ventas del día (la v2 sigue oficial).
-  Antes: importación fresca desde la v2 y volver a aplicar lo que solo vive en `ventas_v3.db`
-  (permisos, ajustes de botones): conviene un paso automático tras importar.
+  Antes: `v_3/app/scripts/reimportar_v2.sh` (con la caja v3 cerrada): copia la v2 en solo lectura,
+  importa a una base nueva y CONSERVA de la v3 anterior permisos, botones, códigos de caja y
+  correcciones (`importar::conservar_de_v3`; ensayado: todo igual, Miriam se crea). Guarda la
+  anterior como `ventas_v3.anterior-<fecha>.db`. Correrlo en la mañana, antes de la primera venta,
+  para no duplicar las ventas del día al repetirlas.
 - Pendientes menores: pasar la ventana al frente al escanear (Wayland); ticket del corte (fase 3).
 
