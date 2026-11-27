@@ -5,8 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { NexButton, NexCheckbox, NexInput, NexSelect } from '@nexfluid/react'
-import { Icono } from './iconos.tsx'
+import { NexButton, NexInput, NexSelect } from '@nexfluid/react'
 
 interface BotonAdmin {
   id: number
@@ -47,15 +46,14 @@ export function PanelBotones(props: { alCambiar: () => void }) {
   const [botones, setBotones] = useState<BotonAdmin[]>([])
   const [usuarios, setUsuarios] = useState<UsuarioBotones[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [nuevo, setNuevo] = useState({ etiqueta: '', accion: 'cobrar_carrito' })
-  const [etiquetas, setEtiquetas] = useState<Record<number, string>>({})
+  // El panel de abajo: editar un botón (clic en su encabezado) o crear uno.
+  const [editor, setEditor] = useState<{ id: number | null; etiqueta: string; accion: string } | null>(null)
 
   const leer = () =>
     invoke<{ botones: BotonAdmin[]; usuarios: UsuarioBotones[] }>('botones_admin').then(
       (m) => {
         setBotones(m.botones)
         setUsuarios(m.usuarios)
-        setEtiquetas(Object.fromEntries(m.botones.map((b) => [b.id, b.etiqueta])))
         setError(null)
       },
       (e) => setError(String(e)),
@@ -68,99 +66,72 @@ export function PanelBotones(props: { alCambiar: () => void }) {
       await invoke(comando, args)
       await leer()
       props.alCambiar()
+      return true
     } catch (e) {
       setError(String(e))
+      return false
     }
   }
-  const mover = (indice: number, delta: number) => {
+  const mover = (id: number, delta: number) => {
     const ids = botones.map((b) => b.id)
-    const destino = indice + delta
-    if (destino < 0 || destino >= ids.length) return
-    ;[ids[indice], ids[destino]] = [ids[destino]!, ids[indice]!]
+    const i = ids.indexOf(id)
+    const j = i + delta
+    if (i < 0 || j < 0 || j >= ids.length) return
+    ;[ids[i], ids[j]] = [ids[j]!, ids[i]!]
     void cambiar('ordenar_botones', { ids })
   }
-  const guardarEtiqueta = (b: BotonAdmin) => {
-    const etiqueta = (etiquetas[b.id] ?? '').trim()
-    if (etiqueta && etiqueta !== b.etiqueta) void cambiar('editar_boton', { boton: b.id, etiqueta, accion: b.accion })
-    else setEtiquetas((e) => ({ ...e, [b.id]: b.etiqueta }))
+  const guardarEditor = async () => {
+    if (!editor) return
+    const ok = editor.id === null
+      ? await cambiar('crear_boton', { etiqueta: editor.etiqueta, accion: editor.accion })
+      : await cambiar('editar_boton', { boton: editor.id, etiqueta: editor.etiqueta, accion: editor.accion })
+    if (ok) setEditor(null)
   }
+  const indiceEditado = editor?.id != null ? botones.findIndex((b) => b.id === editor.id) : -1
+  const casilla = (etiqueta: string, marcada: boolean, cambio: (v: boolean) => void) => (
+    <input type="checkbox" className="caja__casilla" aria-label={etiqueta} checked={marcada} onChange={(e) => cambio(e.target.checked)} />
+  )
 
   return (
     <section className="caja__admin-botones" aria-label="Administrar botones">
-      <p className="caja__nota">
-        Qué botones hay, en qué orden y quién ve cada uno. <strong>DEFAULT</strong> es la plantilla: lo que recibe un usuario nuevo la
-        primera vez que abre la caja (después, sus botones son suyos). Los cambios se guardan al momento.
-      </p>
       {error && (
         <p className="caja__aviso caja__aviso--danger" role="alert">
           {error}
         </p>
       )}
-      <div className="caja__tabla-codigos caja__tabla-botones">
+      <div className="caja__matriz">
         <table>
           <thead>
             <tr>
-              <th aria-label="Orden" />
-              <th>Activo</th>
-              <th>Etiqueta</th>
-              <th>Acción</th>
-              {usuarios.map((u) => (
-                <th key={u.id} className="caja__th-usuario" title={u.nombre}>
-                  <span>{u.plantilla ? 'DEFAULT' : u.nombre}</span>
+              <th className="caja__matriz-esquina">
+                <span className="caja__nota">Clic en un botón para editarlo</span>
+              </th>
+              {botones.map((b) => (
+                <th key={b.id} className="caja__matriz-boton" data-elegido={editor?.id === b.id ? '' : undefined} data-inactivo={b.activo ? undefined : ''}>
+                  <button type="button" title={`${b.etiqueta} · ${b.accion}`} onClick={() => setEditor(editor?.id === b.id ? null : { id: b.id, etiqueta: b.etiqueta, accion: b.accion })}>
+                    <span>{b.etiqueta}</span>
+                  </button>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {botones.map((b, i) => (
-              <tr key={b.id} data-inactivo={b.activo ? undefined : ''}>
-                <td className="caja__orden">
-                  <NexButton appearance="ghost" density="compact" aria-label="Subir" disabled={i === 0} onClick={() => mover(i, -1)}>
-                    ↑
-                  </NexButton>
-                  <NexButton appearance="ghost" density="compact" aria-label="Bajar" disabled={i === botones.length - 1} onClick={() => mover(i, 1)}>
-                    ↓
-                  </NexButton>
-                </td>
-                <td>
-                  <NexCheckbox label="Activo" className="caja__casilla-sola" checked={b.activo} onChange={(e) => void cambiar('poner_activo', { boton: b.id, activo: e.target.checked })} />
-                </td>
-                <td>
-                  <div className="caja__etiqueta-boton">
-                    <Icono nombre={b.accion} />
-                    <NexInput
-                      label="Etiqueta"
-                      hideLabel
-                      density="compact"
-                      autoComplete="off"
-                      value={etiquetas[b.id] ?? b.etiqueta}
-                      onChange={(e) => setEtiquetas((x) => ({ ...x, [b.id]: e.target.value }))}
-                      onBlur={() => guardarEtiqueta(b)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                        else if (e.key === 'Escape') setEtiquetas((x) => ({ ...x, [b.id]: b.etiqueta }))
-                      }}
-                    />
-                  </div>
-                </td>
-                <td>
-                  <NexSelect
-                    label="Acción"
-                    hideLabel
-                    density="compact"
-                    value={b.accion}
-                    options={opcionesDe(b.accion)}
-                    onValueChange={(accion) => void cambiar('editar_boton', { boton: b.id, etiqueta: b.etiqueta, accion })}
-                  />
-                </td>
-                {usuarios.map((u) => (
-                  <td key={u.id} className="caja__celda-casilla">
-                    <NexCheckbox
-                      label={`${b.etiqueta} para ${u.plantilla ? 'la plantilla' : u.nombre}`}
-                      className="caja__casilla-sola"
-                      checked={b.visible_para.includes(u.id)}
-                      onChange={(e) => void cambiar('poner_visible', { boton: b.id, usuario: u.id, visible: e.target.checked })}
-                    />
+            <tr className="caja__matriz-activo">
+              <th scope="row">Activo</th>
+              {botones.map((b) => (
+                <td key={b.id}>{casilla(`${b.etiqueta} activo`, b.activo, (v) => void cambiar('poner_activo', { boton: b.id, activo: v }))}</td>
+              ))}
+            </tr>
+            {usuarios.map((u) => (
+              <tr key={u.id}>
+                <th scope="row" title={u.plantilla ? 'Plantilla: lo que recibe un usuario nuevo' : u.nombre}>
+                  {u.plantilla ? 'DEFAULT' : u.nombre}
+                </th>
+                {botones.map((b) => (
+                  <td key={b.id} data-inactivo={b.activo ? undefined : ''}>
+                    {casilla(`${b.etiqueta} para ${u.plantilla ? 'la plantilla' : u.nombre}`, b.visible_para.includes(u.id), (v) =>
+                      void cambiar('poner_visible', { boton: b.id, usuario: u.id, visible: v }),
+                    )}
                   </td>
                 ))}
               </tr>
@@ -168,32 +139,49 @@ export function PanelBotones(props: { alCambiar: () => void }) {
           </tbody>
         </table>
       </div>
-      <div className="caja__crear-boton">
-        <NexInput
-          label="Botón nuevo"
-          placeholder="Etiqueta (p. ej. COBRAR)"
-          density="compact"
-          autoComplete="off"
-          value={nuevo.etiqueta}
-          onChange={(e) => setNuevo({ ...nuevo, etiqueta: e.target.value })}
-        />
-        <NexSelect
-          label="Acción"
-          density="compact"
-          value={nuevo.accion}
-          options={opcionesDe(nuevo.accion)}
-          onValueChange={(accion) => setNuevo({ ...nuevo, accion })}
-        />
-        <NexButton
-          appearance="filled"
-          onClick={() =>
-            void cambiar('crear_boton', { etiqueta: nuevo.etiqueta, accion: nuevo.accion }).then(() => setNuevo({ etiqueta: '', accion: nuevo.accion }))
-          }
-        >
-          Crear botón
-        </NexButton>
-      </div>
-      <p className="caja__nota">Un botón nuevo queda al final, activo y visible para la plantilla; marca a quién más se le muestra.</p>
+
+      {editor ? (
+        <div className="caja__editor-boton">
+          <NexInput
+            label={editor.id === null ? 'Botón nuevo' : 'Etiqueta'}
+            density="compact"
+            autoComplete="off"
+            autoFocus
+            value={editor.etiqueta}
+            onChange={(e) => setEditor({ ...editor, etiqueta: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void guardarEditor()
+              else if (e.key === 'Escape') setEditor(null)
+            }}
+          />
+          <NexSelect label="Acción" density="compact" value={editor.accion} options={opcionesDe(editor.accion)} onValueChange={(accion) => setEditor({ ...editor, accion })} />
+          <div className="caja__cobro-acciones">
+            {editor.id !== null && (
+              <>
+                <NexButton appearance="ghost" density="compact" disabled={indiceEditado <= 0} onClick={() => mover(editor.id!, -1)}>
+                  ← Mover
+                </NexButton>
+                <NexButton appearance="ghost" density="compact" disabled={indiceEditado < 0 || indiceEditado >= botones.length - 1} onClick={() => mover(editor.id!, 1)}>
+                  Mover →
+                </NexButton>
+              </>
+            )}
+            <NexButton appearance="filled" density="compact" onClick={() => void guardarEditor()}>
+              {editor.id === null ? 'Crear' : 'Guardar'} (Intro)
+            </NexButton>
+            <NexButton appearance="ghost" density="compact" onClick={() => setEditor(null)}>
+              Cerrar
+            </NexButton>
+          </div>
+        </div>
+      ) : (
+        <div className="caja__cobro-acciones">
+          <NexButton appearance="outlined" density="compact" onClick={() => setEditor({ id: null, etiqueta: '', accion: 'cobrar_carrito' })}>
+            Crear botón
+          </NexButton>
+          <span className="caja__nota">DEFAULT es la plantilla: lo que recibe un usuario nuevo la primera vez que abre la caja.</span>
+        </div>
+      )}
     </section>
   )
 }

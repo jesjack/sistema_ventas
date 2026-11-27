@@ -513,62 +513,106 @@ body,
   font-size: var(--nx-text-small);
 }
 
-/* Administración de botones: la matriz (botón × usuario). */
+/* Administración de botones: compacta como la de la v2. Botones en columnas (nombre en vertical),
+   usuarios en filas; la primera fila, Activo. */
 .caja__admin-botones {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  align-items: flex-start;
 }
-.caja__tabla-botones {
-  max-height: none;
+.caja__matriz {
+  max-width: 100%;
+  overflow: auto;
+  border-radius: var(--nx-control-radius);
+  box-shadow: inset 0 0 0 1px var(--nx-border);
 }
-.caja__tabla-botones td {
-  vertical-align: middle;
+.caja__matriz table {
+  border-collapse: collapse;
+  font-size: var(--nx-text-small);
 }
-.caja__tabla-botones tr[data-inactivo] td {
-  opacity: 0.55;
+.caja__matriz th[scope='row'] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0 10px;
+  max-width: 200px;
+  overflow: hidden;
+  background: var(--nx-surface-sunken);
+  font-weight: 500;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.caja__th-usuario {
+.caja__matriz td,
+.caja__matriz th[scope='row'] {
+  height: 26px;
+  border-top: 1px solid var(--nx-border);
+}
+.caja__matriz td {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+  text-align: center;
+}
+.caja__matriz td[data-inactivo] {
+  opacity: 0.45;
+}
+.caja__matriz-activo th,
+.caja__matriz-activo td {
+  background: color-mix(in srgb, var(--nx-accent) 6%, transparent);
+}
+.caja__matriz-esquina {
   vertical-align: bottom;
-  text-align: center !important;
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 400;
 }
-.caja__th-usuario span {
-  display: inline-block;
-  max-height: 140px;
+.caja__matriz-boton {
+  vertical-align: bottom;
+  padding: 0;
+}
+.caja__matriz-boton button {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 34px;
+  height: 160px;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--nx-fg);
+  cursor: pointer;
+  font: 500 var(--nx-text-small) / 1 var(--nx-font-body);
+}
+.caja__matriz-boton button:hover,
+.caja__matriz-boton[data-elegido] button {
+  background: var(--nx-accent-soft);
+}
+.caja__matriz-boton[data-inactivo] button {
+  color: var(--nx-fg-subtle);
+}
+.caja__matriz-boton span {
+  max-height: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
 }
-.caja__celda-casilla {
-  text-align: center;
+.caja__casilla {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--nx-accent);
+  cursor: pointer;
 }
-.caja__celda-casilla .nx-checkbox,
-.caja__tabla-botones .caja__casilla-sola {
-  display: inline-flex;
-}
-/* La casilla sin texto visible: la etiqueta sigue ahí para los lectores de pantalla. */
-.caja__casilla-sola .nx-checkbox__text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.caja__orden {
-  white-space: nowrap;
-}
-.caja__etiqueta-boton {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 200px;
-}
-.caja__crear-boton {
+.caja__editor-boton {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 12px;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+  gap: 8px 12px;
+  width: min(640px, 100%);
+}
+.caja__editor-boton .caja__cobro-acciones {
+  grid-column: 1 / -1;
 }
